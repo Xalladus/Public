@@ -1,0 +1,493 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © promuckaj
+
+//@version=5
+indicator("Reversal zones 2 [ProJ]", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
+
+array_size = input.int(100, "How much zones to look back ?")
+zone_color = input.color(#ff990027, "Zones color:", inline = "col")
+zone_color2 = input.color(color.silver, "", inline = "col")
+border_color = input.color(color.orange, "Border color:")
+
+debug = input.bool(false, "Debug")
+
+type box_val
+    array<int> _id
+    array<float> b1hb2h
+    array<float> b1hb2l
+    array<float> b1hb2o
+    array<float> b1hb2c
+    array<float> b1lb2h
+    array<float> b1lb2l
+    array<float> b1lb2o
+    array<float> b1lb2c
+    array<float> b1ob2h
+    array<float> b1ob2l
+    array<float> b1ob2o
+    array<float> b1ob2c
+    array<float> b1cb2h
+    array<float> b1cb2l
+    array<float> b1cb2o
+    array<float> b1cb2c
+    array<bool> mitigated
+    array<bool> third
+    
+    
+var zone_values = box_val.new(array.new<int>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<float>(array_size), array.new<bool>(array_size), array.new<bool>(array_size))
+
+check_mitigation(value, n) =>
+    result = "nn"
+    if value == array.get(zone_values.b1hb2h, n)
+        result := "b1hb2h"
+    if value == array.get(zone_values.b1hb2l, n)
+        result := "b1hb2l"
+    if value == array.get(zone_values.b1hb2o, n)
+        result := "b1hb2o"
+    if value == array.get(zone_values.b1hb2c, n)
+        result := "b1hb2c"
+    if value == array.get(zone_values.b1lb2h, n)
+        result := "b1lb2h"
+    if value == array.get(zone_values.b1lb2l, n)
+        result := "b1lb2l"
+    if value == array.get(zone_values.b1lb2o, n)
+        result := "b1lb2o"
+    if value == array.get(zone_values.b1lb2c, n)
+        result := "b1lb2c"
+    if value == array.get(zone_values.b1ob2h, n)
+        result := "b1ob2h"
+    if value == array.get(zone_values.b1ob2l, n)
+        result := "b1ob2l"
+    if value == array.get(zone_values.b1ob2o, n)
+        result := "b1ob2o"
+    if value == array.get(zone_values.b1ob2c, n)
+        result := "b1ob2c"
+    if value == array.get(zone_values.b1cb2h, n)
+        result := "b1cb2h"
+    if value == array.get(zone_values.b1cb2l, n)
+        result := "b1cb2l"
+    if value == array.get(zone_values.b1cb2o, n)
+        result := "b1cb2o"
+    if value == array.get(zone_values.b1cb2c, n)
+        result := "b1cb2c"
+    result
+check_top(value, n, bar) =>
+    result = 0.
+    c = bar < 2 ? 1 : 2
+    if value == "b1hb2h"
+        if high[bar_index - array.get(zone_values._id, n)] > high[(bar_index - array.get(zone_values._id, n)) + c]
+            result := high[bar_index - array.get(zone_values._id, n)]
+        else
+            result := high[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1hb2l"
+        if high[bar_index - array.get(zone_values._id, n)] > low[(bar_index - array.get(zone_values._id, n)) + c]
+            result := high[bar_index - array.get(zone_values._id, n)]
+        else
+            result := low[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1hb2o"
+        if high[bar_index - array.get(zone_values._id, n)] > open[(bar_index - array.get(zone_values._id, n)) + c]
+            result := high[bar_index - array.get(zone_values._id, n)]
+        else
+            result := open[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1hb2c"
+        if high[bar_index - array.get(zone_values._id, n)] > close[(bar_index - array.get(zone_values._id, n)) + c]
+            result := high[bar_index - array.get(zone_values._id, n)]
+        else
+            result := close[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1lb2h"
+        if low[bar_index - array.get(zone_values._id, n)] > high[(bar_index - array.get(zone_values._id, n)) + c]
+            result := low[bar_index - array.get(zone_values._id, n)]
+        else
+            result := high[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1lb2l"
+        if low[bar_index - array.get(zone_values._id, n)] > low[(bar_index - array.get(zone_values._id, n)) + c]
+            result := low[bar_index - array.get(zone_values._id, n)]
+        else
+            result := low[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1lb2o"
+        if low[bar_index - array.get(zone_values._id, n)] > open[(bar_index - array.get(zone_values._id, n)) + c]
+            result := low[bar_index - array.get(zone_values._id, n)]
+        else
+            result := open[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1lb2c"
+        if low[bar_index - array.get(zone_values._id, n)] > close[(bar_index - array.get(zone_values._id, n)) + c]
+            result := low[bar_index - array.get(zone_values._id, n)]
+        else
+            result := close[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1ob2h"
+        if open[bar_index - array.get(zone_values._id, n)] > high[(bar_index - array.get(zone_values._id, n)) + c]
+            result := open[bar_index - array.get(zone_values._id, n)]
+        else
+            result := high[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1ob2l"
+        if open[bar_index - array.get(zone_values._id, n)] > low[(bar_index - array.get(zone_values._id, n)) + c]
+            result := open[bar_index - array.get(zone_values._id, n)]
+        else
+            result := low[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1ob2o"
+        if open[bar_index - array.get(zone_values._id, n)] > open[(bar_index - array.get(zone_values._id, n)) + c]
+            result := open[bar_index - array.get(zone_values._id, n)]
+        else
+            result := open[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1ob2c"
+        if open[bar_index - array.get(zone_values._id, n)] > close[(bar_index - array.get(zone_values._id, n)) + c]
+            result := open[bar_index - array.get(zone_values._id, n)]
+        else
+            result := close[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1cb2h"
+        if close[bar_index - array.get(zone_values._id, n)] > high[(bar_index - array.get(zone_values._id, n)) + c]
+            result := close[bar_index - array.get(zone_values._id, n)]
+        else
+            result := high[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1cb2l"
+        if close[bar_index - array.get(zone_values._id, n)] > low[(bar_index - array.get(zone_values._id, n)) + c]
+            result := close[bar_index - array.get(zone_values._id, n)]
+        else
+            result := low[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1cb2o"
+        if close[bar_index - array.get(zone_values._id, n)] > open[(bar_index - array.get(zone_values._id, n)) + c]
+            result := close[bar_index - array.get(zone_values._id, n)]
+        else
+            result := open[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1cb2c"
+        if close[bar_index - array.get(zone_values._id, n)] > close[(bar_index - array.get(zone_values._id, n)) + c]
+            result := close[bar_index - array.get(zone_values._id, n)]
+        else
+            result := close[(bar_index - array.get(zone_values._id, n)) + c]
+    result
+check_bottom(value, n, bar) =>
+    result = 0.
+    c = bar < 2 ? 1 : 2
+    if value == "b1hb2h"
+        if high[bar_index - array.get(zone_values._id, n)] < high[(bar_index - array.get(zone_values._id, n)) + c]
+            result := high[bar_index - array.get(zone_values._id, n)]
+        else
+            result := high[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1hb2l"
+        if high[bar_index - array.get(zone_values._id, n)] < low[(bar_index - array.get(zone_values._id, n)) + c]
+            result := high[bar_index - array.get(zone_values._id, n)]
+        else
+            result := low[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1hb2o"
+        if high[bar_index - array.get(zone_values._id, n)] < open[(bar_index - array.get(zone_values._id, n)) + c]
+            result := high[bar_index - array.get(zone_values._id, n)]
+        else
+            result := open[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1hb2c"
+        if high[bar_index - array.get(zone_values._id, n)] < close[(bar_index - array.get(zone_values._id, n)) + c]
+            result := high[bar_index - array.get(zone_values._id, n)]
+        else
+            result := close[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1lb2h"
+        if low[bar_index - array.get(zone_values._id, n)] < high[(bar_index - array.get(zone_values._id, n)) + c]
+            result := low[bar_index - array.get(zone_values._id, n)]
+        else
+            result := high[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1lb2l"
+        if low[bar_index - array.get(zone_values._id, n)] < low[(bar_index - array.get(zone_values._id, n)) + c]
+            result := low[bar_index - array.get(zone_values._id, n)]
+        else
+            result := low[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1lb2o"
+        if low[bar_index - array.get(zone_values._id, n)] < open[(bar_index - array.get(zone_values._id, n)) + c]
+            result := low[bar_index - array.get(zone_values._id, n)]
+        else
+            result := open[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1lb2c"
+        if low[bar_index - array.get(zone_values._id, n)] < close[(bar_index - array.get(zone_values._id, n)) + c]
+            result := low[bar_index - array.get(zone_values._id, n)]
+        else
+            result := close[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1ob2h"
+        if open[bar_index - array.get(zone_values._id, n)] < high[(bar_index - array.get(zone_values._id, n)) + c]
+            result := open[bar_index - array.get(zone_values._id, n)]
+        else
+            result := high[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1ob2l"
+        if open[bar_index - array.get(zone_values._id, n)] < low[(bar_index - array.get(zone_values._id, n)) + c]
+            result := open[bar_index - array.get(zone_values._id, n)]
+        else
+            result := low[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1ob2o"
+        if open[bar_index - array.get(zone_values._id, n)] < open[(bar_index - array.get(zone_values._id, n)) + c]
+            result := open[bar_index - array.get(zone_values._id, n)]
+        else
+            result := open[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1ob2c"
+        if open[bar_index - array.get(zone_values._id, n)] < close[(bar_index - array.get(zone_values._id, n)) + c]
+            result := open[bar_index - array.get(zone_values._id, n)]
+        else
+            result := close[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1cb2h"
+        if close[bar_index - array.get(zone_values._id, n)] < high[(bar_index - array.get(zone_values._id, n)) + c]
+            result := close[bar_index - array.get(zone_values._id, n)]
+        else
+            result := high[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1cb2l"
+        if close[bar_index - array.get(zone_values._id, n)] < low[(bar_index - array.get(zone_values._id, n)) + c]
+            result := close[bar_index - array.get(zone_values._id, n)]
+        else
+            result := low[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1cb2o"
+        if close[bar_index - array.get(zone_values._id, n)] < open[(bar_index - array.get(zone_values._id, n)) + c]
+            result := close[bar_index - array.get(zone_values._id, n)]
+        else
+            result := open[(bar_index - array.get(zone_values._id, n)) + c]
+    if value == "b1cb2c"
+        if close[bar_index - array.get(zone_values._id, n)] < close[(bar_index - array.get(zone_values._id, n)) + c]
+            result := close[bar_index - array.get(zone_values._id, n)]
+        else
+            result := close[(bar_index - array.get(zone_values._id, n)) + c]
+    result
+
+
+organize_array(string checkname,string debugtext,box_val zone,int n) =>
+    array.set(zone.mitigated, n, true)
+    c = array.get(zone.third, n) ? 2 : 1
+    _left = array.get(zone._id, n) - c
+    _top = check_top(checkname, n, c)
+    _bottom = check_bottom(checkname, n, c)
+
+    box.new(_left, _top, bar_index, _bottom, border_color = border_color, bgcolor = zone_color)
+    line.new(_left, (_top + _bottom)/2, bar_index, (_top + _bottom)/2, color = zone_color2, style = line.style_dashed)
+    if debug
+        label.new(bar_index, na, str.tostring(bar_index - _left) + debugtext  + str.tostring(checkname), yloc = yloc.abovebar)
+
+
+
+_proceed = true
+if _proceed
+    b1hb2h = (high + high[1])/2
+    b1hb2l = (high + low[1])/2
+    b1hb2o = (high + open[1])/2
+    b1hb2c = (high + close[1])/2
+    b1lb2h = (low + high[1])/2
+    b1lb2l = (low + low[1])/2
+    b1lb2o = (low + open[1])/2
+    b1lb2c = (low + close[1])/2
+    b1ob2h = (open + high[1])/2
+    b1ob2l = (open + low[1])/2
+    b1ob2o = (open + open[1])/2
+    b1ob2c = (open + close[1])/2
+    b1cb2h = (close + high[1])/2
+    b1cb2l = (close + low[1])/2
+    b1cb2o = (close + open[1])/2
+    b1cb2c = (close + close[1])/2
+
+    b1hb2h_1 = (high + high[2])/2
+    b1hb2l_1 = (high + low[2])/2
+    b1hb2o_1 = (high + open[2])/2
+    b1hb2c_1 = (high + close[2])/2
+    b1lb2h_1 = (low + high[2])/2
+    b1lb2l_1 = (low + low[2])/2
+    b1lb2o_1 = (low + open[2])/2
+    b1lb2c_1 = (low + close[2])/2
+    b1ob2h_1 = (open + high[2])/2
+    b1ob2l_1 = (open + low[2])/2
+    b1ob2o_1 = (open + open[2])/2
+    b1ob2c_1 = (open + close[2])/2
+    b1cb2h_1 = (close + high[2])/2
+    b1cb2l_1 = (close + low[2])/2
+    b1cb2o_1 = (close + open[2])/2
+    b1cb2c_1 = (close + close[2])/2
+    //check mitigation
+    if array.size(zone_values._id) > 0
+        for n = 0 to array.size(zone_values._id) - 1
+            if not array.get(zone_values.mitigated, n)
+                checking = check_mitigation(b1hb2h, n)
+                if checking != "nn"
+
+                    organize_array(checking," / H2H => ",zone_values,n)
+                    alert("H2H",alert.freq_all)
+                    log.info("H2H")
+
+                checking := check_mitigation(b1hb2l, n)
+                if checking != "nn"
+
+                    organize_array(checking," / H2L => ",zone_values,n)
+                    alert("H2L",alert.freq_all)
+                    log.info("H2L")
+
+                checking := check_mitigation(b1hb2o, n)
+                if checking != "nn"
+
+                    organize_array(checking," / H2O => ",zone_values,n)
+                    alert("H2O",alert.freq_all)
+                    log.info("H2O")
+
+                checking := check_mitigation(b1hb2c, n)
+                if checking != "nn"
+
+                    organize_array(checking," / H2C => ",zone_values,n)
+                    alert("H2C",alert.freq_all)
+                    log.info("H2C")
+
+                checking := check_mitigation(b1lb2h, n)
+                if checking != "nn"
+
+                    organize_array(checking," / L2H => ",zone_values,n)
+                    alert("L2H",alert.freq_all)
+                    log.info("L2H")
+
+                checking := check_mitigation(b1lb2l, n)
+                if checking != "nn"
+
+                    organize_array(checking," / L2L => ",zone_values,n)
+                    alert("L2L",alert.freq_all)
+                    log.info("L2L")
+
+                checking := check_mitigation(b1lb2o, n)
+                if checking != "nn"
+
+                    organize_array(checking," / L2O => ",zone_values,n)
+                    alert("L2O",alert.freq_all)
+                    log.info("L2O")
+
+                checking := check_mitigation(b1lb2c, n)
+                if checking != "nn"
+
+                    organize_array(checking," / L2C => ",zone_values,n)
+                    alert("L2C",alert.freq_all)
+                    log.info("L2C")
+
+                checking := check_mitigation(b1ob2h, n)
+                if checking != "nn"
+
+                    organize_array(checking," / O2H => ",zone_values,n)
+                    alert("O2H",alert.freq_all)
+                    log.info("O2H")
+
+                checking := check_mitigation(b1ob2l, n)
+                if checking != "nn"
+
+                    organize_array(checking," / O2L => ",zone_values,n)
+                    alert("O2L",alert.freq_all)
+                    log.info("O2L")
+
+                checking := check_mitigation(b1ob2o, n)
+                if checking != "nn"
+
+                    organize_array(checking," / O2O => ",zone_values,n)
+                    alert("O2O",alert.freq_all)
+                    log.info("O2O")
+
+                checking := check_mitigation(b1ob2c, n)
+                if checking != "nn"
+
+                    organize_array(checking," / O2C => ",zone_values,n)
+                    alert("O2C",alert.freq_all)
+                    log.info("O2C")
+
+                checking := check_mitigation(b1cb2h, n)
+                if checking != "nn"
+
+                    organize_array(checking," / C2H => ",zone_values,n)
+                    alert("C2H",alert.freq_all)
+                    log.info("C2H")
+
+                checking := check_mitigation(b1cb2l, n)
+                if checking != "nn"
+
+                    organize_array(checking," / C2L => ",zone_values,n)
+                    alert("C2L",alert.freq_all)
+                    log.info("C2L")
+
+                checking := check_mitigation(b1cb2o, n)
+                if checking != "nn"
+
+                    organize_array(checking," / C2O => ",zone_values,n)
+                    alert("C2O",alert.freq_all)
+                    log.info("C2O")
+
+                checking := check_mitigation(b1cb2c, n)
+                if checking != "nn"
+
+                    organize_array(checking," / C2C => ",zone_values,n)
+                    alert("C2C",alert.freq_all)
+                    log.info("C2C")
+            
+    //store new zones values
+    //first-second
+    zone_values._id.shift()
+    zone_values.b1hb2h.shift()
+    zone_values.b1hb2l.shift()
+    zone_values.b1hb2o.shift()
+    zone_values.b1hb2c.shift()
+    zone_values.b1lb2h.shift()
+    zone_values.b1lb2l.shift()
+    zone_values.b1lb2o.shift()
+    zone_values.b1lb2c.shift()
+    zone_values.b1ob2h.shift()
+    zone_values.b1ob2l.shift()
+    zone_values.b1ob2o.shift()
+    zone_values.b1ob2c.shift()
+    zone_values.b1cb2h.shift()
+    zone_values.b1cb2l.shift()
+    zone_values.b1cb2o.shift()
+    zone_values.b1cb2c.shift()
+    zone_values.mitigated.shift()
+    zone_values.third.shift()
+
+    zone_values._id.push(bar_index)
+    zone_values.b1hb2h.push(b1hb2h)
+    zone_values.b1hb2l.push(b1hb2l)
+    zone_values.b1hb2o.push(b1hb2o)
+    zone_values.b1hb2c.push(b1hb2c)
+    zone_values.b1lb2h.push(b1lb2h)
+    zone_values.b1lb2l.push(b1lb2l)
+    zone_values.b1lb2o.push(b1lb2o)
+    zone_values.b1lb2c.push(b1lb2c)
+    zone_values.b1ob2h.push(b1ob2h)
+    zone_values.b1ob2l.push(b1ob2l)
+    zone_values.b1ob2o.push(b1ob2o)
+    zone_values.b1ob2c.push(b1ob2c)
+    zone_values.b1cb2h.push(b1cb2h)
+    zone_values.b1cb2l.push(b1cb2l)
+    zone_values.b1cb2o.push(b1cb2o)
+    zone_values.b1cb2c.push(b1cb2c)
+    zone_values.mitigated.push(false)
+    zone_values.third.push(false)
+
+    //first-third
+    zone_values._id.shift()
+    zone_values.b1hb2h.shift()
+    zone_values.b1hb2l.shift()
+    zone_values.b1hb2o.shift()
+    zone_values.b1hb2c.shift()
+    zone_values.b1lb2h.shift()
+    zone_values.b1lb2l.shift()
+    zone_values.b1lb2o.shift()
+    zone_values.b1lb2c.shift()
+    zone_values.b1ob2h.shift()
+    zone_values.b1ob2l.shift()
+    zone_values.b1ob2o.shift()
+    zone_values.b1ob2c.shift()
+    zone_values.b1cb2h.shift()
+    zone_values.b1cb2l.shift()
+    zone_values.b1cb2o.shift()
+    zone_values.b1cb2c.shift()
+    zone_values.mitigated.shift()
+    zone_values.third.shift()
+
+    zone_values._id.push(bar_index)
+    zone_values.b1hb2h.push(b1hb2h_1)
+    zone_values.b1hb2l.push(b1hb2l_1)
+    zone_values.b1hb2o.push(b1hb2o_1)
+    zone_values.b1hb2c.push(b1hb2c_1)
+    zone_values.b1lb2h.push(b1lb2h_1)
+    zone_values.b1lb2l.push(b1lb2l_1)
+    zone_values.b1lb2o.push(b1lb2o_1)
+    zone_values.b1lb2c.push(b1lb2c_1)
+    zone_values.b1ob2h.push(b1ob2h_1)
+    zone_values.b1ob2l.push(b1ob2l_1)
+    zone_values.b1ob2o.push(b1ob2o_1)
+    zone_values.b1ob2c.push(b1ob2c_1)
+    zone_values.b1cb2h.push(b1cb2h_1)
+    zone_values.b1cb2l.push(b1cb2l_1)
+    zone_values.b1cb2o.push(b1cb2o_1)
+    zone_values.b1cb2c.push(b1cb2c_1)
+    zone_values.mitigated.push(false)
+    zone_values.third.push(true)
+
+
+
+//Alerts

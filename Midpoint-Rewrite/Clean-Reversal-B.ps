@@ -1,0 +1,622 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © promuckaj
+
+//@version=6
+indicator("SAWMELF", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500,max_bars_back = 200)
+
+// Inputs should be clearly marked as inputs. I like to use i_
+
+
+//+-------------------------------------------------------+
+//                        INPUTS                          |
+//+-------------------------------------------------------+
+// #region INPUTS
+i_type_shown=input.string("Wicks","Type of boxes shown",["Wicks", "Bodies", "Everything"])
+i_array_size = input.int(25, "How much zones to look back ?")
+i_zone_colorW = input.color(#ff990027, "Wick Zones color:", inline = "col")
+i_zone_colorB = input.color(color.rgb(13, 255, 0, 85), "Body Zones color:", inline = "col")
+i_zone_color2 = input.color(color.silver, "", inline = "col")
+i_border_color = input.color(color.orange, "Border color:")
+
+// #endregion Inputs
+
+//+-------------------------------------------------------+
+//                          ENUM                          |
+//+-------------------------------------------------------+
+// #region ENUM
+
+//@enum                - Enumeration for candle price points
+//@field OPEN  (enum)  - Open price of the candle
+//@field HIGH  (enum)  - High price of the candle  
+//@field LOW   (enum)  - Low price of the candle
+//@field CLOSE (enum)  - Close price of the candle
+enum BAR
+    OPEN
+    HIGH
+    LOW
+    CLOSE
+
+// #endregion ENUM
+
+//+-------------------------------------------------------+
+//                    GLOBALS & TYPES                     |
+//+-------------------------------------------------------+
+// #region GLOBALS
+
+// #region Types
+
+//@type                     - Stores midpoint values between a base price and OHLC points
+//@field vs_open  (float)   - Midpoint between base and open price
+//@field vs_high  (float)   - Midpoint between base and high price
+//@field vs_low   (float)   - Midpoint between base and low price
+//@field vs_close (float)   - Midpoint between base and close price
+type midpoints
+    float vs_open
+    float vs_high
+    float vs_low 
+    float vs_close
+
+//@type                              - Container structure holding arrays of historical midpoint data
+//@field _bar     (array<int>)       - Array of bar indices for reference
+//@field _open    (array<midpoints>) - Array of midpoints calculated from open prices
+//@field _high    (array<midpoints>) - Array of midpoints calculated from high prices
+//@field _low     (array<midpoints>) - Array of midpoints calculated from low prices
+//@field _close   (array<midpoints>) - Array of midpoints calculated from close prices (can be na)
+//@field _matched (array<bool>)      - Array tracking which indices have been matched
+//@field _txt     (string)           - Descriptive text identifier for the container
+type mid_container
+    array<int> _bar
+    array<midpoints> _open
+    array<midpoints> _high
+    array<midpoints> _low
+    array<midpoints> _close
+    array<bool> _matched
+    string _txt
+
+// #endregion Types
+
+// #region Variables
+
+var string PRICE_FORMAT     = na
+var int DECIMALS            = na
+
+// #endregion Variables
+
+//#endregion GLOBALS
+
+//+-------------------------------------------------------+
+//                        FUNCTIONS                       |
+//+-------------------------------------------------------+
+//#region FUNCTIONS
+
+//#region Helper Functions ********************************
+
+//@function         - Checks if bar_index is greater than or equal to cutoff value
+//@returns (bool)   - Boolean indicating if execution can proceed
+can_run(int _cutoff) =>
+    bar_index >= _cutoff 
+
+//@function                - Builds Pine numeric format string and determines decimal precision from mintick
+//@returns (string, int)   - Tuple of [format_string, decimal_count]
+// Build a Pine numeric format string (e.g., "#.#####" or "#.##") and return [format, precision]
+get_format_prec() =>
+    _s     = str.tostring(syminfo.mintick)
+    _parts = str.split(_s, ".")
+    _decs  = array.size(_parts) < 2 ? 0 : str.length(array.get(_parts, 1))
+    string _fmt = "#."
+    if _decs > 0
+        for i = 0 to _decs - 1
+            _fmt += "#"
+    [_fmt, _decs]
+
+//@function         - Logs array contents to Pine Script log on new bar
+array_logger(array<string> list)  =>
+    string full_list=str.tostring(bar_index)
+    bool is_match_found=false
+    if barstate.isnew and barstate.islast
+        for alerts in list
+            full_list+="\n" + alerts
+            is_match_found:=true
+        if is_match_found
+            log.info(full_list)
+
+//@function                    - Parses comparison string to extract container number and price points
+//@returns (int, string, string) - Tuple of [container_number, price_point1, price_point2]
+parse_comparison_string(_inputStr) =>
+    // Get container word ("One" or "Two")
+    _container_split = str.split(_inputStr, " ")
+    _containerText = array.get(_container_split, 0)
+    _container =_containerText=="Zero"? 0: _containerText == "One" ? 1 : _containerText == "Two" ? 2 : na
+
+    // Extract the points string: "Open vs Close"
+    _point_split = str.split(_inputStr, ": ")
+    _pointsSection = array.get(_point_split, 1)
+
+    // Split points
+    _points = str.split(_pointsSection, " vs ")
+    _point1 = array.get(_points, 0)
+    _point2 = array.get(_points, 1)
+
+    // Return as tuple
+    [_container, _point1, _point2]
+
+//@function         - Gets historical price value by key name at specified index
+//@returns (float)  - Float price value or na if unknown key
+get_base_price(_key, _index) =>
+    switch _key
+        "Open"  => open[bar_index - _index]
+        "High"  => high[bar_index - _index]
+        "Low"   => low[bar_index - _index]
+        "Close" => close[bar_index - _index]
+        => na  // fallback if unknown key
+
+//@function         - Gets alternative historical price with container offset
+//@returns (float)  - Float price value or na if unknown key
+get_alt_price(_key, _index, c) =>
+    switch _key
+        "Open"  => open[(bar_index - _index) + c]
+        "High"  => high[(bar_index - _index) + c]
+        "Low"   => low[(bar_index - _index) + c]
+        "Close" => close[(bar_index - _index) + c]
+        => na  // fallback if unknown key
+
+//@function         - Safely shifts midpoints array if not na
+safe_shift_arr(array<midpoints> can_val)=>
+
+    if not na(can_val)
+        can_val.shift()
+
+//@function         - Safely pushes midpoints to array if not na
+safe_push_arr(array<midpoints> can_val,midpoints base_values)=>
+
+    if not na(can_val)
+        can_val.push(base_values)
+//#endregion Helper Functions
+
+//#region Update Arrays ***********************************
+
+//@function                     - Updates container arrays by shifting old data and pushing new midpoints
+//@param mid_con    (mid_container) - Container to update with new data
+//@param base_open  (midpoints)     - New midpoints calculated from open price
+//@param base_high  (midpoints)     - New midpoints calculated from high price
+//@param base_low   (midpoints)     - New midpoints calculated from low price
+//@param base_close (midpoints)     - New midpoints calculated from close price (can be na)
+update_mid_container_arrays(mid_container mid_con, midpoints base_open, midpoints base_high, midpoints base_low, midpoints base_close) =>
+    // Shift the existing arrays, deleting the first line
+    mid_con._bar.shift()
+    safe_shift_arr(mid_con._open)
+    safe_shift_arr(mid_con._high)
+    safe_shift_arr(mid_con._low)
+    safe_shift_arr(mid_con._close)
+    mid_con._matched.shift()
+
+    // Push in the new data
+    mid_con._bar.push(bar_index)
+    safe_push_arr(mid_con._open,base_open)
+    safe_push_arr(mid_con._high,base_high)
+    safe_push_arr(mid_con._low,base_low)
+    safe_push_arr(mid_con._close,base_close)
+    mid_con._matched.push(false)
+
+//#endregion Update Arrays
+
+//#region Calculate Midpoints *****************************
+
+//@function                     - Calculates midpoint between two values with specified decimal precision
+//@param value1 (float)         - First value for midpoint calculation
+//@param value2 (float)         - Second value for midpoint calculation  
+//@param _decs  (int)           - Number of decimal places for rounding
+//@returns (float)              - Float midpoint value rounded to specified decimals
+calc_midpoint(float value1, float value2, int _decs) =>
+    math.round((value1 + value2) / 2, _decs)
+
+//@function                     - Creates midpoints object with all OHLC comparisons to a base price
+//@param base       (float)     - Base price value to compare against
+//@param bars_back  (int)       - Number of bars to look back for comparison prices
+//@param _decs      (int)       - Number of decimal places for rounding
+//@returns (midpoints)          - New midpoints object with all four vs_* fields populated
+create_mid_OHLC(float base, int bars_back, int _decs) =>
+    midpoints.new(
+          calc_midpoint(base, open[bars_back], _decs),
+          calc_midpoint(base, high[bars_back], _decs),
+          calc_midpoint(base, low[bars_back], _decs),
+          calc_midpoint(base, close[bars_back], _decs)
+          )
+
+//#endregion Calculate Midpoints
+
+//#region Get Matches *************************************
+
+//@function                             - Compares value against all midpoint fields and returns matches
+//@returns (array<string>)              - Array of formatted match strings
+get_candle_matches(float _value, midpoints _candle, string _container_text, string _part,string type_filter) =>
+    // Set the necessary String elements
+    base_text = switch _part
+        "open" => ": Open "
+        "high" => ": High "
+        "low" => ": Low "
+        "close" => ": Close "
+
+
+    array<string> type_matches = array.new_string()
+
+    if _value == _candle.vs_open 
+        type_matches.push(_container_text + base_text + "vs Open")
+    if _value == _candle.vs_high
+        type_matches.push(_container_text + base_text + "vs High")
+    if _value == _candle.vs_low
+        type_matches.push(_container_text + base_text + "vs Low")
+    if _value == _candle.vs_close 
+        type_matches.push(_container_text + base_text + "vs Close")
+    
+    type_matches
+
+//@function         - Checks if midpoints array is na
+//@returns (bool)   - Boolean indicating if array is na
+check_arr_na(array<midpoints> input_arr )=>
+
+    na(input_arr)
+        
+
+
+//@function                                 - Finds matching midpoints and builds match arrays with filtering
+//@returns (array<string>, string)          - Tuple of [matches_array, value_text_string]
+check_matches(float _value, mid_container mid_con, int indx, string live_con, string live_p1, string live_p2,string type_filter) =>
+    //live_value_string = "Container " + live_con + ": " + live_p1 + " vs " + live_p2 //do not touch LOL
+    live_p_one=live_p1=="Open"? open : live_p1=="High"? high : live_p1=="Low"? low : live_p1=="Close"? close : na
+    bar_i=live_con=="Zero"? 0 : live_con=="One"? 1 : live_con=="Two"? 2 : na
+    live_p_two=live_p2=="Open"? open[bar_i] : live_p2=="High"? high[bar_i] : live_p2=="Low"? low[bar_i] : live_p2=="Close"? close[bar_i] : na
+    //the following line is the part that needs to be modified to change the alert/log text for the first part
+    live_value_string = "Container " + live_con + ": " + live_p1 + "(" + str.tostring(live_p_one) + ")" + " vs " + live_p2 + "(" + str.tostring(live_p_two) + ")"
+    
+    array<string> matches = array.new_string()
+
+    array<string>open_matches=na   
+    array<string>high_matches=na
+    array<string>low_matches=na   
+    array<string>close_matches=na
+
+    is_body= (type_filter=="Bodies" and  (live_p1=="Open" or live_p1=="Close")) or type_filter=="Everything"
+    is_wick= (type_filter=="Wicks" and  (live_p1=="High" or live_p1=="Low")) or type_filter=="Everything"
+    is_body_zero= (live_con=="Zero" and type_filter=="Bodies" and live_p2=="Close") or type_filter=="Everything"
+    is_wick_zero= (live_con=="Zero" and type_filter=="Wicks" and live_p2!="Close") or type_filter=="Everything"
+    // Get matches for each candle
+    if ((live_con=="One" or live_con=="Two") and (is_body or is_wick)) or (is_body_zero or is_wick_zero)
+        open_matches    := check_arr_na(mid_con._open)?     na : get_candle_matches(_value, array.get(mid_con._open, indx), mid_con._txt, "open",type_filter)
+        high_matches    := check_arr_na(mid_con._high)?     na: get_candle_matches(_value, array.get(mid_con._high, indx), mid_con._txt, "high",type_filter)
+        low_matches     := check_arr_na(mid_con._low)?      na :get_candle_matches(_value, array.get(mid_con._low, indx), mid_con._txt, "low",type_filter)
+        close_matches   := check_arr_na(mid_con._close)?    na : get_candle_matches(_value, array.get(mid_con._close, indx), mid_con._txt, "close",type_filter)
+
+    // Group all array, used this instead of concat which apparently better for memory
+    if not na(open_matches)
+        for v in open_matches
+            array.push(matches, v)
+    if not na(high_matches)
+        for v in high_matches
+            array.push(matches, v)
+    if not na(low_matches)
+        for v in low_matches
+            array.push(matches, v)
+    if not na(close_matches)
+        for v in close_matches
+            array.push(matches, v)
+    
+    [matches, live_value_string]
+
+//#endregion Get Matches
+
+//#region Manage Alert Lists ******************************
+
+//@function                             - Manages the master alert list by adding new and removing stale alerts
+//@param alerts_list (array<string>)   - Current tick's active alerts
+//@param master_list (array<string>)   - Persistent master list of all alerts
+//@returns (bool, array<int>)          - Tuple of [should_alert, new_match_locations]
+manage_alert_list(array<string> alerts_list, array<string> master_list) =>
+    bool should_alert = false
+    array<int> new_match_locations = array.new<int>()
+    //[Remove from Master List]
+    arrSize = array.size(master_list)
+    if arrSize > 0
+        // Iterate backwards so removals are safe.
+        for i = arrSize - 1 to 0
+            m_alert = array.get(master_list, i)
+            bool match_found = false
+            for a_alert in alerts_list
+                if m_alert == a_alert
+                    match_found := true
+                    break
+            if not match_found
+                array.remove(master_list, i)
+                // Uncomment for troubleshooting:
+                log.warning("\nRemoved stale alert: " + m_alert)
+
+    //[Add to Master List]
+    for alert in alerts_list
+        bool alertFound = false
+        for master_alert in master_list
+            if alert == master_alert
+                alertFound := true
+                break
+        if not alertFound
+            array.push(master_list, alert)
+            array.push(new_match_locations, array.size(master_list) - 1)
+            should_alert := true
+
+    [should_alert, new_match_locations]
+
+
+//#endregion Manage Alert Lists
+
+//#region Display Matches *********************************
+//@function                             - Extracts candle names from value text string
+//@returns (string, string, string)     - Tuple of [container_name, candle_one_name, candle_two_name]
+get_candles_from_value_text(string value_text) =>
+    string container_p1=na
+    string candle_one=na
+    string candle_two=na
+    part_one=str.split(value_text,":")
+    part_two=str.split(array.get(part_one,1),"vs")
+    part_three=str.split(array.get(part_one,0)," ")
+    candle_one:=str.trim(array.get(part_two,0))
+    candle_two:=str.trim(array.get(part_two,1))
+    container_p1:=str.trim(array.get(part_three,1))
+    [container_p1,candle_one,candle_two]
+
+
+//@function                 - Generates alert text and draws boxes/lines for matches
+//@returns (string)         - Formatted alert text string
+show_matches_get_alert_text(string live_con, string live_p1, string live_p2,string value_text, array<string> _match_list, mid_container mid_con, int n,string type_filter) =>
+    _left_bar   = array.get(mid_con._bar, n)
+    varip string alert_text = na  // Clean alert text
+    bool is_match_found=false 
+    // Build lines without leading/trailing blank lines
+    array<string> lines = array.new_string()
+    // [container_p1,candle_one,candle_two]=get_candles_from_value_text(value_text)
+    
+    box_color= color.rgb(0,0,0)
+    is_body=((live_con=="One" or live_con=="Two") and (live_p1=="Open" or live_p1=="Close")) 
+     or (live_con=="Zero" and live_p2=="Close")
+
+    box_color:=is_body? i_zone_colorB : i_zone_colorW
+
+    
+    array.push(lines, value_text)
+    for [i, val] in _match_list
+        // Prepare variables for the visuals and alert text         (container=="One" or container =="Two")
+        [container, priceName1, priceName2] = parse_comparison_string(val)
+        _base       = get_base_price(priceName1, _left_bar)
+        _alt        = get_alt_price(priceName2, _left_bar, container)
+        _top        = _base > _alt ? _base : _alt
+        _bottom     = _base < _alt ? _base : _alt
+        _left_bar   := _left_bar - container 
+        //insert condition for bg color to determine which of the two is chosen based on the container number and also based on if its a wick or body. 
+
+        // Draw the boxes and lines
+        box.new(_left_bar, _top, bar_index, _bottom, border_color = i_border_color, bgcolor = box_color)
+        line.new(_left_bar, (_top + _bottom)/2, bar_index, (_top + _bottom)/2, color = i_zone_color2, style = line.style_dashed)
+        // Add a single line per match (no leading blank)
+        //the following line is the part that needs to be modified to change the alert/log text for the second part
+        //array.push(lines, "(" + str.tostring(container) + ") " + priceName1 + " vs " + priceName2 + " [" + str.tostring(n) + "]")
+        is_match_found:=true
+            
+    if is_match_found
+        array.set(mid_con._matched, n, true)
+        alert_text := array.join(lines, "\n")
+    else
+        alert_text := ""
+    //log.info(value_text)   
+    alert_text
+
+//@function         - Processes match array and adds alert text to alerts list
+draw_matches_text(string live_con, string live_p1, string live_p2, array<string> alerts_list, array<string> matches_arr, string value_text, mid_container mid_con, int n,string type_filter) =>
+    if array.size(matches_arr) > 0
+        alert_text = show_matches_get_alert_text(live_con,live_p1,live_p2,value_text, matches_arr, mid_con, n,type_filter)
+        if str.length(alert_text) > 0
+            array.push(alerts_list, alert_text)
+        
+
+//#endregion Display Matches
+
+//#region Check Container *********************************
+        
+//@function         - Checks OHLC midpoint for matches and draws visualizations
+check_mid_OHLC(array<string> alerts_list, mid_container mid_con, midpoints current_mid, int n, string live_con, string live_p1,string type_filter) =>
+    // [NOTE] This master list is actually useless! It doesn't capture everything. We will change this out for the active alerts, should be fine.
+    
+    // Check Open matches
+    if not na(current_mid)
+        [matches_arrO, value_textO] = check_matches(current_mid.vs_open, mid_con, n, live_con, live_p1, "Open",type_filter)
+        draw_matches_text(live_con,live_p1,"Open",alerts_list, matches_arrO, value_textO, mid_con, n,type_filter)
+
+    // Check High matches
+    if not na(current_mid)
+        [matches_arrH, value_textH] = check_matches(current_mid.vs_high, mid_con, n, live_con, live_p1, "High",type_filter)
+        draw_matches_text(live_con,live_p1,"High",alerts_list, matches_arrH, value_textH, mid_con, n,type_filter)
+
+    // Check Low matches
+    if not na(current_mid)
+        [matches_arrL, value_textL] = check_matches(current_mid.vs_low, mid_con, n, live_con, live_p1, "Low",type_filter)
+        draw_matches_text(live_con,live_p1,"Low",alerts_list, matches_arrL, value_textL, mid_con, n,type_filter)
+
+    // Check Close matches
+    if not na(current_mid)
+        [matches_arrC, value_textC] = check_matches(current_mid.vs_close, mid_con, n, live_con, live_p1, "Close",type_filter)
+        draw_matches_text(live_con,live_p1,"Close",alerts_list, matches_arrC, value_textC, mid_con, n,type_filter)
+
+//@function         - Checks midpoints against container values and applies type filtering
+check_con_midpoints(array<string> alerts_list, mid_container mid_con, midpoints mid_open, midpoints mid_high, midpoints mid_low, midpoints mid_close, int n, string live_con,string type_filter) =>
+
+    m_open=mid_open
+    m_high=mid_high
+    m_low=mid_low
+    m_close=mid_close
+
+    if live_con == "Zero" and not barstate.isconfirmed
+        m_open.vs_close:=na
+        m_high.vs_close:=na
+        m_low.vs_close:=na
+        
+
+    check_mid_OHLC(alerts_list, mid_con, m_high, n, live_con, "High",type_filter)
+    check_mid_OHLC(alerts_list, mid_con, m_low, n, live_con, "Low",type_filter)
+
+    if live_con == "One" or live_con == "Two"
+        if barstate.isnew 
+            check_mid_OHLC(alerts_list, mid_con, m_open, n, live_con, "Open",type_filter)
+    else if live_con == "Zero"
+        check_mid_OHLC(alerts_list, mid_con, m_open, n, live_con, "Open",type_filter)
+    if barstate.isconfirmed
+        check_mid_OHLC(alerts_list, mid_con, m_close, n, live_con, "Close",type_filter)
+
+//@function                     - Checks all midpoint containers for matches and processes unmatched indices
+//@param alerts_list (array<string>) - Array to store alert messages
+//@param mid_con0    (mid_container) - Zero candle container  
+//@param mid_con1    (mid_container) - One candle container
+//@param mid_con2    (mid_container) - Two candle container
+//@param mid_open    (midpoints)     - Live midpoints from open price
+//@param mid_high    (midpoints)     - Live midpoints from high price
+//@param mid_low     (midpoints)     - Live midpoints from low price
+//@param mid_close   (midpoints)     - Live midpoints from close price
+//@param n           (int)           - Current index being checked
+//@param live_con    (string)        - Container identifier ("Zero", "One", "Two")
+//@param type_filter (string)        - Filter type ("Wicks", "Bodies", "Everything")
+check_all_midpoints(array<string> alerts_list,mid_container mid_con0 ,mid_container mid_con1,  mid_container mid_con2, midpoints mid_open, midpoints mid_high, midpoints mid_low, midpoints mid_close, int n, string live_con,string type_filter) =>
+    // For each set of live midpoints, compare against BOTH containers.
+    if not array.get(mid_con0._matched, n) and not na(array.get(mid_con0._bar, n))
+        check_con_midpoints(alerts_list, mid_con0, mid_open, mid_high, mid_low, mid_close, n, live_con,type_filter)
+    if not array.get(mid_con1._matched, n) and not na(array.get(mid_con1._bar, n))
+        check_con_midpoints(alerts_list, mid_con1, mid_open, mid_high, mid_low, mid_close, n, live_con,type_filter)
+    if not array.get(mid_con2._matched, n) and not na(array.get(mid_con2._bar, n))
+        check_con_midpoints(alerts_list, mid_con2, mid_open, mid_high, mid_low, mid_close, n, live_con,type_filter)
+
+//#endregion Check Container
+
+//#endregion FUNCTIONS
+
+//+-------------------------------------------------------+
+//                        EXECUTION                       |
+//+-------------------------------------------------------+
+//#region EXECUTION
+
+//#region Initialize Containers ***************************
+
+// Create the containters for all of the midpoint data
+var zero_candle_values = mid_container.new(
+      array.new<int>(i_array_size),
+      array.new<midpoints>(i_array_size), // Open mids
+      array.new<midpoints>(i_array_size), // High mids
+      array.new<midpoints>(i_array_size), // Low mids
+      na, // Close mids
+      array.new<bool>(i_array_size, false),
+      "Zero Candle"
+         )
+
+var one_candle_values = mid_container.new(
+      array.new<int>(i_array_size),
+      array.new<midpoints>(i_array_size), // Open mids
+      array.new<midpoints>(i_array_size), // High mids
+      array.new<midpoints>(i_array_size), // Low mids
+      array.new<midpoints>(i_array_size), // Close mids
+      array.new<bool>(i_array_size, false),
+      "One Candle"
+      )
+ 
+var two_candle_values = mid_container.new(
+      array.new<int>(i_array_size),
+      array.new<midpoints>(i_array_size), // Open mids
+      array.new<midpoints>(i_array_size), // High mids
+      array.new<midpoints>(i_array_size), // Low mids
+      array.new<midpoints>(i_array_size), // Close mids
+      array.new<bool>(i_array_size, false),
+      "Two Candles"
+      )
+
+//#endregion Initialize Containers
+
+// Initialize cached price format string from mintick
+if barstate.isfirst
+    [_frmt, _prec] = get_format_prec()
+    PRICE_FORMAT := _frmt, DECIMALS := _prec
+
+// Live midpoints
+midpoints zero_candle_open   = midpoints.new( 
+         na,
+         calc_midpoint(open, high, DECIMALS),
+         calc_midpoint(open, low, DECIMALS),
+         calc_midpoint(open, close, DECIMALS)
+         )
+midpoints zero_candle_high   = midpoints.new( 
+         na,
+         na,
+         calc_midpoint(high, low, DECIMALS),
+         calc_midpoint(high, close, DECIMALS)
+         )
+midpoints zero_candle_low    = midpoints.new( 
+         na,
+         na,
+         na,
+          calc_midpoint(low, close, DECIMALS)
+         )
+
+//midpoints zero_candle_close  = create_mid_OHLC(close, 0, DECIMALS)
+
+// Box 1
+midpoints one_candle_open   = create_mid_OHLC(open, 1, DECIMALS)
+midpoints one_candle_high   = create_mid_OHLC(high, 1, DECIMALS)
+midpoints one_candle_low    = create_mid_OHLC(low, 1, DECIMALS)
+midpoints one_candle_close  = create_mid_OHLC(close, 1, DECIMALS)
+
+// Box 2
+midpoints two_candle_open   = create_mid_OHLC(open, 2, DECIMALS)
+midpoints two_candle_high   = create_mid_OHLC(high, 2, DECIMALS)
+midpoints two_candle_low    = create_mid_OHLC(low, 2, DECIMALS)
+midpoints two_candle_close  = create_mid_OHLC(close, 2, DECIMALS)
+
+// Aggregate midpoints for one-time logging per bar close on the last bar
+array<midpoints> _mid_vals = array.new<midpoints>()
+array<string>    _mid_pref = array.new_string()
+
+var array<string> active_alerts = array.new_string() // updates every tick
+varip array<string> saved_alerts = array.new_string() // The master list that all of the alerts will be sent out on. 
+
+// Clear the active alerts
+array.clear(active_alerts)
+
+if  barstate.isnew
+    // Clear active alerts when a new candle starts (universal method)
+    array.clear(active_alerts)
+    array.clear(saved_alerts)
+    // Reset the _matched variable at the start of each bar
+    for [i, _] in one_candle_values._matched
+        array.set(zero_candle_values._matched, i, false)
+        array.set(one_candle_values._matched, i, false)
+        array.set(two_candle_values._matched, i, false)
+
+// Check for matches only after cutoff.
+for n = 0 to i_array_size - 1
+    check_all_midpoints(active_alerts,zero_candle_values ,one_candle_values, two_candle_values, zero_candle_open, zero_candle_high, zero_candle_low, na, n, "Zero",i_type_shown)
+    check_all_midpoints(active_alerts,zero_candle_values, one_candle_values, two_candle_values, one_candle_open, one_candle_high, one_candle_low, one_candle_close, n, "One",i_type_shown)
+    check_all_midpoints(active_alerts,zero_candle_values, one_candle_values, two_candle_values, two_candle_open, two_candle_high, two_candle_low, two_candle_close, n, "Two",i_type_shown)
+
+// Manage the alerts after cutoff
+[should_alert, new_match_location_arr] = manage_alert_list(active_alerts, saved_alerts)
+
+// Display alerts after cutoff
+if should_alert
+    string alert_text = ""
+    bool first_block = true
+    for loc in new_match_location_arr
+        block = array.get(saved_alerts, loc)
+        alert_text += first_block ? block : "\n\n" + block 
+        first_block := false
+
+    log.info(timeframe.period + "," + "\n" + alert_text )
+    alert(timeframe.period + "," + alert_text , alert.freq_all)
+
+// add the data into the array (only after cutoff)
+if barstate.isconfirmed
+    update_mid_container_arrays(zero_candle_values, zero_candle_open, zero_candle_high, zero_candle_low, na)
+    update_mid_container_arrays(one_candle_values, one_candle_open, one_candle_high, one_candle_low, one_candle_close)
+    update_mid_container_arrays(two_candle_values, two_candle_open, two_candle_high, two_candle_low, two_candle_close)
+
+//#endregion EXECUTION

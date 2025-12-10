@@ -1,0 +1,441 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © promuckaj
+
+//@version=6
+indicator("SAWMELF", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500, max_bars_back = 200)
+
+//+-------------------------------------------------------+
+//                        INPUTS                          |
+//+-------------------------------------------------------+
+// #region INPUTS
+
+i_type_shown   = input.string("Wicks", "Type of boxes shown", ["Wicks", "Bodies", "Everything"])
+i_lookback     = input.int(25, "How many zones to look back?")
+i_zone_colorW  = input.color(#ff990027, "Wick Zones color:", inline = "col")
+i_zone_colorB  = input.color(color.rgb(13, 255, 0, 85), "Body Zones color:", inline = "col")
+i_zone_color2  = input.color(color.silver, "", inline = "col")
+i_border_color = input.color(color.orange, "Border color:")
+i_log_bars     = input.int(100, "Number of recent bars to log", minval = 1, maxval = 500)
+
+// #endregion Inputs
+
+//+-------------------------------------------------------+
+//                          TYPES                         |
+//+-------------------------------------------------------+
+// #region TYPES
+
+//@type                          - Stores metadata about a historical midpoint
+//@field bar_idx      (int)      - Bar index where midpoint was recorded
+//@field container    (string)   - Container type ("Zero", "One", "Two")
+//@field base_point   (string)   - Base OHLC point ("Open", "High", "Low", "Close")
+//@field vs_point     (string)   - Comparison OHLC point ("Open", "High", "Low", "Close")
+//@field price_base   (float)    - Base price value
+//@field price_vs     (float)    - Comparison price value
+type midpoint_record
+    int    bar_idx
+    string container
+    string base_point
+    string vs_point
+    float  price_base
+    float  price_vs
+
+//@type                                      - Wrapper to hold array of midpoint records for map storage
+//@field records (array<midpoint_record>)    - Array of midpoint records sharing the same midpoint value
+type record_collection
+    array<midpoint_record> records
+
+// #endregion TYPES
+
+//+-------------------------------------------------------+
+//                    GLOBALS & VARIABLES                 |
+//+-------------------------------------------------------+
+// #region GLOBALS
+
+var int DECIMALS = na
+var map<float, record_collection> g_midpoint_map = map.new<float, record_collection>()
+var array<int> g_tracked_bars = array.new<int>()
+var array<string> g_alert_history = array.new_string()
+var int g_start_logging_bar = na
+
+// #endregion GLOBALS
+
+//+-------------------------------------------------------+
+//                        FUNCTIONS                       |
+//+-------------------------------------------------------+
+// #region FUNCTIONS
+
+//#region Utility Functions *******************************
+
+//@function                 - Determines decimal precision from symbol's minimum tick
+//@returns (int)            - Number of decimal places for price rounding
+get_decimal_precision() =>
+    _tick_str  = str.tostring(syminfo.mintick)
+    _parts     = str.split(_tick_str, ".")
+    _precision = array.size(_parts) < 2 ? 0 : str.length(array.get(_parts, 1))
+    _precision
+
+//@function                     - Calculates midpoint between two values with rounding
+//@param value1     (float)     - First value
+//@param value2     (float)     - Second value  
+//@param precision  (int)       - Number of decimal places
+//@returns (float)              - Rounded midpoint value
+calc_midpoint(float value1, float value2, int precision) =>
+    math.round((value1 + value2) / 2, precision)
+
+//@function                     - Checks if midpoint passes type filter criteria
+//@param container  (string)    - Container type ("Zero", "One", "Two")
+//@param base_point (string)    - Base OHLC point
+//@param vs_point   (string)    - Comparison OHLC point
+//@param filter     (string)    - Filter type ("Wicks", "Bodies", "Everything")
+//@returns (bool)               - True if midpoint passes filter
+passes_filter(string container, string base_point, string vs_point, string filter) =>
+    result = false
+    if filter == "Everything"
+        result := true
+    else if container == "Zero"
+        if filter == "Bodies"
+            result := vs_point == "Close"
+        else
+            result := vs_point != "Close"
+    else
+        if filter == "Bodies"
+            result := base_point == "Open" or base_point == "Close"
+        else
+            result := base_point == "High" or base_point == "Low"
+    result
+
+//@function                     - Gets OHLC price value by name at offset
+//@param point_name (string)    - OHLC point name
+//@param offset     (int)       - Bars back offset
+//@returns (float)              - Price value
+get_price_at_offset(string point_name, int offset) =>
+    result = switch point_name
+        "Open"  => open[offset]
+        "High"  => high[offset]
+        "Low"   => low[offset]
+        "Close" => close[offset]
+        => na
+    result
+
+//@function                     - Checks if current bar is within logging range
+//@returns (bool)               - True if should log this bar
+should_log_current_bar() =>
+    bar_index >= g_start_logging_bar
+
+//#endregion Utility Functions
+
+//#region Map Management **********************************
+
+//@function                             - Adds midpoint record to the lookup map
+//@param midpoint_value (float)         - Midpoint value as key
+//@param record         (midpoint_record) - Metadata about the midpoint
+add_to_midpoint_map(float midpoint_value, midpoint_record record) =>
+    // !!! If statement mismatch
+    if g_midpoint_map.contains(midpoint_value)
+        collection = g_midpoint_map.get(midpoint_value)
+        array.push(collection.records, record)
+        0
+    else
+        new_collection = record_collection.new(array.new<midpoint_record>())
+        array.push(new_collection.records, record)
+        g_midpoint_map.put(midpoint_value, new_collection)
+        0
+
+//@function                     - Removes all midpoint records for a specific bar
+//@param bar_idx    (int)       - Bar index to remove from map
+remove_bar_from_map(int bar_idx) =>
+    keys_to_remove = array.new<float>()
+    keys = g_midpoint_map.keys()
+    
+    for key in keys
+        if g_midpoint_map.contains(key)
+            collection = g_midpoint_map.get(key)
+            records = collection.records
+            
+            for i = array.size(records) - 1 to 0
+                if i >= 0 and i < array.size(records)
+                    if array.get(records, i).bar_idx == bar_idx
+                        array.remove(records, i)
+            
+            if array.size(records) == 0
+                array.push(keys_to_remove, key)
+    
+    for key in keys_to_remove
+        g_midpoint_map.remove(key)
+
+//@function                     - Stores all OHLC midpoints for a confirmed bar into map
+//@param bar_idx    (int)       - Bar index to store
+//@param decimals   (int)       - Decimal precision
+store_confirmed_bar_midpoints(int bar_idx, int decimals) =>
+    offset = bar_index - bar_idx
+    
+    ohlc_points = array.from("Open", "High", "Low", "Close")
+    
+    // Zero candle midpoints (within same bar)
+    for i = 0 to 2
+        for j = (i + 1) to 3
+            base_name = array.get(ohlc_points, i)
+            vs_name   = array.get(ohlc_points, j)
+            base_val  = get_price_at_offset(base_name, offset)
+            vs_val    = get_price_at_offset(vs_name, offset)
+            mid_val   = calc_midpoint(base_val, vs_val, decimals)
+            
+            add_to_midpoint_map(mid_val, 
+             midpoint_record.new(bar_idx, "Zero", base_name, vs_name, base_val, vs_val))
+    
+    // One candle midpoints (vs previous bar)
+    if bar_idx > 0
+        prev_offset = offset + 1
+        for base_name in ohlc_points
+            for vs_name in ohlc_points
+                base_val = get_price_at_offset(base_name, offset)
+                vs_val   = get_price_at_offset(vs_name, prev_offset)
+                mid_val  = calc_midpoint(base_val, vs_val, decimals)
+                
+                add_to_midpoint_map(mid_val, 
+                 midpoint_record.new(bar_idx, "One", base_name, vs_name, base_val, vs_val))
+    
+    // Two candle midpoints (vs bar 2 back)
+    if bar_idx > 1
+        two_offset = offset + 2
+        for base_name in ohlc_points
+            for vs_name in ohlc_points
+                base_val = get_price_at_offset(base_name, offset)
+                vs_val   = get_price_at_offset(vs_name, two_offset)
+                mid_val  = calc_midpoint(base_val, vs_val, decimals)
+                
+                add_to_midpoint_map(mid_val, 
+                 midpoint_record.new(bar_idx, "Two", base_name, vs_name, base_val, vs_val))
+
+//#endregion Map Management
+
+//#region Match Detection *********************************
+
+//@function                             - Finds all historical matches for a live midpoint value
+//@param live_mid_value (float)         - Current midpoint value to check
+//@param live_container (string)        - Current container type
+//@param live_base      (string)        - Current base point name
+//@param live_vs        (string)        - Current comparison point name
+//@param live_base_price (float)        - Current base price
+//@param live_vs_price  (float)         - Current comparison price
+//@param type_filter    (string)        - Type filter setting
+//@returns (array<string>)              - Array of formatted match strings
+find_matches_for_midpoint(float live_mid_value, string live_container, string live_base, 
+ string live_vs, float live_base_price, float live_vs_price, string type_filter) =>
+    matches = array.new_string()
+    
+    if not passes_filter(live_container, live_base, live_vs, type_filter)
+        matches
+    else if g_midpoint_map.contains(live_mid_value)
+        collection = g_midpoint_map.get(live_mid_value)
+        records = collection.records
+        processed_bars = map.new<int, bool>()
+        
+        for record in records
+            if not processed_bars.contains(record.bar_idx)
+                if passes_filter(record.container, record.base_point, record.vs_point, type_filter)
+                    processed_bars.put(record.bar_idx, true)
+                    
+                    // Build match text
+                    live_text = "Container " + live_container + ": " + live_base + 
+                     "(" + str.tostring(live_base_price) + ") vs " + live_vs + 
+                     "(" + str.tostring(live_vs_price) + ")"
+                    
+                    // Determine box color
+                    is_body = (live_container == "One" or live_container == "Two") and 
+                     (live_base == "Open" or live_base == "Close")
+                    is_body := is_body or (live_container == "Zero" and live_vs == "Close")
+                    box_col = is_body ? i_zone_colorB : i_zone_colorW
+                    
+                    // Draw visualization
+                    top_price = math.max(record.price_base, record.price_vs)
+                    bot_price = math.min(record.price_base, record.price_vs)
+                    left_bar  = record.bar_idx
+                    
+                    if record.container != "Zero"
+                        offset_val = record.container == "One" ? 1 : 2
+                        left_bar  := left_bar - offset_val
+                    
+                    box.new(left_bar, top_price, bar_index, bot_price, 
+                     border_color = i_border_color, bgcolor = box_col)
+                    line.new(left_bar, live_mid_value, bar_index, live_mid_value, 
+                     color = i_zone_color2, style = line.style_dashed)
+                    
+                    array.push(matches, live_text)
+        matches
+    else
+        matches
+
+//@function                             - Checks all current bar midpoints against historical data
+//@param type_filter    (string)        - Type filter setting
+//@param is_confirmed   (bool)          - Whether current bar is confirmed
+//@returns (array<string>)              - Array of all match strings found
+check_current_bar_matches(string type_filter, bool is_confirmed) =>
+    all_matches = array.new_string()
+    ohlc_points = array.from("Open", "High", "Low", "Close")
+    
+    // Zero candle checks
+    for i = 0 to 2
+        for j = (i + 1) to 3
+            base_name = array.get(ohlc_points, i)
+            vs_name   = array.get(ohlc_points, j)
+            
+            // Skip close comparisons if not confirmed
+            if not is_confirmed and vs_name == "Close"
+                continue
+            
+            base_val = get_price_at_offset(base_name, 0)
+            vs_val   = get_price_at_offset(vs_name, 0)
+            mid_val  = calc_midpoint(base_val, vs_val, DECIMALS)
+            
+            matches = find_matches_for_midpoint(mid_val, "Zero", base_name, vs_name, 
+             base_val, vs_val, type_filter)
+            for m in matches
+                array.push(all_matches, m)
+    
+    // One candle checks
+    if barstate.isnew or is_confirmed
+        for base_name in ohlc_points
+            if not is_confirmed and base_name == "Close"
+                continue
+            if is_confirmed and base_name == "Open"
+                continue
+                
+            for vs_name in ohlc_points
+                base_val = get_price_at_offset(base_name, 0)
+                vs_val   = get_price_at_offset(vs_name, 1)
+                mid_val  = calc_midpoint(base_val, vs_val, DECIMALS)
+                
+                matches = find_matches_for_midpoint(mid_val, "One", base_name, vs_name, 
+                 base_val, vs_val, type_filter)
+                for m in matches
+                    array.push(all_matches, m)
+    
+    // Always check High and Low for One candle
+    for base_name in array.from("High", "Low")
+        for vs_name in ohlc_points
+            base_val = get_price_at_offset(base_name, 0)
+            vs_val   = get_price_at_offset(vs_name, 1)
+            mid_val  = calc_midpoint(base_val, vs_val, DECIMALS)
+            
+            matches = find_matches_for_midpoint(mid_val, "One", base_name, vs_name, 
+             base_val, vs_val, type_filter)
+            for m in matches
+                array.push(all_matches, m)
+    
+    // Two candle checks
+    if barstate.isnew or is_confirmed
+        for base_name in ohlc_points
+            if not is_confirmed and base_name == "Close"
+                continue
+            if is_confirmed and base_name == "Open"
+                continue
+                
+            for vs_name in ohlc_points
+                base_val = get_price_at_offset(base_name, 0)
+                vs_val   = get_price_at_offset(vs_name, 2)
+                mid_val  = calc_midpoint(base_val, vs_val, DECIMALS)
+                
+                matches = find_matches_for_midpoint(mid_val, "Two", base_name, vs_name, 
+                 base_val, vs_val, type_filter)
+                for m in matches
+                    array.push(all_matches, m)
+    
+    // Always check High and Low for Two candle
+    for base_name in array.from("High", "Low")
+        for vs_name in ohlc_points
+            base_val = get_price_at_offset(base_name, 0)
+            vs_val   = get_price_at_offset(vs_name, 2)
+            mid_val  = calc_midpoint(base_val, vs_val, DECIMALS)
+            
+            matches = find_matches_for_midpoint(mid_val, "Two", base_name, vs_name, 
+             base_val, vs_val, type_filter)
+            for m in matches
+                array.push(all_matches, m)
+    
+    all_matches
+
+//#endregion Match Detection
+
+//#region Alert Management ********************************
+
+//@function                             - Manages alert list and identifies new matches
+//@param current_alerts (array<string>) - Current tick's alerts
+//@returns (bool, array<string>)        - Tuple of [has_new_alerts, new_alert_texts]
+process_new_alerts(array<string> current_alerts) =>
+    new_alerts = array.new_string()
+    has_new = false
+    
+    // Remove stale alerts (only if history not empty)
+    if array.size(g_alert_history) > 0
+        for i = array.size(g_alert_history) - 1 to 0
+            old_alert = array.get(g_alert_history, i)
+            found = false
+            for curr in current_alerts
+                if curr == old_alert
+                    found := true
+                    break
+            if not found
+                array.remove(g_alert_history, i)
+                if should_log_current_bar()
+                    log.warning("\nRemoved stale alert: " + old_alert)
+    
+    // Add new alerts (only if current_alerts not empty)
+    if array.size(current_alerts) > 0
+        for curr in current_alerts
+            found = false
+            for hist in g_alert_history
+                if curr == hist
+                    found := true
+                    break
+            if not found
+                array.push(g_alert_history, curr)
+                array.push(new_alerts, curr)
+                has_new := true
+    
+    [has_new, new_alerts]
+
+//#endregion Alert Management
+
+//#endregion FUNCTIONS
+
+//+-------------------------------------------------------+
+//                        EXECUTION                       |
+//+-------------------------------------------------------+
+// #region EXECUTION
+
+// Initialize on first bar
+if barstate.isfirst
+    DECIMALS := get_decimal_precision()
+
+// Set the logging start bar on last bar of first calculation
+if barstate.islast and na(g_start_logging_bar)
+    g_start_logging_bar := math.max(0, bar_index - i_log_bars)
+
+// Clean up on new bar
+if barstate.isnew
+    array.clear(g_alert_history)
+    
+    // Remove oldest bar if beyond lookback
+    if array.size(g_tracked_bars) >= i_lookback
+        oldest_bar = array.shift(g_tracked_bars)
+        remove_bar_from_map(oldest_bar)
+
+// Check for matches (only within logging range or always for visualization)
+active_alerts = check_current_bar_matches(i_type_shown, barstate.isconfirmed)
+
+// Process and send alerts (only within logging range)
+if should_log_current_bar()
+    [has_new_alerts, new_alert_list] = process_new_alerts(active_alerts)
+    
+    if has_new_alerts and array.size(new_alert_list) > 0
+        alert_text = array.join(new_alert_list, "\n\n")
+        log.info(timeframe.period + ",\n" + alert_text)
+        alert(timeframe.period + "," + alert_text, alert.freq_all)
+
+// Store confirmed bar data
+if barstate.isconfirmed
+    store_confirmed_bar_midpoints(bar_index, DECIMALS)
+    array.push(g_tracked_bars, bar_index)
+
+// #endregion EXECUTION
