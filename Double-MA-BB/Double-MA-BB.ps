@@ -1,0 +1,451 @@
+//@version=6
+strategy("Bollinger Band Regression", shorttitle="BBR", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+//+-------------------------------------------------------+
+//                        INFORMATION                     |
+//+-------------------------------------------------------+
+// #region Information
+
+// Bollinger Band Regression Strategy
+// 
+// This scalping strategy uses two moving averages to determine trend 
+// direction and Bollinger Bands for entry signals. The ATR is used 
+// for stop loss calculation.
+//
+// Trend Detection:
+// - Fast MA above Slow MA = Uptrend (looking for longs)
+// - Fast MA below Slow MA = Downtrend (looking for shorts)
+// - Trend must persist for N bars before confirmation
+//
+// Entry Signals:
+// - Uptrend: Price closes below lower Bollinger Band = Long entry
+// - Downtrend: Price closes above upper Bollinger Band = Short entry
+//
+// Cooldown:
+// - After a trade exits, price must close back inside the Bollinger
+//   Bands before a new trade can be considered.
+//
+// Risk Management:
+// - Stop Loss: ATR * Stop Loss Coefficient
+// - Take Profit: Stop Loss Distance * Profit Ratio
+
+// #endregion Information
+
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
+
+// #region Input Enums ************************************
+
+enum MaType
+    SMA
+    EMA
+
+enum TrendDirection
+    Up
+    Down
+    Sideways
+
+// #endregion Input Enums
+
+// #region Tooltips ***************************************
+
+string tt_maType        = "Select the type of moving average: " +
+                          "Simple (SMA) or Exponential (EMA)."
+string tt_fastLength    = "Length of the fast moving average. " +
+                          "Lower values react faster to price changes."
+string tt_slowLength    = "Length of the slow moving average. " +
+                          "Higher values provide smoother trend detection."
+string tt_confirmBars   = "Number of consecutive bars the fast MA must " +
+                          "remain above/below slow MA to confirm trend."
+string tt_bbLength      = "Lookback period for Bollinger Bands calculation."
+string tt_bbStdDev      = "Standard deviation multiplier for " +
+                          "Bollinger Bands width."
+string tt_atrLength     = "Lookback period for ATR (Average True Range) " +
+                          "calculation using highs and lows."
+string tt_slCoeff       = "Stop loss distance as a multiple of ATR. " +
+                          "Higher values = wider stops."
+string tt_profitRatio   = "Take profit as a ratio of risk. E.g., 2 means " +
+                          "TP is 2x the SL distance (1:2 risk/reward)."
+string tt_debug         = "Enable diagnostic overlays and labels for " +
+                          "strategy debugging."
+
+// #endregion Tooltips
+
+// #region Moving Average Settings ************************
+
+var string iGroupMA = "Moving Average Settings"
+i_maType = input.enum(MaType.EMA, "MA Type", group=iGroupMA, tooltip=tt_maType)
+i_fastLength = input.int(30, "Fast MA Length", minval=1, group=iGroupMA, tooltip=tt_fastLength)
+i_slowLength = input.int(50, "Slow MA Length", minval=1, group=iGroupMA, tooltip=tt_slowLength)
+i_confirmBars = input.int(6, "Trend Confirmation Bars", minval=1, group=iGroupMA, tooltip=tt_confirmBars)
+
+// #endregion Moving Average Settings
+
+// #region Bollinger Band Settings ************************
+
+var string iGroupBB = "Bollinger Band Settings"
+i_bbLength = input.int(15, "BB Length", minval=1, group=iGroupBB, tooltip=tt_bbLength)
+i_bbStdDev = input.float(1.5, "BB Std Dev", minval=0.1, step=0.1, group=iGroupBB, tooltip=tt_bbStdDev)
+
+// #endregion Bollinger Band Settings
+
+// #region ATR Settings ***********************************
+
+var string iGroupATR = "ATR Settings"
+i_atrLength = input.int(7, "ATR Length", minval=1, group=iGroupATR, tooltip=tt_atrLength)
+
+// #endregion ATR Settings
+
+// #region Trade Management *******************************
+
+var string iGroupTrade = "Trade Management"
+i_slCoeff = input.float(2.0, "Stop Loss Coefficient", minval=0.1, step=0.1, group=iGroupTrade, tooltip=tt_slCoeff)
+i_profitRatio = input.float(2.0, "Profit Ratio", minval=0.1, maxval=20.0, step=0.1, group=iGroupTrade, tooltip=tt_profitRatio)
+
+// #endregion Trade Management
+
+// #region Debug ******************************************
+
+var string iGroupDebug = "Debug"
+i_debug = input.bool(false, "Enable Debug", group=iGroupDebug, tooltip=tt_debug)
+
+// #endregion Debug
+
+// #endregion Inputs
+
+//+-------------------------------------------------------+
+//                           UDT'S                        |
+//+-------------------------------------------------------+
+// #region UDT's
+
+type TradeSignal
+    bool isValid
+    bool isLong
+    float entryPrice
+    float stopLoss
+    float takeProfit
+
+// #endregion UDT's
+
+//+-------------------------------------------------------+
+//                          METHODS                       |
+//+-------------------------------------------------------+
+// #region Methods
+
+// #endregion Methods
+
+//+-------------------------------------------------------+
+//                      GLOBAL VARIABLES                  |
+//+-------------------------------------------------------+
+// #region Global Variables
+
+// Trend tracking counters (persist across bars)
+var int barsInUptrend = 0
+var int barsInDowntrend = 0
+
+// Position state tracking (persist across bars)
+var bool g_inTrade = false
+var bool g_isLong = false
+var float g_entryPrice = na
+var float g_stopLoss = na
+var float g_takeProfit = na
+
+// Reentry cooldown state (persist across bars)
+var bool g_waitingForReentry = false
+
+// #endregion Global Variables
+
+//+-------------------------------------------------------+
+//                         FUNCTIONS                      |
+//+-------------------------------------------------------+
+// #region Functions
+
+// #region Trend Detection Functions **********************
+
+getRawTrendDirection(float _fastMa, float _slowMa) =>
+    if _fastMa > _slowMa
+        TrendDirection.Up
+    else if _fastMa < _slowMa
+        TrendDirection.Down
+    else
+        TrendDirection.Sideways
+
+countConsecutiveBars(bool _condition, int _prevCount) =>
+    _condition ? _prevCount + 1 : 0
+
+// @function getConfirmedTrend        - Determine trend with confirmation.
+// @param    _rawDir     (TrendDir)   - Current raw trend direction.
+// @param    _upCount    (int)        - Consecutive bars in uptrend.
+// @param    _downCount  (int)        - Consecutive bars in downtrend.
+// @param    _confirm    (int)        - Required bars for confirmation.
+// @returns              (TrendDir)   - Confirmed trend or Sideways.
+getConfirmedTrend(TrendDirection _rawDir, int _upCount, int _downCount, int _confirm) =>
+    if _rawDir == TrendDirection.Up and _upCount >= _confirm
+        TrendDirection.Up
+    else if _rawDir == TrendDirection.Down and _downCount >= _confirm
+        TrendDirection.Down
+    else
+        TrendDirection.Sideways
+
+// #endregion Trend Detection Functions
+
+// #region Entry Condition Functions **********************
+
+isLongEntryValid(TrendDirection _trend, float _close, float _lowerBB) =>
+    _trend == TrendDirection.Up and _close < _lowerBB
+
+isShortEntryValid(TrendDirection _trend, float _close, float _upperBB) =>
+    _trend == TrendDirection.Down and _close > _upperBB
+
+// @function isPriceInsideBB          - Check if price closed inside BB.
+// @param    _close      (float)      - Current close price.
+// @param    _upperBB    (float)      - Upper Bollinger Band value.
+// @param    _lowerBB    (float)      - Lower Bollinger Band value.
+// @returns              (bool)       - True if price inside bands.
+isPriceInsideBB(float _close, float _upperBB, float _lowerBB) =>
+    _close > _lowerBB and _close < _upperBB
+
+// #endregion Entry Condition Functions
+
+// #region Trade Calculation Functions ********************
+
+calculateLongStopLoss(float _entryPrice, float _atr, float _slCoeff) =>
+    _entryPrice - (_atr * _slCoeff)
+
+calculateShortStopLoss(float _entryPrice, float _atr, float _slCoeff) =>
+    _entryPrice + (_atr * _slCoeff)
+
+calculateLongTakeProfit(float _entryPrice, float _slDistance, float _profitRatio) =>
+    _entryPrice + (_slDistance * _profitRatio)
+
+calculateShortTakeProfit(float _entryPrice, float _slDistance, float _profitRatio) =>
+    _entryPrice - (_slDistance * _profitRatio)
+
+// @function generateTradeSignal       - Create trade signal with SL/TP.
+// @param    _trend       (TrendDir)   - Current confirmed trend direction.
+// @param    _close       (float)      - Current close price.
+// @param    _upperBB     (float)      - Upper Bollinger Band value.
+// @param    _lowerBB     (float)      - Lower Bollinger Band value.
+// @param    _atr         (float)      - Current ATR value.
+// @param    _slCoeff     (float)      - Stop loss ATR multiplier.
+// @param    _profitRatio (float)      - Take profit to risk ratio.
+// @returns               (TradeSignal) - Complete trade signal.
+generateTradeSignal(TrendDirection _trend, float _close, float _upperBB, float _lowerBB, float _atr, float _slCoeff, float _profitRatio) =>
+    TradeSignal signal = TradeSignal.new(false, false, na, na, na)
+    
+    if isLongEntryValid(_trend, _close, _lowerBB)
+        float slPrice = calculateLongStopLoss(_close, _atr, _slCoeff)
+        float slDistance = _close - slPrice
+        float tpPrice = calculateLongTakeProfit(_close, slDistance, _profitRatio)
+        signal := TradeSignal.new(true, true, _close, slPrice, tpPrice)
+    else if isShortEntryValid(_trend, _close, _upperBB)
+        float slPrice = calculateShortStopLoss(_close, _atr, _slCoeff)
+        float slDistance = slPrice - _close
+        float tpPrice = calculateShortTakeProfit(_close, slDistance, _profitRatio)
+        signal := TradeSignal.new(true, false, _close, slPrice, tpPrice)
+    
+    signal
+
+// #endregion Trade Calculation Functions
+
+// #region Exit Condition Functions ***********************
+
+// @function shouldExitLong          - Check if long position should close.
+// @param    _high       (float)     - Current bar high.
+// @param    _low        (float)     - Current bar low.
+// @param    _stopLoss   (float)     - Stop loss price level.
+// @param    _takeProfit (float)     - Take profit price level.
+// @returns              (bool)      - True if exit condition met.
+shouldExitLong(float _high, float _low, float _stopLoss, float _takeProfit) =>
+    _low <= _stopLoss or _high >= _takeProfit
+
+// @function shouldExitShort         - Check if short position should close.
+// @param    _high       (float)     - Current bar high.
+// @param    _low        (float)     - Current bar low.
+// @param    _stopLoss   (float)     - Stop loss price level.
+// @param    _takeProfit (float)     - Take profit price level.
+// @returns              (bool)      - True if exit condition met.
+shouldExitShort(float _high, float _low, float _stopLoss, float _takeProfit) =>
+    _high >= _stopLoss or _low <= _takeProfit
+
+// @function checkExitConditions     - Determine if current position should exit.
+// @param    _inTrade    (bool)      - Whether currently in a trade.
+// @param    _isLong     (bool)      - Whether current trade is long.
+// @param    _high       (float)     - Current bar high.
+// @param    _low        (float)     - Current bar low.
+// @param    _stopLoss   (float)     - Stop loss price level.
+// @param    _takeProfit (float)     - Take profit price level.
+// @returns              (bool)      - True if should exit position.
+checkExitConditions(bool _inTrade, bool _isLong, float _high, float _low, float _stopLoss, float _takeProfit) =>
+    if not _inTrade
+        false
+    else if _isLong
+        shouldExitLong(_high, _low, _stopLoss, _takeProfit)
+    else
+        shouldExitShort(_high, _low, _stopLoss, _takeProfit)
+
+// #endregion Exit Condition Functions
+
+// #region Entry Permission Functions *********************
+
+// @function canEnterTrade           - Check all conditions for trade entry.
+// @param    _signalValid (bool)     - Whether a valid signal exists.
+// @param    _inTrade     (bool)     - Whether currently in a trade.
+// @param    _waiting     (bool)     - Whether waiting for reentry.
+// @returns               (bool)     - True if entry is permitted.
+canEnterTrade(bool _signalValid, bool _inTrade, bool _waiting) =>
+    _signalValid and not _inTrade and not _waiting
+
+// #endregion Entry Permission Functions
+
+// #endregion Functions
+
+//+-------------------------------------------------------+
+//                         EXECUTION                      |
+//+-------------------------------------------------------+
+// #region Execution
+
+// Calculate moving averages at root level to avoid function warnings
+float fastMa = i_maType == MaType.SMA ? 
+  ta.sma(close, i_fastLength) : 
+  ta.ema(close, i_fastLength)
+float slowMa = i_maType == MaType.SMA ? 
+  ta.sma(close, i_slowLength) : 
+  ta.ema(close, i_slowLength)
+
+// Calculate Bollinger Bands
+[bbMiddle, bbUpper, bbLower] = ta.bb(close, i_bbLength, i_bbStdDev)
+
+// Calculate ATR
+float atrValue = ta.atr(i_atrLength)
+
+// Determine raw trend direction
+TrendDirection rawTrend = getRawTrendDirection(fastMa, slowMa)
+
+// Update consecutive bar counts
+barsInUptrend := countConsecutiveBars(rawTrend == TrendDirection.Up, nz(barsInUptrend[1]))
+barsInDowntrend := countConsecutiveBars(rawTrend == TrendDirection.Down, nz(barsInDowntrend[1]))
+
+// Get confirmed trend
+TrendDirection confirmedTrend = getConfirmedTrend(rawTrend, barsInUptrend, barsInDowntrend, i_confirmBars)
+
+// Generate trade signal
+TradeSignal signal = generateTradeSignal(confirmedTrend, close, bbUpper, bbLower, atrValue, i_slCoeff, i_profitRatio)
+
+// Check for reentry permission (price must close inside BB after trade)
+bool priceInsideBB = isPriceInsideBB(close, bbUpper, bbLower)
+if g_waitingForReentry and priceInsideBB
+    g_waitingForReentry := false
+
+// Check for exit conditions using stored SL/TP (never recalculated)
+bool shouldExit = checkExitConditions(g_inTrade, g_isLong, high, low, g_stopLoss, g_takeProfit)
+
+// Handle position exits
+if g_inTrade and shouldExit
+    if g_isLong
+        strategy.close("Long", comment="Exit Long")
+    else
+        strategy.close("Short", comment="Exit Short")
+    g_inTrade := false
+    g_isLong := false
+    g_entryPrice := na
+    g_stopLoss := na
+    g_takeProfit := na
+    g_waitingForReentry := true
+
+// Check if entry is permitted
+bool entryPermitted = canEnterTrade(signal.isValid, g_inTrade, g_waitingForReentry)
+
+// Execute new trades only when permitted
+if entryPermitted
+    if signal.isLong
+        strategy.entry("Long", strategy.long)
+        g_inTrade := true
+        g_isLong := true
+        g_entryPrice := signal.entryPrice
+        g_stopLoss := signal.stopLoss
+        g_takeProfit := signal.takeProfit
+    else
+        strategy.entry("Short", strategy.short)
+        g_inTrade := true
+        g_isLong := false
+        g_entryPrice := signal.entryPrice
+        g_stopLoss := signal.stopLoss
+        g_takeProfit := signal.takeProfit
+
+// Plot moving averages
+plot(fastMa, "Fast MA", color=color.blue, linewidth=2)
+plot(slowMa, "Slow MA", color=color.orange, linewidth=2)
+
+// Plot Bollinger Bands
+pBBUpper = plot(bbUpper, "BB Upper", color=color.new(color.purple, 50))
+plot(bbMiddle, "BB Middle", color=color.new(color.purple, 70), style=plot.style_circles)
+pBBLower = plot(bbLower, "BB Lower", color=color.new(color.purple, 50))
+
+// Fill between Bollinger Bands
+fill(pBBUpper, pBBLower, color=color.new(color.purple, 90), title="BB Fill")
+
+// Plot entry signals (only when permitted)
+plotshape(entryPermitted and signal.isLong, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(entryPermitted and not signal.isLong, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Plot SL/TP levels when in trade (fixed values from entry)
+plot(g_inTrade ? g_stopLoss : na, "Stop Loss", color=color.red, style=plot.style_linebr, linewidth=1)
+plot(g_inTrade ? g_takeProfit : na, "Take Profit", color=color.green, style=plot.style_linebr, linewidth=1)
+
+// #endregion Execution
+
+//+-------------------------------------------------------+
+//                           DEBUG                        |
+//+-------------------------------------------------------+
+// #region Debug
+
+if i_debug and barstate.islast
+    var table debugTable = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 80), border_width=1)
+    
+    string trendText = switch confirmedTrend
+        TrendDirection.Up => "UPTREND"
+        TrendDirection.Down => "DOWNTREND"
+        => "SIDEWAYS"
+    
+    color trendColor = switch confirmedTrend
+        TrendDirection.Up => color.green
+        TrendDirection.Down => color.red
+        => color.gray
+    
+    table.cell(debugTable, 0, 0, "Trend:", text_color=color.white)
+    table.cell(debugTable, 1, 0, trendText, text_color=trendColor)
+    
+    table.cell(debugTable, 0, 1, "Up Bars:", text_color=color.white)
+    table.cell(debugTable, 1, 1, str.tostring(barsInUptrend), text_color=color.white)
+    
+    table.cell(debugTable, 0, 2, "Down Bars:", text_color=color.white)
+    table.cell(debugTable, 1, 2, str.tostring(barsInDowntrend), text_color=color.white)
+    
+    table.cell(debugTable, 0, 3, "ATR:", text_color=color.white)
+    table.cell(debugTable, 1, 3, str.tostring(atrValue, "#.#####"), text_color=color.white)
+    
+    table.cell(debugTable, 0, 4, "Signal:", text_color=color.white)
+    string signalText = signal.isValid ?
+       (signal.isLong ? "LONG" : "SHORT") : "NONE"
+    table.cell(debugTable, 1, 4, signalText, text_color=color.white)
+    
+    table.cell(debugTable, 0, 5, "In Trade:", text_color=color.white)
+    string tradeText = g_inTrade ? (g_isLong ? "LONG" : "SHORT") : "NO"
+    table.cell(debugTable, 1, 5, tradeText, text_color=color.white)
+    
+    table.cell(debugTable, 0, 6, "Waiting:", text_color=color.white)
+    table.cell(debugTable, 1, 6, g_waitingForReentry ? "YES" : "NO", text_color=g_waitingForReentry ? color.yellow : color.white)
+    
+    table.cell(debugTable, 0, 7, "SL Price:", text_color=color.white)
+    table.cell(debugTable, 1, 7, str.tostring(g_stopLoss, "#.#####"), text_color=color.red)
+    
+    table.cell(debugTable, 0, 8, "TP Price:", text_color=color.white)
+    table.cell(debugTable, 1, 8, str.tostring(g_takeProfit, "#.#####"), text_color=color.green)
+
+if i_debug and entryPermitted
+    label.new(bar_index, signal.isLong ? low - atrValue : high + atrValue, "SL: " + str.tostring(signal.stopLoss, "#.#####") + "\nTP: " + str.tostring(signal.takeProfit, "#.#####"), style=signal.isLong ? label.style_label_up : label.style_label_down, color=signal.isLong ? color.green : color.red, textcolor=color.white, size=size.tiny)
+
+// #endregion Debug

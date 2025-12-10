@@ -1,0 +1,1344 @@
+//@version=6
+strategy(
+  "Bollinger Band Regression",
+  shorttitle="BBR",
+  overlay=true,
+  default_qty_type=strategy.cash,
+  default_qty_value=10000,
+  initial_capital=100000,
+  margin_long=3,
+  margin_short=3,
+  calc_on_every_tick=true,
+  calc_on_order_fills=true,
+  process_orders_on_close=false
+  )
+
+//+-------------------------------------------------------+
+//                        INFORMATION                     |
+//+-------------------------------------------------------+
+// #region Information
+
+// Bollinger Band Regression Strategy
+// 
+// This scalping strategy uses two moving averages to determine trend 
+// direction and Bollinger Bands for entry signals. The ATR is used 
+// for stop loss calculation.
+//
+// Trend Detection:
+// - Fast MA above Slow MA = Uptrend (looking for longs)
+// - Fast MA below Slow MA = Downtrend (looking for shorts)
+// - Trend must persist for N bars before confirmation
+//
+// Entry Signals:
+// - Uptrend: Price closes below lower Bollinger Band = Long entry
+// - Downtrend: Price closes above upper Bollinger Band = Short entry
+//
+// Cooldown:
+// - After a trade exits, price must close back inside the Bollinger
+//   Bands before a new trade can be considered.
+//
+// Risk Management:
+// - Multiple position sizing methods available (Static, Ratio, Stop-Based, etc.)
+// - Prop firm drawdown tracking with optional trailing high watermark
+// - Stop Loss: ATR * Stop Loss Coefficient
+// - Take Profit: Stop Loss Distance * Profit Ratio
+
+// #endregion Information
+
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
+
+// #region Input Enums ************************************
+
+enum MaType
+    SMA
+    EMA
+
+enum TrendDirection
+    Up
+    Down
+    Sideways
+
+enum RiskMethod
+    StaticAmount  = "Static Amount"
+    BalanceRatio  = "Balance Ratio"
+    StopBasedRisk = "Stop Based Risk"
+    DivisibleRisk = "Divisible (Prop)"
+    AdjustingRisk = "Adjusting (Prop)"
+
+// #endregion Input Enums
+
+// #region Tooltips ***************************************
+
+string tt_maType             = "Select the type of moving average: " +
+                               "Simple (SMA) or Exponential (EMA)."
+string tt_fastLength         = "Length of the fast moving average. " +
+                               "Lower values react faster to price changes."
+string tt_slowLength         = "Length of the slow moving average. " +
+                               "Higher values provide smoother trend detection."
+string tt_confirmBars        = "Number of consecutive bars the fast MA must " +
+                               "remain above/below slow MA to confirm trend."
+string tt_bbLength           = "Lookback period for Bollinger Bands calculation."
+string tt_bbStdDev           = "Standard deviation multiplier for " +
+                               "Bollinger Bands width."
+string tt_atrLength          = "Lookback period for ATR (Average True Range) " +
+                               "calculation using highs and lows."
+string tt_slCoeff            = "Stop loss distance as a multiple of ATR. " +
+                               "Higher values = wider stops."
+string tt_profitRatio        = "Take profit as a ratio of risk. E.g., 2 means " +
+                               "TP is 2x the SL distance (1:2 risk/reward)."
+string tt_debug              = "Enable diagnostic overlays and labels for " +
+                               "strategy debugging."
+
+// Risk Management Library Tooltips
+string tt_rml_accountBal     = "Your starting/initial account balance. This is " +
+                               "the reference point for all risk calculations " +
+                               "and drawdown tracking."
+string tt_rml_method         = "Risk calculation method:\n" +
+                               "• Static Amount: Fixed dollar amount per trade\n" +
+                               "• Balance Ratio: Percentage of current balance\n" +
+                               "• Stop Based Risk: Position sized by stop distance\n" +
+                               "• Divisible Risk: Divide available drawdown\n" +
+                               "• Adjusting Risk: Variable risk based on P&L"
+string tt_rml_staticAmt      = "Fixed dollar amount to allocate to each trade " +
+                               "regardless of account balance or stop distance."
+string tt_rml_balRatio       = "Percentage of current account balance to trade. " +
+                               "100 means trade with full balance, 50 means half."
+string tt_rml_riskPct        = "Percentage of account balance willing to lose " +
+                               "per trade. Position size is calculated so that " +
+                               "if stop loss is hit, this percentage is lost."
+string tt_rml_maxDD          = "Maximum drawdown percentage allowed before " +
+                               "trading stops. For prop firms, enter the max " +
+                               "DD limit (e.g., 10 for 10% max drawdown)."
+string tt_rml_profitTarget   = "Profit target percentage for prop firm accounts. " +
+                               "When account reaches this profit level, the " +
+                               "challenge/phase is considered passed."
+string tt_rml_trailingDD     = "Enable if your drawdown limit trails the high " +
+                               "watermark. When enabled, max DD is calculated " +
+                               "from peak balance, not initial balance."
+string tt_rml_divisions      = "Number of equal parts to divide available risk. " +
+                               "Each trade risks 1/N of remaining drawdown. " +
+                               "Higher values = more conservative sizing."
+string tt_rml_adjT1Pct       = "Upper profit tier: % of profit target reached " +
+                               "(50-99%). When equity exceeds this threshold, " +
+                               "use the higher risk percentage."
+string tt_rml_adjT1Risk      = "Risk percentage to use when account is in the " +
+                               "upper profit tier (closest to profit target)."
+string tt_rml_adjT2Pct       = "Lower profit tier: % of profit target reached " +
+                               "(5-49%). When equity is in this range, use " +
+                               "moderate risk percentage."
+string tt_rml_adjT2Risk      = "Risk percentage to use when account is in the " +
+                               "lower profit tier (some profit, not near target)."
+string tt_rml_adjBaseRisk    = "Default risk percentage when account is near " +
+                               "the initial balance (break-even zone)."
+string tt_rml_adjD1Pct       = "Upper drawdown tier: % of max drawdown used " +
+                               "(5-49%). When equity drops into this range, " +
+                               "reduce risk accordingly."
+string tt_rml_adjD1Risk      = "Risk percentage when in upper drawdown tier " +
+                               "(starting to lose, but not critical)."
+string tt_rml_adjD2Pct       = "Lower drawdown tier: % of max drawdown used " +
+                               "(50-99%). When equity approaches max DD limit, " +
+                               "use minimal risk to preserve capital."
+string tt_rml_adjD2Risk      = "Risk percentage when in lower drawdown tier " +
+                               "(critical zone near max drawdown)."
+string tt_rml_debugRisk      = "Show risk management calculations and position " +
+                               "sizing details in the debug panel."
+string tt_rml_showPropTable  = "Display a table showing prop firm win/loss " +
+                               "tracking and account status."
+
+// #endregion Tooltips
+
+// #region Moving Average Settings ************************
+
+var string iGroupMA = "Moving Average Settings"
+i_maType = input.enum(MaType.EMA, "MA Type", group=iGroupMA, tooltip=tt_maType)
+i_fastLength = input.int(30, "Fast MA Length", minval=1, group=iGroupMA, tooltip=tt_fastLength)
+i_slowLength = input.int(50, "Slow MA Length", minval=1, group=iGroupMA, tooltip=tt_slowLength)
+i_confirmBars = input.int(6, "Trend Confirmation Bars", minval=1, group=iGroupMA, tooltip=tt_confirmBars)
+
+// #endregion Moving Average Settings
+
+// #region Bollinger Band Settings ************************
+
+var string iGroupBB = "Bollinger Band Settings"
+i_bbLength = input.int(15, "BB Length", minval=1, group=iGroupBB, tooltip=tt_bbLength)
+i_bbStdDev = input.float(1.5, "BB Std Dev", minval=0.1, step=0.1, group=iGroupBB, tooltip=tt_bbStdDev)
+
+// #endregion Bollinger Band Settings
+
+// #region ATR Settings ***********************************
+
+var string iGroupATR = "ATR Settings"
+i_atrLength = input.int(7, "ATR Length", minval=1, group=iGroupATR, tooltip=tt_atrLength)
+
+// #endregion ATR Settings
+
+// #region Trade Management *******************************
+
+var string iGroupTrade = "Trade Management"
+i_slCoeff = input.float(1.1, "Stop Loss Coefficient", minval=0.1, step=0.1, group=iGroupTrade, tooltip=tt_slCoeff)
+i_profitRatio = input.float(1.5, "Profit Ratio", minval=0.1, maxval=20.0, step=0.1, group=iGroupTrade, tooltip=tt_profitRatio)
+
+// #endregion Trade Management
+
+// #region Risk Management Settings ***********************
+
+var string iGroupRML = "Risk Management"
+i_rml_accountBal = input.float(100000.0, "Initial Account Balance", minval=1.0, step=1000.0, group=iGroupRML, tooltip=tt_rml_accountBal)
+i_rml_method = input.enum(RiskMethod.BalanceRatio, "Risk Method", group=iGroupRML, tooltip=tt_rml_method)
+
+// Determine which methods need which inputs
+bool isStaticMethod = i_rml_method == RiskMethod.StaticAmount
+bool isRatioMethod = i_rml_method == RiskMethod.BalanceRatio
+bool isStopBasedMethod = i_rml_method == RiskMethod.StopBasedRisk
+bool isDivisibleMethod = i_rml_method == RiskMethod.DivisibleRisk
+bool isAdjustingMethod = i_rml_method == RiskMethod.AdjustingRisk
+bool isPropFirmMethod = isDivisibleMethod or isAdjustingMethod
+
+// ──────────────────────────────────────────────────────────
+// STATIC AMOUNT
+// ──────────────────────────────────────────────────────────
+var string iGroupStatic = "── STATIC AMOUNT ──"
+i_rml_staticAmt = input.float(1000.0, "Trade Amount ($)", minval=1.0, step=100.0, group=iGroupStatic, tooltip=tt_rml_staticAmt, active=isStaticMethod)
+
+// ──────────────────────────────────────────────────────────
+// BALANCE RATIO
+// ──────────────────────────────────────────────────────────
+var string iGroupRatio = "── BALANCE RATIO ──"
+i_rml_balRatio = input.float(100.0, "Balance Ratio (%)", minval=0.1, maxval=100.0, step=1.0, group=iGroupRatio, tooltip=tt_rml_balRatio, active=isRatioMethod)
+
+// ──────────────────────────────────────────────────────────
+// STOP BASED RISK
+// ──────────────────────────────────────────────────────────
+var string iGroupStopBased = "── STOP BASED RISK ──"
+i_rml_riskPct = input.float(2.0, "Risk Per Trade (%)", minval=0.1, maxval=100.0, step=0.1, group=iGroupStopBased, tooltip=tt_rml_riskPct, active=isStopBasedMethod)
+
+// ──────────────────────────────────────────────────────────
+// DIVISIBLE RISK (PROP)
+// ──────────────────────────────────────────────────────────
+var string iGroupDivisible = "── DIVISIBLE (PROP) ──"
+i_rml_divisions = input.int(10, "Risk Divisions", minval=1, maxval=20, group=iGroupDivisible, tooltip=tt_rml_divisions, active=isDivisibleMethod)
+
+// #endregion Risk Management Settings
+
+// #region Prop Firm Settings *****************************
+
+var string iGroupProp = "── PROP FIRM SETTINGS ──"
+i_rml_maxDD = input.float(10.0, "Max Drawdown (%)", minval=0.1, maxval=100.0, step=0.5, group=iGroupProp, tooltip=tt_rml_maxDD, active=isPropFirmMethod)
+i_rml_profitTarget = input.float(10.0, "Profit Target (%)", minval=0.1, maxval=100.0, step=0.5, group=iGroupProp, tooltip=tt_rml_profitTarget, active=isPropFirmMethod)
+i_rml_trailingDD = input.bool(false, "Trailing Drawdown", group=iGroupProp, tooltip=tt_rml_trailingDD, active=isPropFirmMethod)
+i_rml_showPropTable = input.bool(true, "Show Prop Firm Table", group=iGroupProp, tooltip=tt_rml_showPropTable, active=isPropFirmMethod)
+
+// #endregion Prop Firm Settings
+
+// #region Adjusting Risk Settings ************************
+
+var string iGroupAdj = "── ADJUSTING (PROP) ──"
+
+// Tier 1: Upper Profit Zone (closest to profit target)
+i_rml_adjT1Pct = input.int(75, "Profit Tier 1 (%)", minval=50, maxval=99, group=iGroupAdj, inline="T1", tooltip=tt_rml_adjT1Pct, active=isAdjustingMethod)
+i_rml_adjT1Risk = input.float(2.0, "Risk", minval=0.1, maxval=50.0, step=0.1, group=iGroupAdj, inline="T1", tooltip=tt_rml_adjT1Risk, active=isAdjustingMethod)
+
+// Tier 2: Lower Profit Zone (some profit, not near target)
+i_rml_adjT2Pct = input.int(25, "Profit Tier 2 (%)", minval=5, maxval=49, group=iGroupAdj, inline="T2", tooltip=tt_rml_adjT2Pct, active=isAdjustingMethod)
+i_rml_adjT2Risk = input.float(1.5, "Risk", minval=0.1, maxval=50.0, step=0.1, group=iGroupAdj, inline="T2", tooltip=tt_rml_adjT2Risk, active=isAdjustingMethod)
+
+// Base Risk: Near initial balance (break-even zone)
+i_rml_adjBaseRisk = input.float(1.0, "Base Risk (%)", minval=0.1, maxval=50.0, step=0.1, group=iGroupAdj, tooltip=tt_rml_adjBaseRisk, active=isAdjustingMethod)
+
+// Drawdown Tier 1: Upper Drawdown Zone (starting to lose)
+i_rml_adjD1Pct = input.int(25, "Drawdown Tier 1 (%)", minval=5, maxval=49, group=iGroupAdj, inline="D1", tooltip=tt_rml_adjD1Pct, active=isAdjustingMethod)
+i_rml_adjD1Risk = input.float(0.5, "Risk", minval=0.1, maxval=50.0, step=0.1, group=iGroupAdj, inline="D1", tooltip=tt_rml_adjD1Risk, active=isAdjustingMethod)
+
+// Drawdown Tier 2: Lower Drawdown Zone (critical, near max DD)
+i_rml_adjD2Pct = input.int(75, "Drawdown Tier 2 (%)", minval=50, maxval=99, group=iGroupAdj, inline="D2", tooltip=tt_rml_adjD2Pct, active=isAdjustingMethod)
+i_rml_adjD2Risk = input.float(0.25, "Risk", minval=0.1, maxval=50.0, step=0.1, group=iGroupAdj, inline="D2", tooltip=tt_rml_adjD2Risk, active=isAdjustingMethod)
+
+// #endregion Adjusting Risk Settings
+
+// #region Debug ******************************************
+
+var string iGroupDebug = "Debug"
+i_debug = input.bool(false, "Enable Debug", group=iGroupDebug, tooltip=tt_debug)
+i_rml_debugRisk = input.bool(false, "Show Risk Details", group=iGroupDebug, tooltip=tt_rml_debugRisk, active=i_debug)
+
+// #endregion Debug
+
+// #endregion Inputs
+
+
+//+-------------------------------------------------------+
+//                           UDT'S                        |
+//+-------------------------------------------------------+
+// #region UDT's
+
+type TradeSignal
+    bool isValid
+    bool isLong
+    float entryPrice
+    float stopLoss
+    float takeProfit
+
+type RML_RiskResult
+    float positionSize
+    float riskAmount
+    float riskPercent
+    bool tradingAllowed
+    string method
+    string tierName
+
+type RML_PropFirmStatus
+    int passCount
+    int failCount
+    float totalPnL
+    float currentEquity
+    float challengeStartBal
+    float profitTargetPrice
+    float maxDDPrice
+    float availableDD
+    float pctToTarget
+    float pctDDUsed
+    bool targetReached
+    bool maxDDBreached
+
+// #endregion UDT's
+
+//+-------------------------------------------------------+
+//                          METHODS                       |
+//+-------------------------------------------------------+
+// #region Methods
+
+// #endregion Methods
+
+//+-------------------------------------------------------+
+//                      GLOBAL VARIABLES                  |
+//+-------------------------------------------------------+
+// #region Global Variables
+
+// Trend tracking counters (persist across bars)
+var int barsInUptrend = 0
+var int barsInDowntrend = 0
+
+// Position state tracking (persist across bars)
+var bool g_inTrade = false
+var bool g_isLong = false
+var float g_entryPrice = na
+var float g_stopLoss = na
+var float g_takeProfit = na
+
+// Reentry cooldown state (persist across bars)
+var bool g_waitingForReentry = false
+
+// Trade logging state (persist across bars)
+var int g_tradeCountForDay = 0
+var int g_lastTradeDay = na
+var bool g_tradeLogCreatedThisBar = false
+var string g_lastTradeId = ""
+
+// Risk Management Library state tracking (persist across bars)
+var float g_rml_highWatermark = na
+var float g_rml_lastPositionSize = na
+var string g_rml_lastMethod = ""
+var string g_rml_lastTier = ""
+
+// Prop Firm challenge tracking (persist across bars)
+var int g_rml_propPasses = 0
+var int g_rml_propFails = 0
+var float g_rml_challengeStartBal = na
+var float g_rml_challengeHighWatermark = na
+var bool g_rml_challengeTargetReached = false
+var bool g_rml_challengeMaxDDBreached = false
+var float g_rml_lastTradeEntryPrice = na
+var bool g_rml_lastTradeWasLong = false
+
+// #endregion Global Variables
+
+//+-------------------------------------------------------+
+//                  RISK MANAGEMENT LIBRARY               |
+//+-------------------------------------------------------+
+// #region Risk Management Library
+
+// #region RML Core Calculation Functions *****************
+
+// @function RML_getMinimumBalance       - Calculate the minimum allowed balance (drawdown floor).
+// @param    _initialBal   (float)       - Starting account balance.
+// @param    _maxDDPct     (float)       - Maximum drawdown percentage allowed.
+// @param    _isTrailing   (bool)        - Whether drawdown trails the high watermark.
+// @param    _highWatermark (float)      - Highest balance achieved (used if trailing).
+// @returns                (float)       - Minimum balance before trading stops.
+RML_getMinimumBalance(float _initialBal, float _maxDDPct, bool _isTrailing, float _highWatermark) =>
+    float refBalance = _isTrailing ? _highWatermark : _initialBal
+    refBalance * (1 - _maxDDPct / 100)
+
+// @function RML_getProfitTargetBalance  - Calculate the profit target balance level.
+// @param    _initialBal   (float)       - Starting account balance.
+// @param    _profitTargetPct (float)    - Profit target percentage.
+// @returns                (float)       - Balance level at profit target.
+RML_getProfitTargetBalance(float _initialBal, float _profitTargetPct) =>
+    _initialBal * (1 + _profitTargetPct / 100)
+
+// @function RML_isDrawdownExceeded      - Check if maximum drawdown has been breached.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _minBalance   (float)       - Minimum allowed balance.
+// @returns                (bool)        - True if drawdown exceeded, trading should stop.
+RML_isDrawdownExceeded(float _currentBal, float _minBalance) =>
+    _currentBal < _minBalance
+
+// @function RML_isProfitTargetReached   - Check if profit target has been reached.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _targetBalance (float)      - Profit target balance level.
+// @returns                (bool)        - True if profit target reached.
+RML_isProfitTargetReached(float _currentBal, float _targetBalance) =>
+    _currentBal >= _targetBalance
+
+// @function RML_getAvailableRisk        - Calculate remaining risk capital before hitting drawdown limit.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _minBalance   (float)       - Minimum allowed balance (drawdown floor).
+// @returns                (float)       - Available amount that can be risked.
+RML_getAvailableRisk(float _currentBal, float _minBalance) =>
+    math.max(0, _currentBal - _minBalance)
+
+// @function RML_updateHighWatermark     - Update the high watermark based on current balance.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _prevHWM      (float)       - Previous high watermark value.
+// @returns                (float)       - Updated high watermark (max of current and previous).
+RML_updateHighWatermark(float _currentBal, float _prevHWM) =>
+    math.max(_currentBal, nz(_prevHWM, _currentBal))
+
+// @function RML_getPctToTarget          - Calculate percentage progress toward profit target.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _initialBal   (float)       - Initial starting balance.
+// @param    _profitTargetPct (float)    - Profit target percentage.
+// @returns                (float)       - Percentage of target achieved (0-100+).
+RML_getPctToTarget(float _currentBal, float _initialBal, float _profitTargetPct) =>
+    float targetAmount = _initialBal * (_profitTargetPct / 100)
+    float currentProfit = _currentBal - _initialBal
+    targetAmount > 0 ? (currentProfit / targetAmount) * 100 : 0
+
+// @function RML_getPctToMaxDD           - Calculate percentage of max drawdown used.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _initialBal   (float)       - Initial starting balance.
+// @param    _maxDDPct     (float)       - Maximum drawdown percentage.
+// @param    _isTrailing   (bool)        - Whether drawdown is trailing.
+// @param    _highWatermark (float)      - High watermark for trailing DD.
+// @returns                (float)       - Percentage of max DD used (0-100+).
+RML_getPctToMaxDD(float _currentBal, float _initialBal, float _maxDDPct, bool _isTrailing, float _highWatermark) =>
+    float refBalance = _isTrailing ? _highWatermark : _initialBal
+    float maxDDAmount = refBalance * (_maxDDPct / 100)
+    float currentDD = refBalance - _currentBal
+    maxDDAmount > 0 ? (currentDD / maxDDAmount) * 100 : 0
+
+// #endregion RML Core Calculation Functions
+
+// #region RML Position Sizing Methods ********************
+
+// @function RML_calcStaticSize          - Calculate position size using static amount method.
+// @param    _staticAmount (float)       - Fixed dollar amount per trade.
+// @returns                (float)       - Position size in dollars.
+RML_calcStaticSize(float _staticAmount) =>
+    _staticAmount
+
+// @function RML_calcBalanceRatioSize    - Calculate position size as percentage of balance.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _ratioPct     (float)       - Percentage of balance to trade (0-100).
+// @returns                (float)       - Position size in dollars.
+RML_calcBalanceRatioSize(float _currentBal, float _ratioPct) =>
+    _currentBal * (_ratioPct / 100)
+
+// @function RML_calcStopBasedSize       - Calculate position size based on stop loss distance.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _riskPct      (float)       - Percentage of balance to risk (0-100).
+// @param    _entryPrice   (float)       - Intended entry price.
+// @param    _stopPrice    (float)       - Stop loss price level.
+// @returns                (float)       - Position size in dollars.
+RML_calcStopBasedSize(float _currentBal, float _riskPct, float _entryPrice, float _stopPrice) =>
+    float riskAmount = _currentBal * (_riskPct / 100)
+    float stopDistance = math.abs(_entryPrice - _stopPrice)
+    float stopPct = stopDistance / _entryPrice
+    stopPct > 0 ? riskAmount / stopPct : 0
+
+// @function RML_calcDivisibleSize       - Calculate position size by dividing available DD into risk portions.
+// @param    _availableRisk (float)      - Available drawdown amount before hitting limit.
+// @param    _divisions    (int)         - Number of equal divisions (1-20).
+// @param    _entryPrice   (float)       - Intended entry price.
+// @param    _stopPrice    (float)       - Stop loss price level.
+// @returns                (float)       - Position size in dollars (sized so risk = 1/N of available DD).
+RML_calcDivisibleSize(float _availableRisk, int _divisions, float _entryPrice, float _stopPrice) =>
+    float riskPerTrade = _divisions > 0 ? _availableRisk / _divisions : 0
+    float stopDistance = math.abs(_entryPrice - _stopPrice)
+    float stopPct = stopDistance / _entryPrice
+    stopPct > 0 ? riskPerTrade / stopPct : 0
+
+// @function RML_getAdjustingRiskTier    - Determine risk tier and percentage based on account position.
+// @param    _pctToTarget  (float)       - Percentage progress toward profit target.
+// @param    _pctToMaxDD   (float)       - Percentage of max drawdown used.
+// @param    _t1Pct        (int)         - Upper profit tier threshold (50-99).
+// @param    _t1Risk       (float)       - Risk % for upper profit tier.
+// @param    _t2Pct        (int)         - Lower profit tier threshold (5-49).
+// @param    _t2Risk       (float)       - Risk % for lower profit tier.
+// @param    _baseRisk     (float)       - Base risk % near initial balance.
+// @param    _d1Pct        (int)         - Upper drawdown tier threshold (5-49).
+// @param    _d1Risk       (float)       - Risk % for upper drawdown tier.
+// @param    _d2Pct        (int)         - Lower drawdown tier threshold (50-99).
+// @param    _d2Risk       (float)       - Risk % for lower drawdown tier.
+// @returns                [float, string] - Risk percentage and tier name.
+RML_getAdjustingRiskTier(
+  float _pctToTarget,
+  float _pctToMaxDD,
+  int _t1Pct,
+  float _t1Risk,
+  int _t2Pct,
+  float _t2Risk,
+  float _baseRisk,
+  int _d1Pct,
+  float _d1Risk,
+  int _d2Pct,
+  float _d2Risk
+  ) =>
+    float riskPct = _baseRisk
+    string tierName = "Base"
+    
+    // Check profit tiers first (positive territory)
+    if _pctToTarget >= _t1Pct
+        riskPct := _t1Risk
+        tierName := "Profit T1"
+    else if _pctToTarget >= _t2Pct
+        riskPct := _t2Risk
+        tierName := "Profit T2"
+    // Check drawdown tiers (negative territory)
+    else if _pctToMaxDD >= _d2Pct
+        riskPct := _d2Risk
+        tierName := "DD T2 (Critical)"
+    else if _pctToMaxDD >= _d1Pct
+        riskPct := _d1Risk
+        tierName := "DD T1"
+    
+    [riskPct, tierName]
+
+// @function RML_calcAdjustingSize       - Calculate position size using adjusting risk method.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _riskPct      (float)       - Determined risk percentage.
+// @param    _entryPrice   (float)       - Intended entry price.
+// @param    _stopPrice    (float)       - Stop loss price level.
+// @returns                (float)       - Position size in dollars.
+RML_calcAdjustingSize(float _currentBal, float _riskPct, float _entryPrice, float _stopPrice) =>
+    float riskAmount = _currentBal * (_riskPct / 100)
+    float stopDistance = math.abs(_entryPrice - _stopPrice)
+    float stopPct = stopDistance / _entryPrice
+    stopPct > 0 ? riskAmount / stopPct : 0
+
+// #endregion RML Position Sizing Methods
+
+// #region RML Utility Functions **************************
+
+// @function RML_sizeToEquityPct         - Convert dollar position size to percentage of equity.
+// @param    _positionSize (float)       - Position size in dollars.
+// @param    _currentEquity (float)      - Current account equity.
+// @returns                (float)       - Position size as percentage of equity (0-100+).
+RML_sizeToEquityPct(float _positionSize, float _currentEquity) =>
+    _currentEquity > 0 ? (_positionSize / _currentEquity) * 100 : 0
+
+// @function RML_clampPositionSize       - Clamp position size within bounds (set _maxSize=na to disable upper clamp).
+// @param    _positionSize (float)       - Calculated position size.
+// @param    _minSize      (float)       - Minimum allowed position size.
+// @param    _maxSize      (float)       - Maximum allowed position size (na = no upper clamp).
+// @returns                (float)       - Clamped position size.
+RML_clampPositionSize(float _positionSize, float _minSize, float _maxSize) =>
+    float minClamped = math.max(_minSize, _positionSize)
+    na(_maxSize) ? minClamped : math.min(minClamped, _maxSize)
+
+// @function RML_getRiskMethodName       - Get display name for risk method.
+// @param    _method       (RiskMethod)  - Selected risk method enum.
+// @returns                (string)      - Human-readable method name.
+RML_getRiskMethodName(RiskMethod _method) =>
+    switch _method
+        RiskMethod.StaticAmount => "Static Amount"
+        RiskMethod.BalanceRatio => "Balance Ratio"
+        RiskMethod.StopBasedRisk => "Stop-Based Risk"
+        RiskMethod.DivisibleRisk => "Divisible (Prop)"
+        RiskMethod.AdjustingRisk => "Adjusting (Prop)"
+
+// @function RML_getAvailableDD          - Calculate available drawdown in dollars.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _challengeStart (float)     - Balance when challenge started.
+// @param    _maxDDPct     (float)       - Maximum drawdown percentage.
+// @param    _isTrailing   (bool)        - Whether drawdown is trailing.
+// @param    _highWatermark (float)      - High watermark for trailing DD.
+// @returns                (float)       - Available drawdown in dollars.
+RML_getAvailableDD(float _currentBal, float _challengeStart, float _maxDDPct, bool _isTrailing, float _highWatermark) =>
+    float refBalance = _isTrailing ? _highWatermark : _challengeStart
+    float maxDDAmount = refBalance * (_maxDDPct / 100)
+    float minBalance = refBalance - maxDDAmount
+    math.max(0, _currentBal - minBalance)
+
+// @function RML_getPropFirmStatus       - Get comprehensive prop firm account status.
+// @param    _currentBal   (float)       - Current account balance.
+// @param    _challengeStart (float)     - Balance when current challenge started.
+// @param    _profitTargetPct (float)    - Profit target percentage.
+// @param    _maxDDPct     (float)       - Maximum drawdown percentage.
+// @param    _isTrailing   (bool)        - Whether drawdown is trailing.
+// @param    _highWatermark (float)      - High watermark for trailing DD.
+// @param    _passCount    (int)         - Number of challenges passed.
+// @param    _failCount    (int)         - Number of challenges failed.
+// @returns                (RML_PropFirmStatus) - Complete prop firm status.
+RML_getPropFirmStatus(
+  float _currentBal,
+  float _challengeStart,
+  float _profitTargetPct,
+  float _maxDDPct,
+  bool _isTrailing,
+  float _highWatermark,
+  int _passCount,
+  int _failCount
+  ) =>
+    float targetBalance = RML_getProfitTargetBalance(_challengeStart, _profitTargetPct)
+    float refBalance = _isTrailing ? _highWatermark : _challengeStart
+    float minBalance = RML_getMinimumBalance(_challengeStart, _maxDDPct, _isTrailing, _highWatermark)
+    float pctToTarget = RML_getPctToTarget(_currentBal, _challengeStart, _profitTargetPct)
+    float pctToMaxDD = RML_getPctToMaxDD(_currentBal, _challengeStart, _maxDDPct, _isTrailing, _highWatermark)
+    float availDD = RML_getAvailableDD(_currentBal, _challengeStart, _maxDDPct, _isTrailing, _highWatermark)
+    bool targetReached = RML_isProfitTargetReached(_currentBal, targetBalance)
+    bool ddBreached = RML_isDrawdownExceeded(_currentBal, minBalance)
+    float totalPnL = _currentBal - _challengeStart
+    
+    RML_PropFirmStatus.new(
+      _passCount,
+      _failCount,
+      totalPnL,
+      _currentBal,
+      _challengeStart,
+      targetBalance,
+      minBalance,
+      availDD,
+      pctToTarget,
+      pctToMaxDD,
+      targetReached,
+      ddBreached
+      )
+
+// #endregion RML Utility Functions
+
+// #region RML Main Entry Point ***************************
+
+// @function RML_calculateRisk           - Main entry point for risk calculation.
+// @param    _method       (RiskMethod)  - Selected risk calculation method.
+// @param    _currentBal   (float)       - Current account balance/equity.
+// @param    _challengeStart (float)     - Balance when current challenge started.
+// @param    _highWatermark (float)      - Highest balance achieved in current challenge.
+// @param    _maxDDPct     (float)       - Maximum drawdown percentage.
+// @param    _profitTargetPct (float)    - Profit target percentage.
+// @param    _isTrailingDD (bool)        - Whether drawdown is trailing.
+// @param    _staticAmt    (float)       - Static amount (for StaticAmount method).
+// @param    _balRatio     (float)       - Balance ratio % (for BalanceRatio method).
+// @param    _riskPct      (float)       - Risk % (for StopBasedRisk method).
+// @param    _divisions    (int)         - Divisions (for DivisibleRisk method).
+// @param    _adjT1Pct     (int)         - Upper profit tier % (for AdjustingRisk).
+// @param    _adjT1Risk    (float)       - Upper profit tier risk %.
+// @param    _adjT2Pct     (int)         - Lower profit tier % (for AdjustingRisk).
+// @param    _adjT2Risk    (float)       - Lower profit tier risk %.
+// @param    _adjBaseRisk  (float)       - Base risk % (for AdjustingRisk).
+// @param    _adjD1Pct     (int)         - Upper drawdown tier %.
+// @param    _adjD1Risk    (float)       - Upper drawdown tier risk %.
+// @param    _adjD2Pct     (int)         - Lower drawdown tier %.
+// @param    _adjD2Risk    (float)       - Lower drawdown tier risk %.
+// @param    _entryPrice   (float)       - Entry price for position sizing.
+// @param    _stopPrice    (float)       - Stop loss price for position sizing.
+// @returns                (RML_RiskResult) - Complete risk calculation result.
+RML_calculateRisk(
+  RiskMethod _method,
+  float _currentBal,
+  float _challengeStart,
+  float _highWatermark,
+  float _maxDDPct,
+  float _profitTargetPct,
+  bool _isTrailingDD,
+  float _staticAmt,
+  float _balRatio,
+  float _riskPct,
+  int _divisions,
+  int _adjT1Pct,
+  float _adjT1Risk,
+  int _adjT2Pct,
+  float _adjT2Risk,
+  float _adjBaseRisk,
+  int _adjD1Pct,
+  float _adjD1Risk,
+  int _adjD2Pct,
+  float _adjD2Risk,
+  float _entryPrice,
+  float _stopPrice
+  ) =>
+    // Calculate minimum balance and check drawdown
+    float minBalance = RML_getMinimumBalance(_challengeStart, _maxDDPct, _isTrailingDD, _highWatermark)
+    bool ddExceeded = RML_isDrawdownExceeded(_currentBal, minBalance)
+    float availableRisk = RML_getAvailableRisk(_currentBal, minBalance)
+    
+    // With 3% margin in strategy(), cap gross exposure at equity / 0.03 to avoid hidden clipping
+    float marginReqPct = 3.0
+    float marginCap = marginReqPct > 0 ? (_currentBal / (marginReqPct / 100)) : na
+    
+    // Calculate percentage positions for adjusting risk
+    float pctToTarget = RML_getPctToTarget(_currentBal, _challengeStart, _profitTargetPct)
+    float pctToMaxDD = RML_getPctToMaxDD(_currentBal, _challengeStart, _maxDDPct, _isTrailingDD, _highWatermark)
+    
+    // Calculate position size based on method
+    float posSize = 0.0
+    float riskAmt = 0.0
+    float riskPctUsed = 0.0
+    string tierName = ""
+    
+    if not ddExceeded
+        switch _method
+            RiskMethod.StaticAmount =>
+                posSize := RML_calcStaticSize(_staticAmt)
+                riskAmt := _staticAmt
+                riskPctUsed := (_staticAmt / _currentBal) * 100
+                tierName := "Static"
+            RiskMethod.BalanceRatio =>
+                posSize := RML_calcBalanceRatioSize(_currentBal, _balRatio)
+                riskAmt := posSize
+                riskPctUsed := _balRatio
+                tierName := "Ratio"
+            RiskMethod.StopBasedRisk =>
+                posSize := RML_calcStopBasedSize(_currentBal, _riskPct, _entryPrice, _stopPrice)
+                riskAmt := _currentBal * (_riskPct / 100)
+                riskPctUsed := _riskPct
+                tierName := "Stop-Based"
+            RiskMethod.DivisibleRisk =>
+                posSize := RML_calcDivisibleSize(availableRisk, _divisions, _entryPrice, _stopPrice)
+                riskAmt := availableRisk / _divisions
+                riskPctUsed := (riskAmt / _currentBal) * 100
+                tierName := "1/" + str.tostring(_divisions)
+            RiskMethod.AdjustingRisk =>
+                [adjRiskPct, adjTierName] = RML_getAdjustingRiskTier(
+                  pctToTarget,
+                  pctToMaxDD,
+                  _adjT1Pct,
+                  _adjT1Risk,
+                  _adjT2Pct,
+                  _adjT2Risk,
+                  _adjBaseRisk,
+                  _adjD1Pct,
+                  _adjD1Risk,
+                  _adjD2Pct,
+                  _adjD2Risk
+                  )
+                riskPctUsed := adjRiskPct
+                tierName := adjTierName
+                posSize := RML_calcAdjustingSize(_currentBal, riskPctUsed, _entryPrice, _stopPrice)
+                riskAmt := _currentBal * (riskPctUsed / 100)
+    
+    // Clamp position size to reasonable bounds
+    posSize := RML_clampPositionSize(posSize, 0, marginCap)
+    
+    // Build result
+    RML_RiskResult result = RML_RiskResult.new(
+      posSize,
+      riskAmt,
+      riskPctUsed,
+      not ddExceeded,
+      RML_getRiskMethodName(_method),
+      tierName
+      )
+    
+    result
+
+// #endregion RML Main Entry Point
+
+// #endregion Risk Management Library
+
+//+-------------------------------------------------------+
+//                         FUNCTIONS                      |
+//+-------------------------------------------------------+
+// #region Functions
+
+// #region Trend Detection Functions **********************
+
+getRawTrendDirection(float _fastMa, float _slowMa) =>
+    if _fastMa > _slowMa
+        TrendDirection.Up
+    else if _fastMa < _slowMa
+        TrendDirection.Down
+    else
+        TrendDirection.Sideways
+
+countConsecutiveBars(bool _condition, int _prevCount) =>
+    _condition ? _prevCount + 1 : 0
+
+// @function getConfirmedTrend        - Determine trend with confirmation.
+// @param    _rawDir     (TrendDir)   - Current raw trend direction.
+// @param    _upCount    (int)        - Consecutive bars in uptrend.
+// @param    _downCount  (int)        - Consecutive bars in downtrend.
+// @param    _confirm    (int)        - Required bars for confirmation.
+// @returns              (TrendDir)   - Confirmed trend or Sideways.
+getConfirmedTrend(TrendDirection _rawDir, int _upCount, int _downCount, int _confirm) =>
+    if _rawDir == TrendDirection.Up and _upCount >= _confirm
+        TrendDirection.Up
+    else if _rawDir == TrendDirection.Down and _downCount >= _confirm
+        TrendDirection.Down
+    else
+        TrendDirection.Sideways
+
+// #endregion Trend Detection Functions
+
+// #region Entry Condition Functions **********************
+
+isLongEntryValid(TrendDirection _trend, float _close, float _lowerBB) =>
+    _trend == TrendDirection.Up and _close < _lowerBB
+
+isShortEntryValid(TrendDirection _trend, float _close, float _upperBB) =>
+    _trend == TrendDirection.Down and _close > _upperBB
+
+// @function isPriceInsideBB          - Check if price closed inside BB.
+// @param    _close      (float)      - Current close price.
+// @param    _upperBB    (float)      - Upper Bollinger Band value.
+// @param    _lowerBB    (float)      - Lower Bollinger Band value.
+// @returns              (bool)       - True if price inside bands.
+isPriceInsideBB(float _close, float _upperBB, float _lowerBB) =>
+    _close > _lowerBB and _close < _upperBB
+
+// #endregion Entry Condition Functions
+
+// #region Trade Calculation Functions ********************
+
+calculateLongStopLoss(float _entryPrice, float _atr, float _slCoeff) =>
+    _entryPrice - (_atr * _slCoeff)
+
+calculateShortStopLoss(float _entryPrice, float _atr, float _slCoeff) =>
+    _entryPrice + (_atr * _slCoeff)
+
+calculateLongTakeProfit(float _entryPrice, float _slDistance, float _profitRatio) =>
+    _entryPrice + (_slDistance * _profitRatio)
+
+calculateShortTakeProfit(float _entryPrice, float _slDistance, float _profitRatio) =>
+    _entryPrice - (_slDistance * _profitRatio)
+
+// @function generateTradeSignal       - Create trade signal with SL/TP.
+// @param    _trend       (TrendDir)   - Current confirmed trend direction.
+// @param    _close       (float)      - Current close price.
+// @param    _upperBB     (float)      - Upper Bollinger Band value.
+// @param    _lowerBB     (float)      - Lower Bollinger Band value.
+// @param    _atr         (float)      - Current ATR value.
+// @param    _slCoeff     (float)      - Stop loss ATR multiplier.
+// @param    _profitRatio (float)      - Take profit to risk ratio.
+// @returns               (TradeSignal) - Complete trade signal.
+generateTradeSignal(TrendDirection _trend, float _close, float _upperBB, float _lowerBB, float _atr, float _slCoeff, float _profitRatio) =>
+    TradeSignal signal = TradeSignal.new(false, false, na, na, na)
+    
+    if isLongEntryValid(_trend, _close, _lowerBB)
+        float slPrice = calculateLongStopLoss(_close, _atr, _slCoeff)
+        float slDistance = _close - slPrice
+        float tpPrice = calculateLongTakeProfit(_close, slDistance, _profitRatio)
+        signal := TradeSignal.new(true, true, _close, slPrice, tpPrice)
+    else if isShortEntryValid(_trend, _close, _upperBB)
+        float slPrice = calculateShortStopLoss(_close, _atr, _slCoeff)
+        float slDistance = slPrice - _close
+        float tpPrice = calculateShortTakeProfit(_close, slDistance, _profitRatio)
+        signal := TradeSignal.new(true, false, _close, slPrice, tpPrice)
+    
+    signal
+
+// #endregion Trade Calculation Functions
+
+// #region Exit Condition Functions ***********************
+
+// @function shouldExitLong          - Check if long position should close.
+// @param    _high       (float)     - Current bar high.
+// @param    _low        (float)     - Current bar low.
+// @param    _stopLoss   (float)     - Stop loss price level.
+// @param    _takeProfit (float)     - Take profit price level.
+// @returns              (bool)      - True if exit condition met.
+shouldExitLong(float _high, float _low, float _stopLoss, float _takeProfit) =>
+    _low <= _stopLoss or _high >= _takeProfit
+
+// @function shouldExitShort         - Check if short position should close.
+// @param    _high       (float)     - Current bar high.
+// @param    _low        (float)     - Current bar low.
+// @param    _stopLoss   (float)     - Stop loss price level.
+// @param    _takeProfit (float)     - Take profit price level.
+// @returns              (bool)      - True if exit condition met.
+shouldExitShort(float _high, float _low, float _stopLoss, float _takeProfit) =>
+    _high >= _stopLoss or _low <= _takeProfit
+
+// @function checkExitConditions     - Determine if current position should exit.
+// @param    _inTrade    (bool)      - Whether currently in a trade.
+// @param    _isLong     (bool)      - Whether current trade is long.
+// @param    _high       (float)     - Current bar high.
+// @param    _low        (float)     - Current bar low.
+// @param    _stopLoss   (float)     - Stop loss price level.
+// @param    _takeProfit (float)     - Take profit price level.
+// @returns              (bool)      - True if should exit position.
+checkExitConditions(bool _inTrade, bool _isLong, float _high, float _low, float _stopLoss, float _takeProfit) =>
+    if not _inTrade
+        false
+    else if _isLong
+        shouldExitLong(_high, _low, _stopLoss, _takeProfit)
+    else
+        shouldExitShort(_high, _low, _stopLoss, _takeProfit)
+
+// #endregion Exit Condition Functions
+
+// #region Entry Permission Functions *********************
+
+// @function canEnterTrade           - Check all conditions for trade entry.
+// @param    _signalValid (bool)     - Whether a valid signal exists.
+// @param    _inTrade     (bool)     - Whether currently in a trade.
+// @param    _waiting     (bool)     - Whether waiting for reentry.
+// @returns               (bool)     - True if entry is permitted.
+canEnterTrade(bool _signalValid, bool _inTrade, bool _waiting) =>
+    _signalValid and not _inTrade and not _waiting
+
+// #endregion Entry Permission Functions
+
+// #region Logging Helper Functions **********************
+
+// @function getTradeLetterSuffix    - Convert trade count to alphabetic suffix (A, B, ..., AA, AB, ...).
+// @param    _count       (int)      - Trade count for the day (1-based).
+// @returns               (string)   - Alphabetic suffix representing the count.
+getTradeLetterSuffix(int _count) =>
+    string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    int n = math.max(_count, 1) - 1
+    string suffix = ""
+    while true
+        int idx = n % 26
+        suffix := str.substring(alphabet, idx, idx + 1) + suffix
+        n := n / 26 - 1
+        if n < 0
+            break
+    suffix
+
+// @function buildTradeId            - Build trade ID in format TID-YYYYMMDDX.
+// @param    _countForDay (int)      - Trade count for current day (1-based).
+// @param    _year        (int)      - Current bar year.
+// @param    _month       (int)      - Current bar month.
+// @param    _day         (int)      - Current bar day of month.
+// @returns               (string)   - Trade ID string (e.g., TID-20251025A).
+buildTradeId(int _countForDay, int _year, int _month, int _day) =>
+    string datePart = str.format("{0,number,0000}{1,number,00}{2,number,00}", _year, _month, _day)
+    "TID-" + datePart + getTradeLetterSuffix(_countForDay)
+
+// #endregion Logging Helper Functions
+
+// #endregion Functions
+
+//+-------------------------------------------------------+
+//                         EXECUTION                      |
+//+-------------------------------------------------------+
+// #region Execution
+
+// Reset per-bar trade logging flag
+if barstate.isnew
+    g_tradeLogCreatedThisBar := false
+
+// Calculate moving averages at root level to avoid function warnings
+float fastMa = i_maType == MaType.SMA ? 
+  ta.sma(close, i_fastLength) : 
+  ta.ema(close, i_fastLength)
+float slowMa = i_maType == MaType.SMA ? 
+  ta.sma(close, i_slowLength) : 
+  ta.ema(close, i_slowLength)
+
+// Calculate Bollinger Bands
+[bbMiddle, bbUpper, bbLower] = ta.bb(close, i_bbLength, i_bbStdDev)
+
+// Calculate ATR
+float atrValue = ta.atr(i_atrLength)
+
+// Determine raw trend direction
+TrendDirection rawTrend = getRawTrendDirection(fastMa, slowMa)
+
+// Update consecutive bar counts
+barsInUptrend := countConsecutiveBars(rawTrend == TrendDirection.Up, nz(barsInUptrend[1]))
+barsInDowntrend := countConsecutiveBars(rawTrend == TrendDirection.Down, nz(barsInDowntrend[1]))
+
+// Get confirmed trend
+TrendDirection confirmedTrend = getConfirmedTrend(rawTrend, barsInUptrend, barsInDowntrend, i_confirmBars)
+
+// Generate trade signal
+TradeSignal signal = generateTradeSignal(confirmedTrend, close, bbUpper, bbLower, atrValue, i_slCoeff, i_profitRatio)
+
+// Risk Management Library - Get current equity
+float currentEquity = strategy.equity
+
+// Initialize challenge tracking on first bar
+if barstate.isfirst and isPropFirmMethod
+    g_rml_challengeStartBal := i_rml_accountBal
+    g_rml_challengeHighWatermark := i_rml_accountBal
+
+// For non-prop methods, use initial account balance as reference
+float effectiveChallengeStart = isPropFirmMethod ? g_rml_challengeStartBal : i_rml_accountBal
+
+// Update challenge high watermark (only for prop firm methods)
+if isPropFirmMethod
+    g_rml_challengeHighWatermark := RML_updateHighWatermark(currentEquity, g_rml_challengeHighWatermark)
+
+// Also track overall high watermark for display
+g_rml_highWatermark := RML_updateHighWatermark(currentEquity, g_rml_highWatermark)
+
+// Check for pass/fail conditions BEFORE calculating risk
+float minBalanceLevel = RML_getMinimumBalance(effectiveChallengeStart, i_rml_maxDD, i_rml_trailingDD, g_rml_challengeHighWatermark)
+float profitTargetLevel = RML_getProfitTargetBalance(effectiveChallengeStart, i_rml_profitTarget)
+
+// Detect pass/fail and reset challenge
+bool justPassed = false
+bool justFailed = false
+
+if isPropFirmMethod
+    // Check for pass (profit target reached)
+    if currentEquity >= profitTargetLevel and not g_rml_challengeTargetReached
+        g_rml_propPasses := g_rml_propPasses + 1
+        g_rml_challengeTargetReached := true
+        justPassed := true
+    
+    // Check for fail (max DD breached)
+    if currentEquity < minBalanceLevel and not g_rml_challengeMaxDDBreached
+        g_rml_propFails := g_rml_propFails + 1
+        g_rml_challengeMaxDDBreached := true
+        justFailed := true
+    
+    // Reset challenge after pass or fail
+    if g_rml_challengeTargetReached or g_rml_challengeMaxDDBreached
+        // Start new challenge with current equity as new starting balance
+        g_rml_challengeStartBal := currentEquity
+        g_rml_challengeHighWatermark := currentEquity
+        g_rml_challengeTargetReached := false
+        g_rml_challengeMaxDDBreached := false
+
+// Recalculate levels after potential reset
+float currentChallengeStart = isPropFirmMethod ? g_rml_challengeStartBal : i_rml_accountBal
+float currentMinBalance = RML_getMinimumBalance(currentChallengeStart, i_rml_maxDD, i_rml_trailingDD, g_rml_challengeHighWatermark)
+float currentProfitTarget = RML_getProfitTargetBalance(currentChallengeStart, i_rml_profitTarget)
+float availableRisk = RML_getAvailableRisk(currentEquity, currentMinBalance)
+
+// Risk Management Library - Calculate position sizing
+// Use signal prices if valid, otherwise use close and estimated stop
+float rmlEntryPrice = signal.isValid ? signal.entryPrice : close
+float rmlStopPrice = signal.isValid ? signal.stopLoss : (close - atrValue * i_slCoeff)
+
+RML_RiskResult riskResult = RML_calculateRisk(
+  i_rml_method,
+  currentEquity,
+  currentChallengeStart,
+  g_rml_challengeHighWatermark,
+  i_rml_maxDD,
+  i_rml_profitTarget,
+  i_rml_trailingDD,
+  i_rml_staticAmt,
+  i_rml_balRatio,
+  i_rml_riskPct,
+  i_rml_divisions,
+  i_rml_adjT1Pct,
+  i_rml_adjT1Risk,
+  i_rml_adjT2Pct,
+  i_rml_adjT2Risk,
+  i_rml_adjBaseRisk,
+  i_rml_adjD1Pct,
+  i_rml_adjD1Risk,
+  i_rml_adjD2Pct,
+  i_rml_adjD2Risk,
+  rmlEntryPrice,
+  rmlStopPrice
+  )
+
+// Store last position size for debug display
+g_rml_lastPositionSize := riskResult.positionSize
+g_rml_lastMethod := riskResult.method
+g_rml_lastTier := riskResult.tierName
+
+// Position sizing values reused for entries/logs
+float positionCash = riskResult.positionSize
+float positionQty = positionCash / close
+
+// Track live position state from broker emulator to react on same-bar fills
+float prevPosSize = nz(strategy.position_size[1], 0)
+float currPosSize = strategy.position_size
+bool positionClosedThisBar = prevPosSize != 0 and currPosSize == 0
+
+g_inTrade := currPosSize != 0
+g_isLong := currPosSize > 0 ? true : currPosSize < 0 ? false : g_isLong
+
+if positionClosedThisBar
+    g_waitingForReentry := true
+    g_entryPrice := na
+    g_stopLoss := na
+    g_takeProfit := na
+
+// Check for reentry permission (price must close inside BB after trade)
+bool priceInsideBB = isPriceInsideBB(close, bbUpper, bbLower)
+if g_waitingForReentry and priceInsideBB and not positionClosedThisBar
+    g_waitingForReentry := false
+
+// Check if entry is permitted
+bool entryPermitted = canEnterTrade(signal.isValid, g_inTrade, g_waitingForReentry) and riskResult.tradingAllowed
+
+// Execute new trades only when permitted
+if entryPermitted
+    // Store entry info for display
+    g_rml_lastTradeEntryPrice := signal.entryPrice
+    g_rml_lastTradeWasLong := signal.isLong
+    
+    if signal.isLong
+        strategy.entry("Long", strategy.long, qty=positionQty)
+        g_inTrade := true
+        g_isLong := true
+        g_entryPrice := signal.entryPrice
+        g_stopLoss := signal.stopLoss
+        g_takeProfit := signal.takeProfit
+    else
+        strategy.entry("Short", strategy.short, qty=positionQty)
+        g_inTrade := true
+        g_isLong := false
+        g_entryPrice := signal.entryPrice
+        g_stopLoss := signal.stopLoss
+        g_takeProfit := signal.takeProfit
+
+// Maintain hard SL/TP exit orders so fills occur at touched prices, not bar close
+if g_inTrade and not na(g_stopLoss) and not na(g_takeProfit)
+    if g_isLong
+        strategy.exit("Long SLTP", from_entry="Long", stop=g_stopLoss, limit=g_takeProfit, comment="Long SL/TP")
+    else
+        strategy.exit("Short SLTP", from_entry="Short", stop=g_stopLoss, limit=g_takeProfit, comment="Short SL/TP")
+
+// Create labels for pass/fail events
+if isPropFirmMethod and i_rml_showPropTable
+    if justPassed
+        label.new(bar_index, high + atrValue, "PASS", style=label.style_label_down, color=color.lime, textcolor=color.black, size=size.normal)
+    if justFailed
+        label.new(bar_index, low - atrValue, "FAIL", style=label.style_label_up, color=color.red, textcolor=color.white, size=size.normal)
+
+// Plot moving averages
+plot(fastMa, "Fast MA", color=color.blue, linewidth=2)
+plot(slowMa, "Slow MA", color=color.orange, linewidth=2)
+
+// Plot Bollinger Bands
+pBBUpper = plot(bbUpper, "BB Upper", color=color.new(color.purple, 50))
+plot(bbMiddle, "BB Middle", color=color.new(color.purple, 70), style=plot.style_circles)
+pBBLower = plot(bbLower, "BB Lower", color=color.new(color.purple, 50))
+
+// Fill between Bollinger Bands
+fill(pBBUpper, pBBLower, color=color.new(color.purple, 90), title="BB Fill")
+
+// Plot entry signals (only when permitted)
+plotshape(entryPermitted and signal.isLong, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(entryPermitted and not signal.isLong and signal.isValid, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Plot SL/TP levels when in trade (fixed values from entry)
+plot(g_inTrade ? g_stopLoss : na, "Stop Loss", color=color.red, style=plot.style_linebr, linewidth=1)
+plot(g_inTrade ? g_takeProfit : na, "Take Profit", color=color.green, style=plot.style_linebr, linewidth=1)
+
+// #endregion Execution
+
+//+-------------------------------------------------------+
+//                           DEBUG                        |
+//+-------------------------------------------------------+
+// #region Debug
+
+// Prop Firm Results Table (Bottom Right)
+if isPropFirmMethod and i_rml_showPropTable and barstate.islast
+    var table propTable = table.new(position.bottom_right, 2, 9, bgcolor=color.new(color.black, 80), border_width=1)
+    
+    // Get current challenge start for calculations
+    float displayChallengeStart = nz(g_rml_challengeStartBal, i_rml_accountBal)
+    float displayHWM = nz(g_rml_challengeHighWatermark, currentEquity)
+    
+    // Get prop firm status
+    RML_PropFirmStatus propStatus = RML_getPropFirmStatus(
+      currentEquity,
+      displayChallengeStart,
+      i_rml_profitTarget,
+      i_rml_maxDD,
+      i_rml_trailingDD,
+      displayHWM,
+      g_rml_propPasses,
+      g_rml_propFails
+      )
+    
+    // Header
+    table.cell(propTable, 0, 0, "PROP FIRM", text_color=color.yellow, text_size=size.normal)
+    table.cell(propTable, 1, 0, "STATUS", text_color=color.yellow, text_size=size.normal)
+    
+    // Passes
+    table.cell(propTable, 0, 1, "Passes:", text_color=color.white)
+    table.cell(propTable, 1, 1, str.tostring(propStatus.passCount), text_color=color.lime)
+    
+    // Fails
+    table.cell(propTable, 0, 2, "Fails:", text_color=color.white)
+    table.cell(propTable, 1, 2, str.tostring(propStatus.failCount), text_color=color.red)
+    
+    // Challenge P&L
+    color pnlColor = propStatus.totalPnL >= 0 ? color.green : color.red
+    string pnlSign = propStatus.totalPnL >= 0 ? "+" : ""
+    table.cell(propTable, 0, 3, "Challenge P&L:", text_color=color.white)
+    table.cell(propTable, 1, 3, pnlSign + str.tostring(propStatus.totalPnL, "#.##"), text_color=pnlColor)
+    
+    // Challenge Start Balance
+    table.cell(propTable, 0, 4, "Challenge Start:", text_color=color.white)
+    table.cell(propTable, 1, 4, str.tostring(propStatus.challengeStartBal, "#.##"), text_color=color.white)
+    
+    // Available Drawdown (key metric)
+    color availDDColor = propStatus.availableDD < (displayChallengeStart * i_rml_maxDD / 100 * 0.25) ? color.red :
+      propStatus.availableDD < (displayChallengeStart * i_rml_maxDD / 100 * 0.5) ? color.orange : color.green
+    table.cell(propTable, 0, 5, "Available DD:", text_color=color.white)
+    table.cell(propTable, 1, 5, "$" + str.tostring(propStatus.availableDD, "#.##"), text_color=availDDColor)
+    
+    // % to Target
+    color targetColor = propStatus.pctToTarget >= 100 ? color.lime : (propStatus.pctToTarget >= 50 ? color.green : color.white)
+    table.cell(propTable, 0, 6, "To Target:", text_color=color.white)
+    table.cell(propTable, 1, 6, str.tostring(math.max(0, math.min(propStatus.pctToTarget, 100)), "#.#") + "%", text_color=targetColor)
+    
+    // % DD Used
+    color ddColor = propStatus.pctDDUsed >= 75 ? color.red : (propStatus.pctDDUsed >= 50 ? color.orange : color.white)
+    table.cell(propTable, 0, 7, "DD Used:", text_color=color.white)
+    table.cell(propTable, 1, 7, str.tostring(math.max(0, propStatus.pctDDUsed), "#.#") + "%", text_color=ddColor)
+    
+    // Trailing DD indicator
+    string trailingText = i_rml_trailingDD ? "TRAILING" : "STATIC"
+    color trailingColor = i_rml_trailingDD ? color.yellow : color.gray
+    table.cell(propTable, 0, 8, "DD Type:", text_color=color.white)
+    table.cell(propTable, 1, 8, trailingText, text_color=trailingColor)
+
+// Main Debug Table (Top Right)
+if i_debug and barstate.islast
+    // Calculate table rows needed
+    int baseRows = 9
+    int riskRows = i_rml_debugRisk ? 13 : 0
+    int totalRows = baseRows + riskRows
+    
+    var table debugTable = table.new(position.top_right, 2, totalRows, bgcolor=color.new(color.black, 80), border_width=1)
+    
+    string trendText = switch confirmedTrend
+        TrendDirection.Up => "UPTREND"
+        TrendDirection.Down => "DOWNTREND"
+        => "SIDEWAYS"
+    
+    color trendColor = switch confirmedTrend
+        TrendDirection.Up => color.green
+        TrendDirection.Down => color.red
+        => color.gray
+    
+    table.cell(debugTable, 0, 0, "Trend:", text_color=color.white)
+    table.cell(debugTable, 1, 0, trendText, text_color=trendColor)
+    
+    table.cell(debugTable, 0, 1, "Up Bars:", text_color=color.white)
+    table.cell(debugTable, 1, 1, str.tostring(barsInUptrend), text_color=color.white)
+    
+    table.cell(debugTable, 0, 2, "Down Bars:", text_color=color.white)
+    table.cell(debugTable, 1, 2, str.tostring(barsInDowntrend), text_color=color.white)
+    
+    table.cell(debugTable, 0, 3, "ATR:", text_color=color.white)
+    table.cell(debugTable, 1, 3, str.tostring(atrValue, "#.#####"), text_color=color.white)
+    
+    table.cell(debugTable, 0, 4, "Signal:", text_color=color.white)
+    string signalText = signal.isValid ?
+      (signal.isLong ? "LONG" : "SHORT") : "NONE"
+    table.cell(debugTable, 1, 4, signalText, text_color=color.white)
+    
+    table.cell(debugTable, 0, 5, "In Trade:", text_color=color.white)
+    string tradeText = g_inTrade ? (g_isLong ? "LONG" : "SHORT") : "NO"
+    table.cell(debugTable, 1, 5, tradeText, text_color=color.white)
+    
+    table.cell(debugTable, 0, 6, "Waiting:", text_color=color.white)
+    table.cell(debugTable, 1, 6, g_waitingForReentry ? "YES" : "NO", text_color=g_waitingForReentry ? color.yellow : color.white)
+    
+    table.cell(debugTable, 0, 7, "SL Price:", text_color=color.white)
+    table.cell(debugTable, 1, 7, str.tostring(g_stopLoss, "#.#####"), text_color=color.red)
+    
+    table.cell(debugTable, 0, 8, "TP Price:", text_color=color.white)
+    table.cell(debugTable, 1, 8, str.tostring(g_takeProfit, "#.#####"), text_color=color.green)
+    
+    // Risk Management debug rows
+    if i_rml_debugRisk
+        int rmlStartRow = baseRows
+        
+        table.cell(debugTable, 0, rmlStartRow, "═══ RISK ═══", text_color=color.yellow)
+        table.cell(debugTable, 1, rmlStartRow, "", text_color=color.yellow)
+        
+        table.cell(debugTable, 0, rmlStartRow + 1, "Method:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 1, g_rml_lastMethod, text_color=color.aqua)
+        
+        table.cell(debugTable, 0, rmlStartRow + 2, "Tier:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 2, g_rml_lastTier, text_color=color.aqua)
+        
+        table.cell(debugTable, 0, rmlStartRow + 3, "Equity:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 3, str.tostring(currentEquity, "#.##"), text_color=color.white)
+        
+        table.cell(debugTable, 0, rmlStartRow + 4, "Challenge Start:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 4, str.tostring(nz(g_rml_challengeStartBal, i_rml_accountBal), "#.##"), text_color=color.white)
+        
+        table.cell(debugTable, 0, rmlStartRow + 5, "High WM:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 5, str.tostring(g_rml_challengeHighWatermark, "#.##"), text_color=color.lime)
+        
+        table.cell(debugTable, 0, rmlStartRow + 6, "Min Balance:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 6, str.tostring(currentMinBalance, "#.##"), text_color=color.orange)
+        
+        table.cell(debugTable, 0, rmlStartRow + 7, "Target Bal:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 7, str.tostring(currentProfitTarget, "#.##"), text_color=color.lime)
+        
+        table.cell(debugTable, 0, rmlStartRow + 8, "Avail Risk:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 8, str.tostring(availableRisk, "#.##"), text_color=color.white)
+        
+        table.cell(debugTable, 0, rmlStartRow + 9, "Position $:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 9, str.tostring(riskResult.positionSize, "#.##"), text_color=color.aqua)
+        
+        table.cell(debugTable, 0, rmlStartRow + 10, "Risk Amt:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 10, str.tostring(riskResult.riskAmount, "#.##"), text_color=color.white)
+        
+        table.cell(debugTable, 0, rmlStartRow + 11, "Risk %:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 11, str.tostring(riskResult.riskPercent, "#.##") + "%", text_color=color.white)
+        
+        color tradingColor = riskResult.tradingAllowed ? color.green : color.red
+        string tradingText = riskResult.tradingAllowed ? "ALLOWED" : "STOPPED"
+        table.cell(debugTable, 0, rmlStartRow + 12, "Trading:", text_color=color.white)
+        table.cell(debugTable, 1, rmlStartRow + 12, tradingText, text_color=tradingColor)
+
+if i_debug and entryPermitted and not g_tradeLogCreatedThisBar
+    // Generate trade ID for current day with alphabetic suffix
+    int tradeDayKey = year * 10000 + month * 100 + dayofmonth
+    if na(g_lastTradeDay) or tradeDayKey != g_lastTradeDay
+        g_lastTradeDay := tradeDayKey
+        g_tradeCountForDay := 0
+    g_tradeCountForDay += 1
+    string tradeId = buildTradeId(g_tradeCountForDay, year, month, dayofmonth)
+    g_lastTradeId := tradeId
+    g_tradeLogCreatedThisBar := true
+    
+    // Log detailed trade context keyed by trade ID
+    float riskPctOfEquity = currentEquity > 0 ? (riskResult.riskAmount / currentEquity) * 100 : na
+    string directionText = signal.isLong ? "LONG" : "SHORT"
+    string propRiskNote = isPropFirmMethod ? str.format(
+      "\nRisk vs avail: ${0,number,#.##} / ${1,number,#.##} ({2,number,#.###}%)",
+      riskResult.riskAmount,
+      availableRisk,
+      availableRisk > 0 ? (riskResult.riskAmount / availableRisk) * 100 : na
+      ) : ""
+    string logMessage = str.format(
+      "{0}\n{1} entry @ {2,number,#.#####}\nSL {3,number,#.#####}\nTP {4,number,#.#####}\nQty {5,number,#.####} (${6,number,#.##})\nRisk ${7,number,#.##} ({8,number,#.###}% bal)\nEquity ${9,number,#.##}\nMethod {10}\nTier {11}",
+      tradeId,
+      directionText,
+      signal.entryPrice,
+      signal.stopLoss,
+      signal.takeProfit,
+      positionQty,
+      positionCash,
+      riskResult.riskAmount,
+      riskPctOfEquity,
+      currentEquity,
+      riskResult.method,
+      riskResult.tierName
+      ) + propRiskNote
+    log.info(logMessage)
+    
+    // Minimal chart label to reference log entry
+    label.new(
+      bar_index,
+      signal.isLong ? low - atrValue : high + atrValue,
+      tradeId,
+      style=signal.isLong ? label.style_label_up : label.style_label_down,
+      color=signal.isLong ? color.green : color.red,
+      textcolor=color.white,
+      size=size.tiny
+      )
+
+// #endregion Debug
