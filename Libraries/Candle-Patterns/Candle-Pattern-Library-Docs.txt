@@ -1,0 +1,178 @@
+[b]Candle Pattern Library[/b]
+
+A comprehensive and easy-to-use Pine Script™ library for detecting single, two, and three-candle patterns. This library provides detailed pattern analysis including size classification, direction validation, and specific pattern identification.
+
+[b]Quick Start[/b]
+
+[b]1. Import the Library[/b]
+import OneCleverGuy/CandlePatternLibrary/1 as CPL
+
+[b]2. Analyze Candles[/b]
+Use the main analysis functions to detect patterns. You can analyze the current forming candle or confirmed historical candles.
+
+// 1. Analyze candles (Current [0], Previous [1], and the one before [2])
+// Note: We use full variable names for clarity.
+CandleData candleNewest = CPL.analyzeCandle(open, high, low, close, 250, 50, 10, 50, 85)
+CandleData candleMiddle = CPL.analyzeCandle(open[1], high[1], low[1], close[1], 250, 50, 10, 50, 85)
+CandleData candleOldest = CPL.analyzeCandle(open[2], high[2], low[2], close[2], 250, 50, 10, 50, 85)
+
+// 2. Analyze multi-candle patterns
+// Pass candles in chronological order: Oldest -> Newest
+var twoCandleData = CPL.analyzeTwoCandlePattern(candleMiddle, candleNewest, 10, 85)
+var threeCandleData = CPL.analyzeThreeCandlePattern(candleOldest, candleMiddle, candleNewest, 10)
+
+[b]Indicator Inputs[/b]
+
+These inputs are defined in the reference indicator (Candle-Pattern-Indicator.ps) and should be exposed to users of the library so they can control how candles are classified before the analysis functions are called.
+
+- [b]Use ATR for Average Size[/b] (bool, default [b]false[/b]): When enabled, uses `ta.atr(ATR Length)` as the baseline candle size; when disabled, uses the manual Average Candle Size value.
+- [b]ATR Length[/b] (int, default [b]14[/b], active when ATR is enabled): Lookback for the ATR calculation that supplies the average candle size.
+- [b]Average Candle Size[/b] (float, default [b]250[/b], active when ATR is disabled): Manual baseline wick range used as `_avgSize` in `analyzeCandle`.
+- [b]Size Threshold (%) [/b] (float, default [b]50.0[/b], min 5 max 100 step 5): Percent difference from the baseline to classify a candle as Long or Short; passed as `_sizeThresholdPct`.
+- [b]Equivalence Tolerance[/b] (float, default [b]10[/b], step 0.001): Absolute price tolerance for equality checks (Doji, Marubozu, Tweezer matching); passed to `analyzeCandle` and `analyzeTwoCandlePattern`.
+- [b]Body Tolerance[/b] (float, default [b]50[/b], step 0.001): Absolute price tolerance for "small body" checks; passed as `_bodyTolerance` to `analyzeCandle`.
+- [b]Position Threshold[/b] (string option, default [b]"85:15"[/b]; options: 99:1, 98:2, 97:3, 96:4, 95:5, 90:10, 85:15, 80:20, 75:25): Converted to an int for `_positionThreshold` to validate hammer/shooting-star body placement and wick ratios in single and two-candle patterns.
+- [b]Minimum Fair Value Gap[/b] (float, default [b]10[/b], step 0.1): Absolute minimum gap size required between candle 1 and candle 3 when classifying Fair Value Gaps (and combined patterns); passed as `_minGap` to `analyzeThreeCandlePattern`.
+- [b]Enable Debug Logging[/b] (bool, default [b]true[/b]): Writes per-bar analysis details to the Pine Logs and colors/plots shapes for detected patterns; leave off in production scripts to avoid noisy logs.
+
+[b]Enums Reference[/b]
+
+These are the Enum Types exported by the library. When checking results, use the pattern Alias.EnumType.Value (e.g., CPL.CandlePattern.Hammer).
+
+[b]CandlePattern[/b]
+  Enum Type for single-candle formations.
+  Usage: CPL.CandlePattern.<Value>
+  Values:
+    [b]Unknown[/b]: No specific pattern detected.
+    [b]RegularBullish[/b]: A standard bullish candle.
+    [b]RegularBearish[/b]: A standard bearish candle.
+    [b]BullishMarubozu[/b]: Bullish candle with little to no wicks.
+    [b]BearishMarubozu[/b]: Bearish candle with little to no wicks.
+    [b]Hammer[/b]: Small body at the top of the range (bullish reversal).
+    [b]ShootingStar[/b]: Small body at the bottom of the range (bearish reversal).
+    [b]SpinningTop[/b]: Small body centered in the range.
+    [b]Doji[/b]: Open and close are effectively equal.
+    [b]LongLeggedDoji[/b]: Doji with long upper and lower wicks.
+    [b]CrossDoji[/b]: Doji with the body in the upper section.
+    [b]DragonflyDoji[/b]: Doji where open/close are at the high.
+    [b]InvertedCrossDoji[/b]: Doji with the body in the lower section.
+    [b]GravestoneDoji[/b]: Doji where open/close are at the low.
+    [b]FourPriceDoji[/b]: Open, High, Low, and Close are all equal.
+
+[b]TwoCandlePattern[/b]
+  Enum Type for two-candle formations.
+  Usage: CPL.TwoCandlePattern.<Value>
+  Values:
+    [b]None[/b]: No two-candle pattern detected.
+    [b]BullishEngulfingWeak[/b]: Bullish candle engulfs the previous body (close does not engulf range).
+    [b]BullishEngulfingStrong[/b]: Bullish candle completely engulfs the previous body close outside range.
+    [b]BearishEngulfingWeak[/b]: Bearish candle engulfs the previous body.
+    [b]BearishEngulfingStrong[/b]: Bearish candle completely engulfs the previous body.
+    [b]InsideBar[/b]: The second candle is completely contained within the first.
+    [b]TweezerTop[/b]: Two candles with matching highs (bearish reversal).
+    [b]TweezerBottom[/b]: Two candles with matching lows (bullish reversal).
+    [b]BullishRailRoad[/b]: Two opposite Marubozus (Down -> Up).
+    [b]BearishRailRoad[/b]: Two opposite Marubozus (Up -> Down).
+
+[b]ThreeCandlePattern[/b]
+  Enum Type for three-candle formations.
+  Usage: CPL.ThreeCandlePattern.<Value>
+  Values:
+    [b]None[/b]: No three-candle pattern detected.
+    [b]ThreeWhiteSoldiers[/b]: Three consecutive bullish candles.
+    [b]ThreeBlackCrows[/b]: Three consecutive bearish candles.
+    [b]ThreeWhiteSoldiersWithBullishFVG[/b]: Three White Soldiers containing a Bullish FVG.
+    [b]ThreeWhiteSoldiersWithBearishFVG[/b]: Three White Soldiers containing a Bearish FVG.
+    [b]ThreeBlackCrowsWithBullishFVG[/b]: Three Black Crows containing a Bullish FVG.
+    [b]ThreeBlackCrowsWithBearishFVG[/b]: Three Black Crows containing a Bearish FVG.
+    [b]MorningStar[/b]: Bearish -> Small/Doji -> Bullish (Bullish Reversal).
+    [b]EveningStar[/b]: Bullish -> Small/Doji -> Bearish (Bearish Reversal).
+    [b]BullishAbandonedBaby[/b]: Morning Star with gaps between all candles.
+    [b]BearishAbandonedBaby[/b]: Evening Star with gaps between all candles.
+    [b]EngulfingSandwich[/b]: Bearish -> Bullish (Engulfing) -> Bearish (Inside).
+    [b]BullishFairValueGap[/b]: A gap between Candle 1 High and Candle 3 Low.
+    [b]BearishFairValueGap[/b]: A gap between Candle 1 Low and Candle 3 High.
+
+[b]CandleSize[/b]
+  Enum Type for candle size classification.
+  Usage: CPL.CandleSize.<Value>
+  Values:
+    [b]Short[/b]
+    [b]Normal[/b]
+    [b]Long[/b]
+
+[b]CandleDirection[/b]
+  Enum Type for candle direction classification.
+  Usage: CPL.CandleDirection.<Value>
+  Values:
+    [b]Bearish[/b]
+    [b]Neutral[/b]
+    [b]Bullish[/b]
+
+[b]Function Reference[/b]
+
+[b]Analysis Functions[/b]
+
+[b]analyzeCandle(_open, _high, _low, _close, _avgSize, _sizeThresholdPct, _equivTolerance, _bodyTolerance, _positionThreshold)[/b]
+  analyzeCandle                         - Analyzes a single candle's OHLC data to determine its size, direction, and single-candle pattern.
+  Parameters:
+    [b]_open (float)[/b]: (float)                 - Candle open price.
+    [b]_high (float)[/b]: (float)                 - Candle high price.
+    [b]_low (float)[/b]: (float)                 - Candle low price.
+    [b]_close (float)[/b]: (float)                 - Candle close price.
+    [b]_avgSize (float)[/b]: (float)                 - Baseline size (wick range) to compare against.
+    [b]_sizeThresholdPct (float)[/b]: (float)                 - % difference from average to be considered Long/Short (e.g., 50.0).
+    [b]_equivTolerance (float)[/b]: (float)                 - Absolute price diff for Close to equal Open (Doji checks).
+    [b]_bodyTolerance (float)[/b]: (float)                 - Absolute price diff for "Small Body" checks.
+    [b]_positionThreshold (int)[/b]: (int)                   - Int (0-100) determining valid wick ratios for Hammers/Shooting Stars (e.g., 85).
+  Returns: (CandleData)            - CandleData object containing CandlePattern, CandleSize, CandleDirection.
+
+[b]analyzeTwoCandlePattern(_candle1, _candle2, _equivTolerance, _positionThreshold)[/b]
+  analyzeTwoCandlePattern               - Analyzes two consecutive candles to find pairs like Engulfing, Tweezers, or Inside Bars.
+  Parameters:
+    [b]_candle1 (CandleData)[/b]: (CandleData)            - The first (older) candle data (previous).
+    [b]_candle2 (CandleData)[/b]: (CandleData)            - The second (newer) candle data (current).
+    [b]_equivTolerance (float)[/b]: (float)                 - Price tolerance for matching highs/lows (Tweezers).
+    [b]_positionThreshold (int)[/b]: (int)                   - Threshold for wick validations.
+  Returns: (TwoCandleData)         - TwoCandleData object containing TwoCandlePattern.
+
+[b]analyzeThreeCandlePattern(_candle1, _candle2, _candle3, _minGap)[/b]
+  analyzeThreeCandlePattern             - Analyzes three consecutive candles to find complex patterns like Morning Stars, Abandoned Babies, or Three White Soldiers.
+  Parameters:
+    [b]_candle1 (CandleData)[/b]: (CandleData)            - The first (oldest) candle data.
+    [b]_candle2 (CandleData)[/b]: (CandleData)            - The second (middle) candle data.
+    [b]_candle3 (CandleData)[/b]: (CandleData)            - The third (newest) candle data.
+    [b]_minGap (float)[/b]: (float)                 - Minimum absolute gap size required for Fair Value Gap detection.
+  Returns: (ThreeCandleData)       - ThreeCandleData object containing ThreeCandlePattern.
+
+[b]Naming Utilities[/b]
+
+[b]getPatternName(_pattern)[/b]
+  getPatternName                        - Returns the string name of a candle pattern.
+  Parameters:
+    [b]_pattern (CandlePattern)[/b]: (CandlePattern)         - The candle pattern enum value.
+  Returns: (string)                - Human-readable pattern name (e.g., "Hammer").
+
+[b]getTwoCandlePatternName(_pattern)[/b]
+  getTwoCandlePatternName               - Returns the string name of a two-candle pattern.
+  Parameters:
+    [b]_pattern (TwoCandlePattern)[/b]: (TwoCandlePattern)      - The two-candle pattern enum value.
+  Returns: (string)                - Human-readable pattern name (e.g., "Bullish Engulfing").
+
+[b]getThreeCandlePatternName(_pattern)[/b]
+  getThreeCandlePatternName             - Returns the string name of a three-candle pattern.
+  Parameters:
+    [b]_pattern (ThreeCandlePattern)[/b]: (ThreeCandlePattern)    - The three-candle pattern enum value.
+  Returns: (string)                - Human-readable pattern name (e.g., "Morning Star").
+
+[b]getSizeName(_size)[/b]
+  getSizeName                           - Returns the string name of a candle size.
+  Parameters:
+    [b]_size (CandleSize)[/b]: (CandleSize)            - The candle size enum value.
+  Returns: (string)                - Human-readable size name ("Short", "Normal", or "Long").
+
+[b]getDirectionName(_direction)[/b]
+  getDirectionName                      - Returns the string name of a candle direction.
+  Parameters:
+    [b]_direction (CandleDirection)[/b]: (CandleDirection)       - The candle direction enum value.
+  Returns: (string)                - Human-readable direction name ("Bullish", "Bearish", or "Neutral").
