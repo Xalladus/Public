@@ -1,0 +1,515 @@
+//@version=6
+indicator("Candlestick Pattern Detector", shorttitle="CandlePats", overlay=true)
+
+// Import library - UPDATE WITH YOUR USERNAME AFTER PUBLISHING
+import OneCleverGuy/CandlePatternLibrary/2 as CPL
+
+//+-------------------------------------------------------+
+//                        INFORMATION                     |
+//+-------------------------------------------------------+
+// #region Information
+
+// @description    Candlestick Pattern Detector
+//                 Uses the CandlePatternLibrary to detect and visualize candle patterns.
+//                 
+//                 Detected Patterns:
+//                 - Single Candle: Marubozu, Hammer, Shooting Star, Doji variants, etc.
+//                 - Two Candle: Engulfing, Inside Bar, Tweezer, Rail Road
+//                 - Three Candle: Three White Soldiers/Black Crows, Morning/Evening Star,
+//                   Abandoned Baby, Engulfing Sandwich, Fair Value Gaps
+//
+// @version        1.6.0
+
+// #endregion Information
+
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
+
+// #region Input Enums ************************************
+
+// NOTE: After importing library, these will be CPL.CandleSize, etc.
+
+// #endregion Input Enums
+
+// #region Tooltips ***************************************
+
+string tt_useAtr            = "Enable to use ATR for average candle size calculation. " +
+                              "Disable to manually set the average candle size."
+
+string tt_atrLength         = "Length of the ATR calculation when using ATR for average candle size."
+
+string tt_avgCandleSize     = "The average candle size (wick range) to use as baseline for " +
+                              "size classification. Only used when ATR is disabled."
+
+string tt_sizeThreshold     = "Percentage threshold for classifying candles as Long or Short. " +
+                              "If candle wick range is more than this % larger than the average, " +
+                              "it is classified as Long. If more than this % smaller, it is Short. " +
+                              "Everything else is Normal."
+
+string tt_equivTolerance    = "Absolute tolerance value for testing if prices are equivalent. " +
+                              "Used for Marubozu and Doji detection where we test if open/close " +
+                              "equals high/low. This is an absolute price value."
+
+string tt_bodyTolerance     = "Absolute tolerance value for considering open and close as " +
+                              "equivalent (small body). Used for Hammer, Shooting Star, and " +
+                              "Spinning Top detection. This is an absolute price value."
+
+string tt_positionThreshold = "Body position threshold for Hammer/Shooting Star classification. " +
+                              "Format is Upper:Lower percentage split. E.g., '75:25' means: " +
+                              "if body is above the 75% mark of the wick range = Hammer, " +
+                              "if body is below the 25% mark of the wick range = Shooting Star."
+
+string tt_minFvgGap         = "Minimum absolute gap size for Fair Value Gap detection (candle 3 low " +
+                              "minus candle 1 high for bullish, candle 1 low minus candle 3 high for bearish)."
+
+string tt_debug             = "Enable debug logging to display candle analysis details in the " +
+                              "Pine Logs panel at the start of each new candle."
+
+// #endregion Tooltips
+
+// #region Analysis Settings ******************************
+
+var string iGroupAnalysis = "Analysis Settings"
+
+i_useAtr            = input.bool(false, "Use ATR for Average Size", 
+                        group=iGroupAnalysis, tooltip=tt_useAtr)
+
+i_atrLength         = input.int(14, "ATR Length", minval=1, 
+                        group=iGroupAnalysis, tooltip=tt_atrLength, active=i_useAtr)
+
+i_avgCandleSize     = input.float(250, "Average Candle Size", step=0.1, 
+                        group=iGroupAnalysis, tooltip=tt_avgCandleSize, active=not i_useAtr)
+
+i_sizeThreshold     = input.float(50.0, "Size Threshold (%)", minval=5.0, maxval=100.0, step=5.0, 
+                        group=iGroupAnalysis, tooltip=tt_sizeThreshold)
+
+i_equivTolerance    = input.float(10, "Equivalence Tolerance",step=0.001, 
+                        group=iGroupAnalysis, tooltip=tt_equivTolerance)
+
+i_bodyTolerance     = input.float(50, "Body Tolerance", step=0.001, 
+                        group=iGroupAnalysis, tooltip=tt_bodyTolerance)
+
+i_positionThreshold = input.string("85:15", "Position Threshold", 
+                        options=["99:1", "98:2", "97:3", "96:4", "95:5", "90:10", "85:15", "80:20", "75:25"],
+                        group=iGroupAnalysis, tooltip=tt_positionThreshold)
+
+i_minFvgGap         = input.float(10, "Minimum Fair Value Gap", minval=0.0, step=0.1,
+                        group=iGroupAnalysis, tooltip=tt_minFvgGap)
+
+// #endregion Analysis Settings
+
+// #region Debug ******************************************
+
+var string iGroupDebug = "Debug"
+
+i_debug = input.bool(true, "Enable Debug Logging", group=iGroupDebug, tooltip=tt_debug)
+
+// #endregion Debug
+
+// #endregion Inputs
+
+//+-------------------------------------------------------+
+//                      GLOBAL VARIABLES                  |
+//+-------------------------------------------------------+
+// #region Global Variables
+
+// ATR must be calculated at root level for Pine Script ta functions
+atrValue = ta.atr(i_atrLength)
+
+// Determine which average size to use based on user selection
+avgSize = i_useAtr ? atrValue : i_avgCandleSize
+
+// Parse position threshold from string to integer
+positionThresholdValue = switch i_positionThreshold
+    "99:1"  => 99
+    "98:2"  => 98
+    "97:3"  => 97
+    "96:4"  => 96
+    "95:5"  => 95
+    "90:10" => 90
+    "85:15" => 85
+    "80:20" => 80
+    "75:25" => 75
+    => 75
+
+// #endregion Global Variables
+
+
+//+-------------------------------------------------------+
+//                         EXECUTION                      |
+//+-------------------------------------------------------+
+// #region Execution
+
+// All candle analysis is performed on CLOSED candles only.
+// Analysis happens at the start of each new candle for the previous candle's data.
+// All calculations are wrapped in barstate.isconfirmed to avoid running on every tick.
+
+// Declare variables that will persist across ticks
+var CPL.CandleData mostRecentClosedCandle = na
+var CPL.CandleData secondMostRecentClosedCandle = na
+var CPL.CandleData thirdMostRecentClosedCandle = na
+var CPL.TwoCandleData twoCandleAnalysis = na
+var CPL.ThreeCandleData threeCandleAnalysis = na
+
+// Only perform analysis when bar is confirmed (once per bar)
+if barstate.isconfirmed
+    // Analyze the most recently closed candle (current bar at close)
+    mostRecentClosedCandle := CPL.analyzeCandle(
+      open,
+      high,
+      low,
+      close,
+      avgSize,
+      i_sizeThreshold,
+      i_equivTolerance,
+      i_bodyTolerance,
+      positionThresholdValue
+      )
+    
+    // Analyze the second most recently closed candle (previous bar [1])
+    // Used for two-candle pattern detection
+    secondMostRecentClosedCandle := CPL.analyzeCandle(
+      open[1],
+      high[1],
+      low[1],
+      close[1],
+      avgSize,
+      i_sizeThreshold,
+      i_equivTolerance,
+      i_bodyTolerance,
+      positionThresholdValue
+      )
+    
+    // Analyze the third most recently closed candle (bar [2])
+    // Used for three-candle pattern detection
+    thirdMostRecentClosedCandle := CPL.analyzeCandle(
+      open[2],
+      high[2],
+      low[2],
+      close[2],
+      avgSize,
+      i_sizeThreshold,
+      i_equivTolerance,
+      i_bodyTolerance,
+      positionThresholdValue
+      )
+    
+    // Analyze two-candle pattern using the two most recently closed candles
+    // candle [1] is older, candle [0] is newer
+    twoCandleAnalysis := CPL.analyzeTwoCandlePattern(
+      secondMostRecentClosedCandle,
+      mostRecentClosedCandle,
+      i_equivTolerance,
+      positionThresholdValue
+      )
+    
+    // Analyze three-candle pattern using the three most recently closed candles
+    // candle [2] is oldest, candle [1] is middle, candle [0] is newest
+    threeCandleAnalysis := CPL.analyzeThreeCandlePattern(
+      thirdMostRecentClosedCandle,
+      secondMostRecentClosedCandle,
+      mostRecentClosedCandle,
+      i_minFvgGap
+      )
+
+// #endregion Execution
+
+
+//+-------------------------------------------------------+
+//                          DEBUG                         |
+//+-------------------------------------------------------+
+// #region Debug
+
+// Debug logging for pattern analysis
+if i_debug and barstate.isconfirmed
+    string patternName = CPL.getPatternName(mostRecentClosedCandle.pattern)
+    string sizeName = CPL.getSizeName(mostRecentClosedCandle.size)
+    string dirName = CPL.getDirectionName(mostRecentClosedCandle.direction)
+    string twoCandlePatternName = CPL.getTwoCandlePatternName(twoCandleAnalysis.pattern)
+    string olderCandlePatternName = CPL.getPatternName(secondMostRecentClosedCandle.pattern)
+    
+    log.info(
+      "\n=== Single Candle Analysis ===" +
+      "\nType: [{0}]" +
+      "\nSize: {1}" +
+      "\nDirection: {2}" +
+      "\nWick Range: {3,number,#.#####}" +
+      "\nBody Range: {4,number,#.#####}" +
+      "\nAvg Size Used: {5,number,#.#####}",
+      patternName,
+      sizeName,
+      dirName,
+      mostRecentClosedCandle.wickRange,
+      mostRecentClosedCandle.bodyRange,
+      avgSize
+      )
+    
+    log.info(
+      "\n=== Two Candle Analysis ===" +
+      "\nPattern: [{0}]" +
+      "\nCandle 1 (Older): {1}" +
+      "\nCandle 2 (Newer): {2}",
+      twoCandlePatternName,
+      olderCandlePatternName,
+      patternName
+      )
+    
+    string threeCandlePatternName = CPL.getThreeCandlePatternName(threeCandleAnalysis.pattern)
+    string oldestCandlePatternName = CPL.getPatternName(thirdMostRecentClosedCandle.pattern)
+    
+    log.info(
+      "\n=== Three Candle Analysis ===" +
+      "\nPattern: [{0}]" +
+      "\nCandle 1 (Oldest): {1}" +
+      "\nCandle 2 (Middle): {2}" +
+      "\nCandle 3 (Newest): {3}",
+      threeCandlePatternName,
+      oldestCandlePatternName,
+      olderCandlePatternName,
+      patternName
+      )
+
+// #endregion Debug
+
+
+//+-------------------------------------------------------+
+//                      VISUALIZATION                     |
+//+-------------------------------------------------------+
+// #region Visualization
+
+// Determine bar color based on single candle pattern
+color debugBarColor = na
+if i_debug
+    if mostRecentClosedCandle.pattern == CPL.CandlePattern.BullishMarubozu
+        debugBarColor := color.new(color.lime, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.BearishMarubozu
+        debugBarColor := color.new(color.red, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.Hammer
+        debugBarColor := color.new(color.aqua, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.ShootingStar
+        debugBarColor := color.new(color.orange, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.SpinningTop
+        debugBarColor := color.new(color.yellow, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.Doji
+        debugBarColor := color.new(color.purple, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.LongLeggedDoji
+        debugBarColor := color.new(color.fuchsia, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.CrossDoji
+        debugBarColor := color.new(color.teal, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.DragonflyDoji
+        debugBarColor := color.new(color.blue, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.InvertedCrossDoji
+        debugBarColor := color.new(color.maroon, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.GravestoneDoji
+        debugBarColor := color.new(color.gray, 0)
+    else if mostRecentClosedCandle.pattern == CPL.CandlePattern.FourPriceDoji
+        debugBarColor := color.new(color.white, 0)
+
+barcolor(debugBarColor)
+
+// Plot shapes for two-candle patterns
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.BullishEngulfingStrong,
+  "Bullish Engulfing Strong",
+  shape.triangleup,
+  location.belowbar,
+  color.new(color.lime, 0),
+  size=size.small
+  )
+
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.BullishEngulfingWeak,
+  "Bullish Engulfing Weak",
+  shape.triangleup,
+  location.belowbar,
+  color.new(color.green, 50),
+  size=size.tiny
+  )
+
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.BearishEngulfingStrong,
+  "Bearish Engulfing Strong",
+  shape.triangledown,
+  location.abovebar,
+  color.new(color.red, 0),
+  size=size.small
+  )
+
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.BearishEngulfingWeak,
+  "Bearish Engulfing Weak",
+  shape.triangledown,
+  location.abovebar,
+  color.new(color.maroon, 50),
+  size=size.tiny
+  )
+
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.InsideBar,
+  "Inside Bar",
+  shape.diamond,
+  location.abovebar,
+  color.new(color.yellow, 0),
+  size=size.tiny
+  )
+
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.TweezerTop,
+  "Tweezer Top",
+  shape.xcross,
+  location.abovebar,
+  color.new(color.orange, 0),
+  size=size.small
+  )
+
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.TweezerBottom,
+  "Tweezer Bottom",
+  shape.xcross,
+  location.belowbar,
+  color.new(color.aqua, 0),
+  size=size.small
+  )
+
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.BullishRailRoad,
+  "Bullish Rail Road",
+  shape.square,
+  location.belowbar,
+  color.new(color.lime, 30),
+  size=size.small
+  )
+
+plotshape(
+  i_debug and twoCandleAnalysis.pattern == CPL.TwoCandlePattern.BearishRailRoad,
+  "Bearish Rail Road",
+  shape.square,
+  location.abovebar,
+  color.new(color.red, 30),
+  size=size.small
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.ThreeWhiteSoldiers,
+  "Three White Soldiers",
+  shape.circle,
+  location.belowbar,
+  color.new(color.lime, 0),
+  size=size.normal
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.ThreeBlackCrows,
+  "Three Black Crows",
+  shape.circle,
+  location.abovebar,
+  color.new(color.red, 0),
+  size=size.normal
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.ThreeWhiteSoldiersWithBullishFVG,
+  "Three White Soldiers + Bullish FVG",
+  shape.circle,
+  location.belowbar,
+  color.new(color.lime, 0),
+  size=size.large,
+  text="FVG"
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.ThreeWhiteSoldiersWithBearishFVG,
+  "Three White Soldiers + Bearish FVG",
+  shape.circle,
+  location.belowbar,
+  color.new(color.orange, 0),
+  size=size.large,
+  text="FVG"
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.ThreeBlackCrowsWithBullishFVG,
+  "Three Black Crows + Bullish FVG",
+  shape.circle,
+  location.abovebar,
+  color.new(color.aqua, 0),
+  size=size.large,
+  text="FVG"
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.ThreeBlackCrowsWithBearishFVG,
+  "Three Black Crows + Bearish FVG",
+  shape.circle,
+  location.abovebar,
+  color.new(color.red, 0),
+  size=size.large,
+  text="FVG"
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.MorningStar,
+  "Morning Star",
+  shape.triangleup,
+  location.belowbar,
+  color.new(color.aqua, 20),
+  size=size.normal
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.EveningStar,
+  "Evening Star",
+  shape.triangledown,
+  location.abovebar,
+  color.new(color.orange, 20),
+  size=size.normal
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.BullishAbandonedBaby,
+  "Bullish Abandoned Baby",
+  shape.triangleup,
+  location.belowbar,
+  color.new(color.teal, 0),
+  size=size.large
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.BearishAbandonedBaby,
+  "Bearish Abandoned Baby",
+  shape.triangledown,
+  location.abovebar,
+  color.new(color.maroon, 0),
+  size=size.large
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.EngulfingSandwich,
+  "Engulfing Sandwich",
+  shape.cross,
+  location.absolute,
+  color.new(color.yellow, 0),
+  size=size.normal
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.BullishFairValueGap,
+  "Bullish FVG",
+  shape.diamond,
+  location.belowbar,
+  color.new(color.blue, 30),
+  size=size.small
+  )
+
+plotshape(
+  i_debug and threeCandleAnalysis.pattern == CPL.ThreeCandlePattern.BearishFairValueGap,
+  "Bearish FVG",
+  shape.diamond,
+  location.abovebar,
+  color.new(color.purple, 30),
+  size=size.small
+  )
+
+// #endregion Visualization

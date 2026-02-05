@@ -1,0 +1,753 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © GregoryAlexander
+
+//+-----------------------------------------------------+
+//                 INDICATOR INFORMATION                |
+//+-----------------------------------------------------+
+//#region INDICATOR INFORMATION 
+// This program takes the average highs and lows of a user-determined number of sessions 
+// and plots it over the current session. You can also use custom lines to plot your own locations
+// based on multiples of the averages or maximum range.
+
+//#endregion INDICATOR INFORMATION 
+
+//@version=6
+indicator("Session High/Low Avereage & Range with History [OneCleverGuy]", shorttitle="Avg Session H/L [1CG]", max_lines_count=500, max_labels_count=500, max_boxes_count = 500, overlay=true)
+
+// imports will go here for necessary libraries
+
+//+-----------------------------------------------------+
+//                       INPUTS                         |
+//+-----------------------------------------------------+
+//#region INPUTS
+
+//#region Selector ENUMS ********************************
+
+//@enum           Line style enumeration.
+//@field solid    Represents a solid line.
+//@field dotted   Represents a dotted line.
+//@field dashed   Represents a dashed line.
+//@field lArrow   Represents a line with a left arrow.
+//@field rArrow   Represents a line with a right arrow.
+//@field bArrow   Represents a line with arrows on both ends.
+enum LineStyle
+    solid           = "Solid (─)"
+    dotted          = "Dotted (┈)"
+    dashed          = "Dashed (╌)"
+    lArrow          = "Left Arrow (<─)"
+    rArrow          = "Right Arrow (─>)"
+    bArrow          = "Both Arrows (<─>)"
+
+//@enum           Line thickness enumeration.
+//@field thin      Represents a 1px thin line.
+//@field normal    Represents a 2px normal line.
+//@field heavy     Represents a 3px heavy line.
+//@field thick     Represents a 4px thick line.
+//@field wide      Represents a 5px wide line.
+enum LineSize
+    thin            = "1px (thin)"
+    normal          = "2px (normal)"
+    heavy           = "3px (heavy)"
+    thick           = "4px (thick)"
+    wide            = "5px (wide)"
+
+//@enum           Text size enumeration.
+//@field auto      Represents automatic text size.
+//@field tiny      Represents tiny text size.
+//@field small     Represents small text size.
+//@field normal    Represents normal text size.
+//@field large     Represents large text size.
+//@field huge      Represents huge text size.
+enum TextSize 
+    auto            = "Auto"
+    tiny            = "Tiny"
+    small           = "Small"
+    normal          = "Normal"
+    large           = "Large"
+    huge            = "Huge"
+
+//@enum           Horizontal text alignment enumeration.
+//@field left      Aligns text to the left.
+//@field center    Aligns text to the center.
+//@field right     Aligns text to the right.
+enum BoxHAlign
+    left            = "Left"
+    center          = "Center"
+    right           = "Right"
+
+//@enum           Vertical text alignment enumeration.
+//@field top       Aligns text to the top.
+//@field center    Aligns text to the center.
+//@field bottom    Aligns text to the bottom.
+enum BoxVAlign
+    top             = "Top"
+    center          = "Center"
+    bottom          = "Bottom"
+
+// @enum TimeZones - Enum for representing UTC time zones using shorthand naming convention.
+// @field UTCm12 (string) - UTC-12; other fields follow the same pattern, e.g., UTCm11 for UTC-11, UTCp530 for UTC+5:30, etc.
+// @enum TimeZones
+enum TimeZones
+    UTCm12   = "UTC-12"
+    UTCm11   = "UTC-11"
+    UTCm10   = "UTC-10"
+    UTCm930  = "UTC-9:30"
+    UTCm9    = "UTC-9"
+    UTCm8    = "UTC-8"
+    UTCm7    = "UTC-7"
+    UTCm6    = "UTC-6"
+    UTCm5    = "UTC-5"
+    UTCm430  = "UTC-4:30"
+    UTCm4    = "UTC-4"
+    UTCm330  = "UTC-3:30"
+    UTCm3    = "UTC-3"
+    UTCm2    = "UTC-2"
+    UTCm1    = "UTC-1"
+    UTCp0    = "UTC+0"
+    UTCp1    = "UTC+1"
+    UTCp2    = "UTC+2"
+    UTCp3    = "UTC+3"
+    UTCp330  = "UTC+3:30"
+    UTCp4    = "UTC+4"
+    UTCp430  = "UTC+4:30"
+    UTCp5    = "UTC+5"
+    UTCp530  = "UTC+5:30"
+    UTCp545  = "UTC+5:45"
+    UTCp6    = "UTC+6"
+    UTCp630  = "UTC+6:30"
+    UTCp7    = "UTC+7"
+    UTCp8    = "UTC+8"
+    UTCp845  = "UTC+8:45"
+    UTCp9    = "UTC+9"
+    UTCp930  = "UTC+9:30"
+    UTCp10   = "UTC+10"
+    UTCp1030 = "UTC+10:30"
+    UTCp11   = "UTC+11"
+    UTCp12   = "UTC+12"
+    UTCp1245 = "UTC+12:45"
+    UTCp13   = "UTC+13"
+    UTCp14   = "UTC+14"
+
+    
+//#endregion Selector ENUMS 
+
+//#region Methods ***************************************
+
+// @function                        Returns the line style constant based on the provided style name.
+// @param       this (string)       The name of the line style. Defaults to "solid (─)".
+// @returns     (line.style)        The corresponding line style constant for the specified style.
+method lineStyle (LineStyle this) =>
+    switch this
+        LineStyle.solid    => line.style_solid
+        LineStyle.dotted   => line.style_dotted
+        LineStyle.dashed   => line.style_dashed
+        LineStyle.lArrow   => line.style_arrow_left
+        LineStyle.rArrow   => line.style_arrow_right
+        LineStyle.bArrow   => line.style_arrow_both
+
+// @function                        Returns the line thickness based on the provided size description.
+// @param       this (LineSize)     The description of the line thickness.
+// @returns     (int)               The thickness of the line in pixels corresponding to the specified size.
+method lineSize (LineSize this) =>
+    switch this
+        LineSize.thin      => 1
+        LineSize.normal    => 2
+        LineSize.heavy     => 3
+        LineSize.thick     => 4
+        LineSize.wide      => 5
+
+// @function                        Returns the corresponding size value based on the provided text size enumeration.
+// @param       this (TextSize)     The size of the text.
+// @returns     (size)              The corresponding box size based on the input enumeration.
+method textSize (TextSize this) =>
+    switch this
+        TextSize.auto      => size.auto
+        TextSize.tiny      => size.tiny
+        TextSize.small     => size.small
+        TextSize.normal    => size.normal
+        TextSize.large     => size.large
+        TextSize.huge      => size.huge
+
+// @function                       Returns the corresponding horizontal alignment based on the provided enumeration.
+// @param       this (BoxHAlign)   The `BoxHAlign` enumeration specifying the horizontal alignment.
+// @returns     (text_align)       The corresponding horizontal alignment for the text.
+method boxHAlign (BoxHAlign this) =>
+    switch this
+        BoxHAlign.left     => text.align_left
+        BoxHAlign.center   => text.align_center
+        BoxHAlign.right    => text.align_right
+
+// @function                        Returns the corresponding vertical alignment based on the provided enumeration.
+// @param       this (BoxVAlign)   The `BoxVAlign` enumeration specifying the vertical alignment.
+// @returns     (text_align)       The corresponding vertical alignment for the text.
+method boxVAlign (BoxVAlign this) =>
+    switch this
+        BoxVAlign.top      => text.align_top
+        BoxVAlign.center   => text.align_center
+        BoxVAlign.bottom   => text.align_bottom
+
+
+//#endregion Methods
+
+//#region Tooltips **************************************
+
+tt_session      = "The timing for the session you would like to monitor. Match this UTC time to your setting in the bottom right of the chart."
+tt_sampleSize   = "Number of sessions used to calculate the average highs and lows. Also sets the number of sessions "
+tt_history      = "Set the number of sessions to appear on the chart."
+tt_zonePercent  = "Displays the high and low averages. Labels cannot appear without lines, but background can. Label size and position option at bottom of section."
+tt_custom       = "Custom lines have the option to display on the scale of the average high and low prices, or the maximum range values of the session period."
+tt_custLabel    = "Labels display the price of the line and can appear to the left or right of session."
+tt_ranges       = "Values that are the distance from the session open are marked with 'Δ'. Distances for the average scale appear in their boxes while custom line distances appear on the line label."
+
+//#endregion Tooltips
+
+//#region Session Inputs ********************************
+
+var iGroup1 = "Session"
+i_sessionTime       = input.session("0300-1200",    "Session",                    group = iGroup1, tooltip = tt_session, inline = "G1A")
+i_timeZone          = input.enum(TimeZones.UTCm5,   " ",                          group = iGroup1, inline = "G1A")
+i_sampleSize        = input.int(14,                 "Session Period",             group = iGroup1, tooltip = tt_sampleSize)
+i_sessionHistory    = input.int(4,                  "Sessions Displayed",         group = iGroup1, tooltip = tt_history)
+
+var iGroup2 = "Lines"
+// Open line
+i_showOpenLine      = input.bool(true,              "",                           group = iGroup2, inline = "G2B")
+i_openLineColor     = input.color(color.gray,     "Open Line       ",           group = iGroup2, inline = "G2B")
+i_openLineWidth     = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+                                                                                  group = iGroup2, inline = "G2B", display = display.none)
+i_openLineStyle     = input.enum(LineStyle.dotted,  " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+                                                                                  group = iGroup2, inline = "G2B", display = display.none)
+i_openLineShowLabel = input.bool(true,              "Label",                      group = iGroup2, inline = "G2B")
+
+// Average
+i_showASD           = input.bool(true,              "",                           group = iGroup2, inline = "G2C")
+i_ASDColor          = input.color(color.new(#4DB14E, 0), "Average High/Low",      group = iGroup2, inline = "G2C")
+i_ASDWidth          = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+                                                                                  group = iGroup2, inline = "G2C", display = display.none)
+i_ASDStyle          = input.enum(LineStyle.solid,   " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+                                                                                  group = iGroup2, inline = "G2C", display = display.none)
+i_ASDShowLabel      = input.bool(true,              "Label",                      group = iGroup2, inline = "G2C")
+i_ASDBgColor        = input.color(color.new(#4DB14E, 85), "                      ",
+                                                                                  group = iGroup2, inline = "G2E")
+i_showASDBg         = input.bool(false,             "Background",                 group = iGroup2, tooltip = tt_zonePercent, inline = "G2E")
+
+// Double Average
+i_showASD2          = input.bool(true,              "",                           group = iGroup2, inline = "G2D")
+i_ASD2Color         = input.color(color.new(#368E3C, 0), "2x Avg High/Low ",    group = iGroup2, inline = "G2D")
+i_ASD2Width         = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+                                                                                  group = iGroup2, inline = "G2D", display = display.none)
+i_ASD2Style         = input.enum(LineStyle.solid,   " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+                                                                                  group = iGroup2, inline = "G2D", display = display.none)
+i_ASD2ShowLabel     = input.bool(true,              "Label",                      group = iGroup2, inline = "G2D")
+i_ASD2BgColor       = input.color(color.new(#1F5C23, 85), "                      ",
+                                                                                  group = iGroup2, inline = "G2G")
+i_showASD2Bg        = input.bool(true,              "Background",                 group = iGroup2, tooltip = tt_zonePercent, inline = "G2G")
+
+// Triple Average
+i_showASD3          = input.bool(true,              "",                           group = iGroup2, inline = "G2F")
+i_ASD3Color         = input.color(color.new(#368E3C, 0), "3x Avg High/Low ",    group = iGroup2, inline = "G2F")
+i_ASD3Width         = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+                                                                                  group = iGroup2, inline = "G2F", display = display.none)
+i_ASD3Style         = input.enum(LineStyle.solid,   " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+                                                                                  group = iGroup2, inline = "G2F", display = display.none)
+i_ASD3ShowLabel     = input.bool(true,             "Label",                       group = iGroup2, inline = "G2F")
+i_ASD3BgColor       = input.color(color.new(#003228, 85), "                      ", 
+                                                                                  group = iGroup2, inline = "G2H")
+i_showASD3Bg        = input.bool(true,              "Background",                 group = iGroup2, tooltip = tt_zonePercent, inline = "G2H")
+
+// Average - Custom1
+i_showCustom1       = input.bool(true,              "",                           group = iGroup2, inline = "G4A")
+i_Custom1Color      = input.color(color.new(#EA3847, 0),  "Custom Line 1   ",   group = iGroup2, inline = "G4A")
+i_Custom1Width      = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+                                                                                  group = iGroup2, inline = "G4A", display = display.none)
+i_Custom1Style      = input.enum(LineStyle.dotted,  " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+                                                                                  group = iGroup2, inline = "G4A", display = display.none)
+i_Custom1ShowLabel  = input.bool(true,              "Label",                      group = iGroup2, inline = "G4A")
+i_Custom1Percentage = input.float(1.0,              "     Multiplier", minval = 0.10, maxval = 4.00, step = 0.1, group = iGroup2, inline = "G4B")
+i_Custom1Mode       = input.string("Range",         "Mode",                        options = ["Average", "Range"], group = iGroup2, inline = "G4B", tooltip = tt_custom)
+
+// Average - Custom2
+i_showCustom2       = input.bool(true,              "",                           group = iGroup2, inline = "G4C")
+i_Custom2Color      = input.color(color.new(#1F66FF, 0),  "Custom Line 2   ",   group = iGroup2, inline = "G4C")
+i_Custom2Width      = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+                                                                                  group = iGroup2, inline = "G4C", display = display.none)
+i_Custom2Style      = input.enum(LineStyle.dotted,  " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+                                                                                  group = iGroup2, inline = "G4C", display = display.none)
+i_Custom2ShowLabel  = input.bool(true,              "Label",                      group = iGroup2, inline = "G4C")
+i_Custom2Percentage = input.float(1.5,              "     Multiplier", minval = 0.10, maxval = 4.00, step = 0.1, group = iGroup2, inline = "G4D")
+i_Custom2Mode       = input.string("Average",         "Mode",                      options = ["Average", "Range"], group = iGroup2, inline = "G4D", tooltip = tt_custom)
+
+// Labels
+i_showLabels        = input.bool(true,              "  Show Labels. Position",    group = iGroup2, inline = "G2A")
+i_labelPosition     = input.string("Left",          "",                           ["Left", "Right"], group = iGroup2, tooltip = tt_custLabel, inline = "G2A", display = display.none)
+i_labelTextSize     = input.enum(TextSize.small,    "Size",                       group = iGroup2, inline = "G2A", display = display.none)
+
+// Table inputs
+var iGroup3 = "Display Distances"
+i_showRangeData     = input.bool(true,              "  Show Line Distances",      group = iGroup3, tooltip = tt_ranges)
+i_useCustomColor    = input.bool(true,              "  Use Custom Color",         group = iGroup3, inline = "G3A")
+i_dataTextColor     = input.color(color.silver,     "",                         group = iGroup3, inline = "G3A")
+i_dataTextSize      = input.enum(TextSize.small,    "Size",                       group = iGroup3, inline = "G3A", display = display.none)
+i_dataHAlign        = input.enum(BoxHAlign.left,    "H-Alignment        ",        group = iGroup3, inline = "G3B", display = display.none)
+i_dataVAlign        = input.enum(BoxVAlign.top,     "V-Alignment",                group = iGroup3, inline = "G3B", display = display.none)
+
+//#endregion Session Inputs
+
+//#endregion INPUTS
+
+//+-----------------------------------------------------+
+//                    GLOBAL VARIABLES                  |
+//+-----------------------------------------------------+
+//#region GLOBAL VARIABLES
+
+//#region Constants *************************************
+
+var string  TIMEZONE        = str.tostring(i_timeZone)
+int         DAYNOW          = dayofmonth(timestamp(TIMEZONE, year, month, dayofmonth, hour, minute))
+var int     PRECISION       = na
+color       TRANSPARENT     = color.new(color.white, 100)
+
+// Calculate the precision only once. 
+if barstate.isfirst
+    _parts = str.split(str.tostring(syminfo.mintick), ".") 
+    PRECISION := array.size(_parts) < 2 ? 0 : str.length(array.get(_parts, 1))
+
+//Timespan variables
+var     TIME_DAY            = 86400000
+var     TIME_HOUR           = 3600000
+var     TIME_MINUTE         = 60000
+
+//#endregion Constants
+
+//#region UDT *******************************************
+
+//#region sessionInfo
+
+// @type                                     Custom type for storing session information.
+// @prop       hours (string)                The session hours in a string format.
+// @prop       startTime (string)            The session's starting time as a formatted string.
+// @prop       endTime (string)              The session's ending time as a formatted string.
+// @prop       openTimeSinceMidnight (int)   The session's opening time in minutes since UTC midnight.
+// @prop       closeTimeSinceMidnight (int)  The session's closing time in minutes since UTC midnight.
+// @prop       duration (int)                The duration of the session in milliseconds.
+// @prop       openHour (int)                The hour of the session's opening time.
+// @prop       openMinute (int)              The minute of the session's opening time.
+// @prop       closeHour (int)               The hour of the session's closing time.
+// @prop       closeMinute (int)             The minute of the session's closing time.
+// @prop       highPrice (float)             The highest price recorded during the session.
+// @prop       lowPrice (float)              The lowest price recorded during the session.
+// @prop       openPrice (float)             The opening price of the session.
+type sessionInfo
+    string      hours
+    string      startTime
+    string      endTime
+    int         openTimeSinceMidnight
+    int         closeTimeSinceMidnight
+    int         duration
+    int         openHour
+    int         openMinute
+    int         closeHour
+    int         closeMinute
+    float       highPrice   = na
+    float       lowPrice    = na
+    float       openPrice   = na
+
+//#endregion sessionInfo
+
+//#region Line Inputs
+
+// @type                                     Custom type for storing line properties.
+// @prop       showLine (bool)               Indicates whether the line should be displayed.
+// @prop       lineColor (color)             Specifies the color of the line.
+// @prop       lineWidth (int)               Defines the width of the line.
+// @prop       lineStyle (string)            Describes the style of the line (e.g., solid, dashed).
+// @prop       showLabel (bool)              Indicates whether a label should be displayed for the line.
+// @prop       labelTextSize (string)        Specifies the text size of the label.
+// @prop       labelText (string)            The text content of the label.
+// @prop       showBox (bool)                Indicates whether a box should be displayed around the line.
+// @prop       boxColor (color)              Specifies the color of the box.
+type lineInputs
+    bool    showLine
+    color   lineColor
+    int     lineWidth
+    string  lineStyle
+    bool    showLabel
+    string  labelTextSize
+    string  labelText
+    bool    showBox
+    color   boxColor
+
+var openLineInput       = lineInputs.new(i_showOpenLine, i_openLineColor, i_openLineWidth.lineSize(), i_openLineStyle.lineStyle(), i_openLineShowLabel, i_labelTextSize.textSize(), "Open", false, TRANSPARENT)
+var avgLineInput        = lineInputs.new(i_showASD, i_ASDColor, i_ASDWidth.lineSize(), i_ASDStyle.lineStyle(), i_ASDShowLabel, i_labelTextSize.textSize(), "ASD", i_showASDBg, i_ASDBgColor)
+var doubleAvgLineInput  = lineInputs.new(i_showASD2, i_ASD2Color, i_ASD2Width.lineSize(), i_ASD2Style.lineStyle(), i_ASD2ShowLabel, i_labelTextSize.textSize(), "2x ASD", i_showASD2Bg, i_ASD2BgColor)
+var tripleAvgLineInput  = lineInputs.new(i_showASD3, i_ASD3Color, i_ASD3Width.lineSize(), i_ASD3Style.lineStyle(), i_ASD3ShowLabel, i_labelTextSize.textSize(), "3x ASD", i_showASD3Bg, i_ASD3BgColor)
+var customLineInput1    = lineInputs.new(i_showCustom1, i_Custom1Color, i_Custom1Width.lineSize(), i_Custom1Style.lineStyle(), i_Custom1ShowLabel, i_labelTextSize.textSize(), "", false, TRANSPARENT)
+var customLineInput2    = lineInputs.new(i_showCustom2, i_Custom2Color, i_Custom2Width.lineSize(), i_Custom2Style.lineStyle(), i_Custom2ShowLabel, i_labelTextSize.textSize(), "", false, TRANSPARENT)
+
+//#endregion Line Inputs
+
+//#region lineData
+
+// @type                                     Custom type for storing line-related data.
+// @prop       rangeHigh (float)             The maximum distance from the open price during the session.
+// @prop       rangeLow (float)              The minimum distance from the open price during the session.
+// @prop       averageRange (float)          The average distance from the open price during the session.
+// @prop       openLine (line)               A line object representing the opening price of the session.
+// @prop       openLabel (label)             A label object marking the opening price of the session.
+// @prop       averageLine (line)            The line object representing the average range.
+// @prop       averageLabel (label)          The label object for the average range line.
+// @prop       averageBox (box)              The box object representing the average range.
+// @prop       doubleLine (line)             The line object representing the double average range.
+// @prop       doubleLabel (label)           The label object for the double average range line.
+// @prop       doubleBox (box)               The box object for the double average range.
+// @prop       tripleLine (line)             The line object representing the triple average range.
+// @prop       tripleLabel (label)           The label object for the triple average range line.
+// @prop       tripleBox (box)               The box object for the triple average range.
+// @prop       customLine1 (line)            The line object representing the first custom percentage range.
+// @prop       customLabel1 (label)          The label object for the first custom percentage range line.
+// @prop       customLine2 (line)            The line object representing the second custom percentage range.
+// @prop       customLabel2 (label)          The label object for the second custom percentage range line.
+// @prop       lineStart (int)               The start time of the session in time coordinates.
+// @prop       lineEnd (int)                 The end time of the session in time coordinates.
+type lineData
+    float      rangeHigh        = na
+    float      rangeLow         = na
+    float      averageRange     = na
+    line       openLine         = na
+    label      openLabel        = na
+    line       averageLine      = na
+    label      averageLabel     = na
+    box        averageBox       = na
+    line       doubleLine       = na 
+    label      doubleLabel      = na
+    box        doubleBox        = na
+    line       tripleLine       = na
+    label      tripleLabel      = na
+    box        tripleBox        = na
+    line       customLine1      = na
+    label      customLabel1     = na
+    line       customLine2      = na
+    label      customLabel2     = na
+    int        lineStart
+    int        lineEnd
+
+//#endregion lineData
+
+//#endregion UDT
+
+//#endregion GLOBAL VARIABLES
+
+//+-----------------------------------------------------+
+//                       FUNCTIONS                      |
+//+-----------------------------------------------------+
+//#region FUNCTIONS
+
+//#region Session Functions *****************************
+
+// @function                                 Populates and returns the sessionInfo UDT with the provided session text.
+// @param       this (string)                The session text input for the method.
+// @param       _userTimezone (string)       The user-determined time zone.
+// @returns     (sessionInfo)                A completed sessionInfo UDT based on the provided input.
+method setSessionInfo(string this, string _userTimezone) =>
+    brokerMidnight = timestamp(year, month, dayofmonth, 0, 0)
+    // Get the individual start and end times
+    split           = str.split(this, "-")
+    startTime       = split.get(0)
+    endTime         = split.get(1)
+
+    // Get the numeric hours and minutes of the session
+    startHour       = math.round(str.tonumber(str.substring(startTime, 0, 2)))
+    startMins       = math.round(str.tonumber(str.substring(startTime, 2, 4)))
+    endHour         = math.round(str.tonumber(str.substring(endTime, 0, 2)))
+    endMins         = math.round(str.tonumber(str.substring(endTime, 2, 4)))
+
+    // Get the timings from midnight
+    startSinceMidnight = timestamp(_userTimezone, year, month, dayofmonth, startHour, startMins) - brokerMidnight
+    endSinceMidnight = timestamp(_userTimezone, year, month, dayofmonth, endHour, endMins) - brokerMidnight
+    endSinceMidnight := startSinceMidnight >= endSinceMidnight ? endSinceMidnight + TIME_DAY : endSinceMidnight
+
+    // Calculate session duration 
+    sessionDuration = endSinceMidnight - startSinceMidnight
+
+    //Set session info
+    sessionInfo.new(this, startTime, endTime, startSinceMidnight, endSinceMidnight, sessionDuration, startHour, startMins, endHour, endMins)
+
+//#endregion Session Functions
+
+//#region Line & Label Creation *************************
+
+// @function                                 Creates shapes, including lines, labels, and boxes, based on provided parameters.
+// @param       _x1 (int)                    The starting x-coordinate (bar index) for the shape.
+// @param       _x2 (int)                    The ending x-coordinate (bar index) for the shape.
+// @param       _price (float)               The price level where the shape should be created.
+// @param       _boxPrice (float)            The price level for the box shape (if applicable).
+// @param       _openPrice (float)           The opening price used for comparison or reference.
+// @param       _lineInput (lineInputs)      The input configuration for line properties (e.g., color, width, style).
+// @param       _labelSide (string)          The side where the label should be placed ("left" or "right").
+// @param       _isHigh (bool)               Whether the shape represents a high value (true) or low value (false).
+// @param       _showAllLabels (bool)        Whether to display all labels.
+// @returns     (tuple)                      A tuple containing the created line, label, and box objects.
+createAllShapes(int _x1, int _x2, float _price, float _boxPrice, float _openPrice, lineInputs _lineInput, string _labelSide, bool _isHigh, bool _showAllLabels) =>
+    // Create line if applicable
+    lineObj = _lineInput.showLine ? 
+      line.new(_x1, _price, _x2, _price, xloc.bar_time, color = _lineInput.lineColor, style = _lineInput.lineStyle, width = _lineInput.lineWidth) 
+      : na
+
+    // Create label if applicable
+    labelObj = _showAllLabels and _lineInput.showLine and _lineInput.showLabel ? 
+
+      label.new(_labelSide == "Right" ? _x2 : _x1, _price,  // Correct positioning logic
+          text          = _lineInput.labelText  + str.tostring(_price, format.mintick),  // Updated text
+          style         = _labelSide == "Right" ? label.style_label_left : label.style_label_right,  // Reverted styles
+          color         = TRANSPARENT, 
+          textcolor     = _lineInput.lineColor, 
+          textalign     = _labelSide == "Right" ? text.align_left : text.align_right,  // Adjusted alignment
+          size          = _lineInput.labelTextSize, 
+          xloc          = xloc.bar_time) 
+      : na
+
+    // Create Box if applicable
+    float rangeData     = na
+    BoxVAlign vAlign    = i_dataVAlign
+    rangeData           := _isHigh ? math.round(_price - _boxPrice, PRECISION) : math.round(_boxPrice - _price, PRECISION)
+    if _isHigh
+        rangeData       := math.round(_price - _openPrice, PRECISION)
+    else
+        rangeData       := math.round(_openPrice - _price, PRECISION)
+        vAlign          := vAlign == BoxVAlign.top ? BoxVAlign.bottom : vAlign == BoxVAlign.bottom ? BoxVAlign.top : vAlign
+
+    boxObj = (not na(lineObj) or _lineInput.showBox) and  _boxPrice != _price?
+      box.new(left      = _x1, 
+          top           = _isHigh ? _price : _boxPrice, 
+          right         = _x2, 
+          bottom        = _isHigh ? _boxPrice : _price, 
+          border_color  = TRANSPARENT, 
+          bgcolor       = _lineInput.showBox ?_lineInput.boxColor : TRANSPARENT, 
+          xloc          = xloc.bar_time,
+          text          = i_showRangeData ? "Δ" + str.tostring(rangeData, format.mintick) : "",
+          text_size     = i_dataTextSize.textSize(),
+          text_color    = i_useCustomColor ? i_dataTextColor : _lineInput.lineColor,
+          text_halign   = i_dataHAlign.boxHAlign(),
+          text_valign   = vAlign.boxVAlign()
+      )
+      : na
+
+    [lineObj, labelObj, boxObj]
+
+// @function                                Deletes specified elements (lines, labels, boxes) in a structured way.
+// @param       _lines (array<line>)        Array of line objects to delete, defaulted to na if not provided.
+// @param       _labels (array<label>)      Array of label objects to delete, defaulted to na if not provided.
+// @param       _boxes (array<box>)         Array of box objects to delete, defaulted to na if not provided.
+deleteElements(line[] _lines = na, label[] _labels = na, box[] _boxes = na) =>
+    if not na(_lines)
+        for l in _lines
+            l.delete()
+    if not na(_labels)
+        for lbl in _labels
+            lbl.delete()
+    if not na(_boxes)
+        for b in _boxes
+            b.delete()
+
+//#endregion Line & Label Creation
+
+//#endregion FUNCTIONS
+
+//+-----------------------------------------------------+
+//                       EXECUTION                      |
+//+-----------------------------------------------------+
+//#region EXECUTION
+
+//#region variables
+
+var sessionInfo[]   sessionArr          = array.new<sessionInfo>()
+var float[]         highDistanceArr     = array.new<float>()
+var float[]         lowDistanceArr      = array.new<float>()
+var lineData[]      highLineDataArr     = array.new<lineData>()
+var lineData[]      lowLineDataArr      = array.new<lineData>()
+
+var int             sessionStart        = na
+var int             sessionEnd          = na
+var bool            inSession           = false
+var float           customPercent1      = i_Custom1Percentage
+var float           customPercent2      = i_Custom2Percentage
+var int             lastExecutedDay     = na
+var sessionInfo     initSession         = i_sessionTime.setSessionInfo(TIMEZONE)
+session                     = time(timeframe.period, initSession.hours, TIMEZONE)
+firstSessionBar             = not na(session) and na(session[1])
+lastSessionBar              = na(session) and not na(session[1])
+
+//#endregion variables
+
+// SESSION START
+if firstSessionBar
+    // set initial values
+    userSession = sessionInfo.new(initSession.hours, initSession.startTime, initSession.endTime, 
+                              initSession.openTimeSinceMidnight, initSession.closeTimeSinceMidnight, 
+                              initSession.duration, initSession.openHour, initSession.openMinute, 
+                              initSession.closeHour, initSession.closeMinute, high, low, open)
+    sessionStart := time
+    sessionEnd := sessionStart + userSession.duration
+    customText1        = i_Custom1Mode == "Average" ? "Avg" : "Range"
+    customText2        = i_Custom2Mode == "Average" ? "Avg" : "Range"
+    // Keep all three arrays in sync
+    array.push(sessionArr, userSession)
+    array.push(highLineDataArr, lineData.new(lineStart = sessionStart, lineEnd = sessionEnd))
+    array.push(lowLineDataArr, lineData.new(lineStart = sessionStart, lineEnd = sessionEnd))
+
+    // Create the lines from the data from the 2nd to last item
+    if array.size(sessionArr) >= i_sampleSize - 1
+        lastIndex = array.size(highLineDataArr) - 1
+        secondLastIndex = array.size(highLineDataArr) - 2
+        lastSessionInfo = array.get(sessionArr, secondLastIndex)
+
+        //high 
+        lastHighLine        = array.get(highLineDataArr, secondLastIndex)
+        highLineData        = array.last(highLineDataArr)
+        averagePriceHigh    = math.round(userSession.openPrice + lastHighLine.averageRange, PRECISION)
+        averagePriceHigh2   = math.round(userSession.openPrice + (lastHighLine.averageRange * 2), PRECISION)
+        averagePriceHigh3   = math.round(userSession.openPrice + (lastHighLine.averageRange * 3), PRECISION)
+        highRangeHighPrice  = math.round(userSession.openPrice + (lastHighLine.rangeHigh * 1), PRECISION)
+        customHigh1         = i_Custom1Mode == "Average" ? math.round(open + (averagePriceHigh - open) * customPercent1, PRECISION) : math.round(open + (highRangeHighPrice - open) * customPercent1, PRECISION)
+        customHigh2         = i_Custom2Mode == "Average" ? math.round(open + (averagePriceHigh - open) * customPercent2, PRECISION) : math.round(open + (highRangeHighPrice - open) * customPercent2, PRECISION)
+        customHRange1       = math.round(customHigh1 - open, PRECISION)
+        customHRange2       = math.round(customHigh2 - open, PRECISION)
+        oneBelow            = avgLineInput.showLine or avgLineInput.showBox ? averagePriceHigh : userSession.openPrice
+        twoBelow            = doubleAvgLineInput.showLine or doubleAvgLineInput.showBox ? averagePriceHigh2
+                              : avgLineInput.showLine or avgLineInput.showBox ? averagePriceHigh : userSession.openPrice
+
+        avgLineInput.labelText := "1x Avg H ", doubleAvgLineInput.labelText := "2x Avg H ", tripleAvgLineInput.labelText := "3x Avg H "
+        customLineInput1.labelText := i_showRangeData ? 
+          "Δ" + str.tostring(customHRange1, format.mintick) + "\n" + str.tostring(i_Custom1Percentage) + "x " + customText1 + " H " : 
+          str.tostring(i_Custom1Percentage) + "x " + customText1 + " H "
+
+        customLineInput2.labelText := i_showRangeData ? 
+          "Δ" + str.tostring(customHRange2, format.mintick) + "\n" + str.tostring(i_Custom2Percentage) + "x " + customText2 + " H " : 
+          str.tostring(i_Custom2Percentage) + "x " + customText2 + " H "
+
+        //open price line, kept in the highLineData
+        [oLine, oLabel, oBox] = createAllShapes(sessionStart, sessionEnd, open, open, open, openLineInput, i_labelPosition, true, i_showLabels)
+        highLineData.openLine := oLine, highLineData.openLabel := oLabel
+
+        // high
+        [avgHLine, avgHLabel, avgHBox] = createAllShapes(sessionStart, sessionEnd, averagePriceHigh, userSession.openPrice, open, avgLineInput, i_labelPosition, true, i_showLabels)
+        highLineData.averageLine := avgHLine, highLineData.averageLabel := avgHLabel, highLineData.averageBox := avgHBox
+
+        [dblHLine, dblHLabel, dblHBox] = createAllShapes(sessionStart, sessionEnd, averagePriceHigh2, oneBelow, open, doubleAvgLineInput, i_labelPosition, true, i_showLabels)
+        highLineData.doubleLine := dblHLine, highLineData.doubleLabel := dblHLabel, highLineData.doubleBox := dblHBox
+
+        [tplHLine, tplHLabel, tplHBox] = createAllShapes(sessionStart, sessionEnd, averagePriceHigh3, twoBelow, open, tripleAvgLineInput, i_labelPosition, true, i_showLabels)
+        highLineData.tripleLine := tplHLine, highLineData.tripleLabel := tplHLabel, highLineData.tripleBox := tplHBox
+
+        [cust1HLine, cust1HLabel, cust1HBox] = createAllShapes(sessionStart, sessionEnd, customHigh1, customHigh1, open, customLineInput1, i_labelPosition, true, i_showLabels)
+        highLineData.customLine1 := cust1HLine, highLineData.customLabel1 := cust1HLabel
+
+        [cust2HLine, cust2HLabel, cust2HBox] = createAllShapes(sessionStart, sessionEnd, customHigh2, customHigh2, open, customLineInput2, i_labelPosition, true, i_showLabels)
+        highLineData.customLine2 := cust2HLine, highLineData.customLabel2 := cust2HLabel
+
+        //low
+        lastLowLine         = array.get(lowLineDataArr, secondLastIndex)
+        lowLineData         = array.last(lowLineDataArr)
+        averagePriceLow     = math.round(userSession.openPrice - lastLowLine.averageRange, PRECISION)
+        averagePriceLow2    = math.round(userSession.openPrice - (lastLowLine.averageRange * 2), PRECISION)
+        averagePriceLow3    = math.round(userSession.openPrice - (lastLowLine.averageRange * 3), PRECISION)
+        lowRangeLowPrice    = math.round(userSession.openPrice - (lastLowLine.rangeHigh * 1), PRECISION)
+        customLow1          = i_Custom1Mode == "Average" ? math.round(open - (open - averagePriceLow) * customPercent1, PRECISION) : math.round(open - (open - lowRangeLowPrice) * customPercent1, PRECISION)
+        customLow2          = i_Custom2Mode == "Average" ? math.round(open - (open - averagePriceLow) * customPercent2, PRECISION) : math.round(open - (open - lowRangeLowPrice) * customPercent2, PRECISION)
+        customLRange1       = math.round(open - customLow1, PRECISION)
+        customLRange2       = math.round(open - customLow2, PRECISION)
+        oneAbove            = avgLineInput.showLine or avgLineInput.showBox ? averagePriceLow : userSession.openPrice
+        twoAbove            = doubleAvgLineInput.showLine or doubleAvgLineInput.showBox ? averagePriceLow2
+                              : avgLineInput.showLine or avgLineInput.showBox ? averagePriceLow : userSession.openPrice
+
+        avgLineInput.labelText := "1x Avg L ",  doubleAvgLineInput.labelText := "2x Avg L ", tripleAvgLineInput.labelText := "3x Avg L "
+        customLineInput1.labelText := i_showRangeData ? 
+          "Δ" + str.tostring(customLRange1, format.mintick) + "\n" + str.tostring(i_Custom1Percentage) + "x " + customText1 + " L " : 
+          str.tostring(i_Custom1Percentage) + "x " + customText1 + " L "
+
+        customLineInput2.labelText := i_showRangeData ? 
+          "Δ" + str.tostring(customLRange2, format.mintick) + "\n" + str.tostring(i_Custom2Percentage) + "x " + customText2 + " L " : 
+          str.tostring(i_Custom2Percentage) + "x " + customText2 + " L "
+
+        // Add Lines Low
+        [avgLLine, avgLLabel, avgLBox] = createAllShapes(sessionStart, sessionEnd, averagePriceLow, userSession.openPrice, open, avgLineInput, i_labelPosition, false, i_showLabels)
+        lowLineData.averageLine := avgLLine, lowLineData.averageLabel := avgLLabel, lowLineData.averageBox := avgLBox
+
+        [dblLLine, dblLLabel, dblLBox] = createAllShapes(sessionStart, sessionEnd, averagePriceLow2, oneAbove, open, doubleAvgLineInput, i_labelPosition, false, i_showLabels)
+        lowLineData.doubleLine := dblLLine, lowLineData.doubleLabel := dblLLabel, lowLineData.doubleBox := dblLBox
+
+        [tplLLine, tplLLabel, tplLBox] = createAllShapes(sessionStart, sessionEnd, averagePriceLow3, twoAbove, open, tripleAvgLineInput, i_labelPosition, false, i_showLabels)
+        lowLineData.tripleLine := tplLLine, lowLineData.tripleLabel := tplLLabel, lowLineData.tripleBox := tplLBox
+
+        [cust1LLine, cust1LLabel, cust1LBox] = createAllShapes(sessionStart, sessionEnd, customLow1, customLow1, open, customLineInput1, i_labelPosition, false, i_showLabels)
+        lowLineData.customLine1 := cust1LLine, lowLineData.customLabel1 := cust1LLabel
+
+        [cust2LLine, cust2LLabel, cust2LBox] = createAllShapes(sessionStart, sessionEnd, customLow2, customLow2, open, customLineInput2, i_labelPosition, false, i_showLabels)
+        lowLineData.customLine2 := cust2LLine, lowLineData.customLabel2 := cust2LLabel
+
+// SESSION MIDDLE        
+//if inSession
+if not na(session)
+    userSession = sessionArr.last()
+    userSession.highPrice := math.max(userSession.highPrice, high)
+    userSession.lowPrice  := math.min(userSession.lowPrice, low)
+
+// SESSION END
+if lastSessionBar
+    // Collects the distance from the openPrice. All numbers are positive 
+    userSession = sessionArr.last()
+    highDistanceArr.push(userSession.highPrice - userSession.openPrice)
+    lowDistanceArr.push(userSession.openPrice - userSession.lowPrice)
+    
+    // High
+    highLineData = array.last(highLineDataArr) //get
+    highLineData.averageRange := highDistanceArr.avg()
+    highLineData.rangeHigh := highDistanceArr.max()
+    highLineData.rangeLow := highDistanceArr.min()
+
+    // Low
+    lowLineData = array.last(lowLineDataArr) //get
+    lowLineData.averageRange := lowDistanceArr.avg()
+    lowLineData.rangeHigh := lowDistanceArr.max() 
+    lowLineData.rangeLow := lowDistanceArr.min()
+
+    //Clean up
+    if array.size(sessionArr) > i_sampleSize
+        highDistanceArr.shift()
+        lowDistanceArr.shift()
+        // Session array
+        clearSession = sessionArr.shift()
+        
+    if array.size(highLineDataArr) > i_sessionHistory
+        // High line data
+        clearHigh = highLineDataArr.shift()
+        deleteElements(
+          array.from(clearHigh.averageLine, clearHigh.doubleLine, clearHigh.tripleLine, clearHigh.customLine1, clearHigh.customLine2, clearHigh.openLine),
+          array.from(clearHigh.averageLabel, clearHigh.doubleLabel, clearHigh.tripleLabel, clearHigh.customLabel1, clearHigh.customLabel2, clearHigh.openLabel),
+          array.from(clearHigh.averageBox, clearHigh.doubleBox, clearHigh.tripleBox)
+          )
+        
+        // Low line data
+        clearLow = lowLineDataArr.shift()
+        deleteElements(
+          array.from(clearLow.averageLine, clearLow.doubleLine, clearLow.tripleLine, clearLow.customLine1, clearLow.customLine2),
+          array.from(clearLow.averageLabel, clearLow.doubleLabel, clearLow.tripleLabel, clearLow.customLabel1, clearLow.customLabel2),
+          array.from(clearLow.averageBox, clearLow.doubleBox, clearLow.tripleBox)
+          )
+
+if barstate.islast
+// Check if the number of items in the session array is less than the session period
+    var table warningTable = na
+    if array.size(sessionArr) < i_sampleSize
+        // Create a table to display the message
+        if na(warningTable)
+            warningTable := table.new(position.bottom_right, 1, 1, bgcolor=color.new(color.red, 90), border_color=color.red)
+
+        // Add the warning message to the table
+        table.cell(warningTable, 0, 0, "Not enough sessions, use higher timeframe.", text_color=color.white, text_size=size.large, bgcolor=color.new(color.red, 80))
+    else
+        // Clear the table if conditions are met to hide the message
+        if not na(warningTable)
+            table.clear(warningTable, 0, 0)
+        
+//#endregion EXECUTION

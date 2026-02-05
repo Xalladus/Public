@@ -1,0 +1,896 @@
+//@version=6
+indicator("HrWinEval", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+//+-------------------------------------------------------+
+//                      INFORMATION                       |
+//+-------------------------------------------------------+
+// #region Information
+
+// Hour-by-Hour Win/Loss Evaluator
+// --------------------------------
+// This indicator evaluates whether a low-reward, high-risk
+// trade placed at the open of each hour would have reached
+// its profit target before its stop loss. It tracks both
+// buy and sell directions independently for every hour of
+// the day (00–23) and tallies the results across the full
+// sample of historical data visible on the chart.
+//
+// NOT a strategy — no orders are placed. It simply records
+// hypothetical entry prices and checks subsequent price
+// action to determine if the target or stop was hit first.
+
+// #endregion Information
+
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
+
+// #region Input Enums ************************************
+
+// (none required)
+
+// #endregion Input Enums
+
+// #region Tooltips ***************************************
+
+string tt_risk = (
+    "The distance from entry to stop loss " +
+    "in price units (e.g. 0.003 for " +
+    "30 pips on EURUSD). This is the " +
+    "amount you are willing to lose."
+)
+
+string tt_reward = (
+    "The distance from entry to profit " +
+    "target in price units (e.g. 0.0006 " +
+    "for 6 pips on EURUSD). This is the " +
+    "amount you aim to gain."
+)
+
+string tt_timezone = (
+    "Timezone used to determine the hour " +
+    "boundaries. Choose the timezone that " +
+    "matches your trading session analysis."
+)
+
+string tt_debug = (
+    "Enable diagnostic overlays and " +
+    "additional logging information."
+)
+
+string tt_showVisuals = (
+    "Draw visual markers for trade outcomes. " +
+    "Lines for multi-bar trades (green=win, red=loss). " +
+    "Checkmarks/X for same-bar resolutions."
+)
+
+// #endregion Tooltips
+
+// #region Trade Parameters *******************************
+
+var string iGroupTrade = "Trade Parameters"
+
+float i_risk = input.float(
+    0.003, "Risk (Stop Distance)",
+    minval  = 0.0,
+    step    = 0.0001,
+    group   = iGroupTrade,
+    tooltip = tt_risk
+)
+
+float i_reward = input.float(
+    0.0006, "Reward (Profit Distance)",
+    minval  = 0.0,
+    step    = 0.0001,
+    group   = iGroupTrade,
+    tooltip = tt_reward
+)
+
+// #endregion Trade Parameters
+
+// #region Timezone ***************************************
+
+var string iGroupTZ = "Timezone"
+
+string i_timezone = input.string(
+    "Exchange", "Timezone",
+    options = [
+        "Exchange", "UTC", "America/New_York",
+        "America/Chicago", "Europe/London",
+        "Europe/Berlin", "Asia/Tokyo",
+        "Asia/Hong_Kong", "Australia/Sydney"
+    ],
+    group   = iGroupTZ,
+    tooltip = tt_timezone
+)
+
+// #endregion Timezone
+
+// #region Debug ******************************************
+
+var string iGroupDebug = "Debug"
+
+bool i_debug = input.bool(
+    false, "Enable Debug",
+    group   = iGroupDebug,
+    tooltip = tt_debug
+)
+
+bool i_showVisuals = input.bool(
+    false, "Show Trade Visuals",
+    group   = iGroupDebug,
+    tooltip = tt_showVisuals
+)
+
+// #endregion Debug
+
+// #endregion Inputs
+
+//+-------------------------------------------------------+
+//                         UDT'S                          |
+//+-------------------------------------------------------+
+// #region UDT's
+
+// Represents a single hypothetical trade placed at the
+// open of an hour. Tracks both buy and sell outcomes
+// independently until both actually hit TP or SL.
+type HourTrade
+    int     hourOfDay       // 0–23
+    float   entryPrice      // price at hour open
+    float   buyTP           // buy take profit level
+    float   buySL           // buy stop loss level
+    float   sellTP          // sell take profit level
+    float   sellSL          // sell stop loss level
+    bool    buyResolved     // true once buy hit TP or SL
+    bool    sellResolved    // true once sell hit TP or SL
+    bool    buyWon          // true if buy TP hit before SL
+    bool    sellWon         // true if sell TP hit before SL
+    int     entryTime       // bar time of entry
+
+// Holds the cumulative tally for a single hour slot (0–23)
+type HourStats
+    int     buyWins         // buy TP hit before SL
+    int     buyLosses       // buy SL hit before TP
+    int     sellWins        // sell TP hit before SL
+    int     sellLosses      // sell SL hit before TP
+    int     bothWins        // both buy and sell won
+    int     totalTrades     // total completed trades
+
+// #endregion UDT's
+
+//+-------------------------------------------------------+
+//                        METHODS                         |
+//+-------------------------------------------------------+
+// #region Methods
+
+// Initialize an HourStats with zeroes
+method init(HourStats this) =>
+    this.buyWins     := 0
+    this.buyLosses   := 0
+    this.sellWins    := 0
+    this.sellLosses  := 0
+    this.bothWins    := 0
+    this.totalTrades := 0
+    this
+
+// Buy win rate as a percentage
+method buyWinRate(HourStats this) =>
+    int buyTotal = this.buyWins + this.buyLosses
+    (buyTotal > 0 ? this.buyWins / buyTotal * 100.0 : 0.0)
+
+// Sell win rate as a percentage
+method sellWinRate(HourStats this) =>
+    int sellTotal = this.sellWins + this.sellLosses
+    (sellTotal > 0 ? this.sellWins / sellTotal * 100.0 : 0.0)
+
+// Both win rate as a percentage (both wins out of total)
+method bothWinRate(HourStats this) =>
+    (this.totalTrades > 0 
+        ? this.bothWins / this.totalTrades * 100.0 
+        : 0.0
+    )
+
+// #endregion Methods
+
+//+-------------------------------------------------------+
+//                    GLOBAL VARIABLES                    |
+//+-------------------------------------------------------+
+// #region Global Variables
+
+// Timezone string for hour() calls
+var string tzString = (
+    i_timezone == "Exchange"
+        ? syminfo.timezone
+        : (i_timezone == "UTC"
+            ? "Etc/UTC"
+            : i_timezone
+        )
+)
+
+// Array of 24 HourStats, one per hour slot
+var HourStats[] hourStatsArr = array.new<HourStats>(24)
+
+// Array to hold all active (unresolved) trades
+var HourTrade[] activeTrades = array.new<HourTrade>(0)
+
+// One-time init flag
+var bool initialized = false
+
+// Table colors as constants
+color COL_WIN     = color.new(#089981, 0)
+color COL_LOSS    = color.new(#f23645, 0)
+color COL_BOTH    = color.new(#2962ff, 0)
+color COL_NEUTRAL = color.new(#787b86, 0)
+color COL_HEADER  = color.new(#2962ff, 20)
+color COL_BG      = color.new(#1e222d, 0)
+color COL_BORDER  = color.new(#363a45, 0)
+color COL_DIM     = color.new(color.white, 30)
+color COL_DIMMER  = color.new(color.white, 50)
+
+// #endregion Global Variables
+
+//+-------------------------------------------------------+
+//                        LIBRARY                         |
+//+-------------------------------------------------------+
+// #region Library
+
+// (none)
+
+// #endregion Library
+
+//+-------------------------------------------------------+
+//                       FUNCTIONS                        |
+//+-------------------------------------------------------+
+// #region Functions
+
+// #region Initialization *********************************
+
+// @function initHourStats - Populate the 24-slot HourStats
+//           array with fresh zeroed instances.
+// @param    _arr (HourStats[]) - The array to fill.
+// @returns       (void)
+initHourStats(HourStats[] _arr) =>
+    for _i = 0 to 23
+        HourStats stats = HourStats.new(0, 0, 0, 0, 0, 0)
+        stats.init()
+        array.set(_arr, _i, stats)
+
+// #endregion Initialization
+
+// #region Trade Creation *********************************
+
+// @function createTrade - Creates a new HourTrade with
+//           precomputed TP/SL levels for both directions.
+// @param    _hour   (int)   - Hour of day 0–23.
+// @param    _entry  (float) - Entry price (bar open).
+// @param    _risk   (float) - Stop distance.
+// @param    _reward (float) - Profit distance.
+// @param    _time   (int)   - Bar time of entry.
+// @returns          (HourTrade)
+createTrade(int _hour, float _entry, float _risk, float _reward, int _time) =>
+    HourTrade.new(
+        _hour,              // hourOfDay
+        _entry,             // entryPrice
+        _entry + _reward,   // buyTP
+        _entry - _risk,     // buySL
+        _entry - _reward,   // sellTP
+        _entry + _risk,     // sellSL
+        false,              // buyResolved
+        false,              // sellResolved
+        false,              // buyWon
+        false,              // sellWon
+        _time               // entryTime
+    )
+
+// #endregion Trade Creation
+
+// #region Trade Resolution *******************************
+
+// @function checkBuyDirection - Checks if buy direction
+//           has hit TP or SL given bar high/low.
+// @param    _tp (float) - Take profit level.
+// @param    _sl (float) - Stop loss level.
+// @param    _hi (float) - Bar high.
+// @param    _lo (float) - Bar low.
+// @returns      (tuple) - [bool resolved, bool won]
+checkBuyDirection(float _tp, float _sl, float _hi, float _lo) =>
+    bool resolved = false
+    bool won = false
+    
+    // Buy: TP is above entry, SL is below entry
+    // TP hit when high >= TP level
+    // SL hit when low <= SL level
+    bool tpHit = _hi >= _tp
+    bool slHit = _lo <= _sl
+    
+    if tpHit and slHit
+        // Both hit on same bar — conservatively mark as loss
+        resolved := true
+        won := false
+    else if tpHit
+        resolved := true
+        won := true
+    else if slHit
+        resolved := true
+        won := false
+    
+    [resolved, won]
+
+// @function checkSellDirection - Checks if sell direction
+//           has hit TP or SL given bar high/low.
+// @param    _tp (float) - Take profit level.
+// @param    _sl (float) - Stop loss level.
+// @param    _hi (float) - Bar high.
+// @param    _lo (float) - Bar low.
+// @returns      (tuple) - [bool resolved, bool won]
+checkSellDirection(float _tp, float _sl, float _hi, float _lo) =>
+    bool resolved = false
+    bool won = false
+    
+    // Sell: TP is below entry, SL is above entry
+    // TP hit when low <= TP level
+    // SL hit when high >= SL level
+    bool tpHit = _lo <= _tp
+    bool slHit = _hi >= _sl
+    
+    if tpHit and slHit
+        // Both hit on same bar — conservatively mark as loss
+        resolved := true
+        won := false
+    else if tpHit
+        resolved := true
+        won := true
+    else if slHit
+        resolved := true
+        won := false
+    
+    [resolved, won]
+
+// @function resolveTrade - Check current bar's high/low
+//           against the trade's TP and SL for both
+//           buy and sell directions.
+// @param    _trade (HourTrade) - The trade to check.
+// @param    _hi    (float)     - Current bar high.
+// @param    _lo    (float)     - Current bar low.
+// @returns         (HourTrade) - Updated trade.
+resolveTrade(HourTrade _trade, float _hi, float _lo) =>
+    HourTrade result = _trade
+    
+    // Check buy direction if not resolved
+    if not result.buyResolved
+        [buyRes, buyWon] = checkBuyDirection(
+            result.buyTP, result.buySL, _hi, _lo
+        )
+        if buyRes
+            result.buyResolved := true
+            result.buyWon := buyWon
+    
+    // Check sell direction if not resolved
+    if not result.sellResolved
+        [sellRes, sellWon] = checkSellDirection(
+            result.sellTP, result.sellSL, _hi, _lo
+        )
+        if sellRes
+            result.sellResolved := true
+            result.sellWon := sellWon
+    
+    result
+
+// @function isFullyResolved - Returns true when both buy
+//           and sell directions of a trade are resolved.
+// @param    _trade (HourTrade) - The trade to check.
+// @returns         (bool)
+isFullyResolved(HourTrade _trade) =>
+    _trade.buyResolved and _trade.sellResolved
+
+// @function recordOutcome - Tallies the resolved trade
+//           into the appropriate HourStats slot and logs.
+// @param    _trade (HourTrade)   - Resolved trade.
+// @param    _stats (HourStats[]) - 24-slot stats.
+// @returns         (void)
+recordOutcome(HourTrade _trade, HourStats[] _stats) =>
+    int hr = _trade.hourOfDay
+    HourStats s = array.get(_stats, hr)
+    
+    bool bWon = _trade.buyWon
+    bool sWon = _trade.sellWon
+    
+    // Record buy outcome
+    if bWon
+        s.buyWins += 1
+    else
+        s.buyLosses += 1
+    
+    // Record sell outcome
+    if sWon
+        s.sellWins += 1
+    else
+        s.sellLosses += 1
+    
+    // Record both wins
+    if bWon and sWon
+        s.bothWins += 1
+    
+    s.totalTrades += 1
+    array.set(_stats, hr, s)
+    
+    // Format hour string and log outcomes
+    string hrStr = str.format("{0,number,00}", hr)
+    
+    log.info("Hr:{0} BUY {1}", hrStr, bWon ? "WIN" : "LOSS")
+    log.info("Hr:{0} SELL {1}", hrStr, sWon ? "WIN" : "LOSS")
+
+// #endregion Trade Resolution
+
+// #region Trade Visuals **********************************
+
+// @function drawTradeVisual - Draws visual marker for a
+//           resolved trade direction (line or label).
+// @param    _entryTime    (int)   - Timestamp of entry bar.
+// @param    _entryPrice   (float) - Entry price.
+// @param    _exitPrice    (float) - TP or SL price hit.
+// @param    _isBuy        (bool)  - True if buy direction.
+// @param    _isWin        (bool)  - True if TP hit before SL.
+// @param    _showVisuals  (bool)  - Toggle for visuals.
+// @param    _currentTime  (int)   - Current bar timestamp.
+// @returns                (void)
+drawTradeVisual(
+    int _entryTime,
+    float _entryPrice,
+    float _exitPrice,
+    bool _isBuy,
+    bool _isWin,
+    bool _showVisuals,
+    int _currentTime
+) =>
+    if _showVisuals
+        color lineCol = (_isWin ? COL_WIN : COL_LOSS)
+        bool isSameBar = (_entryTime == _currentTime)
+
+        if isSameBar
+            // Same-bar resolution: use label with symbol
+            // Buy: above candle (label_down), Sell: below candle (label_up)
+            string symbol = (_isWin ? "✓" : "✗")
+            float lblPrice = (_isBuy ? high : low)
+            if _isBuy
+                label.new(
+                    _currentTime, lblPrice, symbol,
+                    xloc      = xloc.bar_time,
+                    style     = label.style_label_down,
+                    color     = color.new(lineCol, 70),
+                    textcolor = lineCol,
+                    size      = size.small
+                )
+                0
+            else
+                label.new(
+                    _currentTime, lblPrice, symbol,
+                    xloc      = xloc.bar_time,
+                    style     = label.style_label_up,
+                    color     = color.new(lineCol, 70),
+                    textcolor = lineCol,
+                    size      = size.small
+                )
+                0
+        else
+            // Multi-bar resolution: draw line from entry to exit
+            line.new(
+                _entryTime, _entryPrice,
+                _currentTime, _exitPrice,
+                xloc  = xloc.bar_time,
+                color = lineCol,
+                width = 2,
+                style = (_isWin ? line.style_solid : line.style_dashed)
+            )
+            0
+
+// #endregion Trade Visuals
+
+// #region Statistics *************************************
+
+// @function findMaxTotalTrades - Returns the highest
+//           totalTrades count across all 24 hour slots.
+// @param    _stats (HourStats[]) - 24-slot stats array.
+// @returns         (int)
+findMaxTotalTrades(HourStats[] _stats) =>
+    int maxVal = 0
+    for _i = 0 to 23
+        HourStats s = array.get(_stats, _i)
+        if s.totalTrades > maxVal
+            maxVal := s.totalTrades
+    maxVal
+
+// @function findBestWorstHour - Finds both best and worst
+//           hours by both win rate in a single pass.
+// @param    _stats (HourStats[]) - 24-slot stats array.
+// @returns         (tuple)       - [bestHr, worstHr]
+findBestWorstHour(HourStats[] _stats) =>
+    int bestHr = 0
+    int worstHr = 0
+    float bestRate = -1.0
+    float worstRate = 101.0
+    
+    for _i = 0 to 23
+        HourStats s = array.get(_stats, _i)
+        if s.totalTrades > 0
+            float rate = s.bothWinRate()
+            if rate > bestRate
+                bestRate := rate
+                bestHr := _i
+            if rate < worstRate
+                worstRate := rate
+                worstHr := _i
+    
+    [bestHr, worstHr]
+
+// #endregion Statistics
+
+// #region Display Helpers ********************************
+
+// @function fmtHour - Converts hour to zero-padded string.
+// @param    _hr (int) - Hour value 0–23.
+// @returns      (string)
+fmtHour(int _hr) =>
+    str.format("{0,number,00}", _hr)
+
+// @function fmtPrice - Formats price to tick precision.
+// @param    _price (float) - Price value.
+// @returns         (string)
+fmtPrice(float _price) =>
+    str.tostring(_price, syminfo.mintick < 0.01 ? "#.#####" : "#.##")
+
+// @function fmtPct - Formats a percentage value.
+// @param    _pct (float) - Percentage value.
+// @returns       (string)
+fmtPct(float _pct) =>
+    str.tostring(_pct, "#.#") + "%"
+
+// @function rateColor - Returns color based on win rate.
+// @param    _rate     (float) - Win rate percentage.
+// @param    _hiThresh (float) - High threshold for good.
+// @param    _loThresh (float) - Low threshold for neutral.
+// @param    _goodCol  (color) - Color when >= hiThresh.
+// @param    _badCol   (color) - Color when < loThresh.
+// @returns            (color)
+rateColor(float _rate, float _hiThresh, float _loThresh, color _goodCol, color _badCol) =>
+    (_rate >= _hiThresh
+        ? _goodCol
+        : (_rate >= _loThresh
+            ? COL_DIM
+            : _badCol
+        )
+    )
+
+// @function tblCell - Creates a table cell with params.
+// @param    _tbl    (table)  - Table reference.
+// @param    _col    (int)    - Column index.
+// @param    _row    (int)    - Row index.
+// @param    _txt    (string) - Cell text.
+// @param    _txtCol (color)  - Text color.
+// @param    _sz     (string) - Text size.
+// @param    _bg     (color)  - Background color.
+// @param    _align  (string) - Text alignment.
+// @returns          (void)
+tblCell(
+    table _tbl, 
+    int _col, 
+    int _row, 
+    string _txt, 
+    color _txtCol, 
+    string _sz, 
+    color _bg, 
+    string _align
+) =>
+    table.cell(
+        _tbl, _col, _row, _txt, 
+        text_color  = _txtCol, 
+        text_size   = _sz, 
+        bgcolor     = _bg, 
+        text_halign = _align
+    )
+
+// @function tblCellSimple - Creates a basic table cell.
+// @param    _tbl    (table)  - Table reference.
+// @param    _col    (int)    - Column index.
+// @param    _row    (int)    - Row index.
+// @param    _txt    (string) - Cell text.
+// @param    _txtCol (color)  - Text color.
+// @param    _sz     (string) - Text size.
+// @returns          (void)
+tblCellSimple(table _tbl, int _col, int _row, string _txt, color _txtCol, string _sz) =>
+    table.cell(_tbl, _col, _row, _txt, text_color = _txtCol, text_size = _sz)
+
+// @function buildSummaryRow - Adds a label/value row pair.
+// @param    _tbl      (table)  - Table reference.
+// @param    _row      (int)    - Row index.
+// @param    _label    (string) - Label text.
+// @param    _value    (string) - Value text.
+// @param    _valColor (color)  - Value text color.
+// @returns            (void)
+buildSummaryRow(table _tbl, int _row, string _label, string _value, color _valColor) =>
+    tblCellSimple(_tbl, 0, _row, _label, COL_DIM, size.small)
+    tblCellSimple(_tbl, 1, _row, _value, _valColor, size.small)
+
+// @function buildHourlyColumn - Populates a single hour
+//           column in the hourly tally table.
+// @param    _tbl   (table)     - Table reference.
+// @param    _col   (int)       - Column index (1–24).
+// @param    _stats (HourStats) - Stats for this hour.
+// @param    _hr    (int)       - Hour value 0–23.
+// @returns         (void)
+buildHourlyColumn(table _tbl, int _col, HourStats _stats, int _hr) =>
+    // Row 0: Hour header
+    tblCell(
+        _tbl, _col, 0, fmtHour(_hr), color.white, size.tiny, 
+        color.new(#2962ff, 70), text.align_center
+    )
+    
+    // Row 1: Buy wins
+    tblCellSimple(_tbl, _col, 1, str.tostring(_stats.buyWins), COL_WIN, size.tiny)
+    
+    // Row 2: Buy losses
+    tblCellSimple(_tbl, _col, 2, str.tostring(_stats.buyLosses), COL_LOSS, size.tiny)
+    
+    // Row 3: Sell wins
+    tblCellSimple(_tbl, _col, 3, str.tostring(_stats.sellWins), COL_WIN, size.tiny)
+    
+    // Row 4: Sell losses
+    tblCellSimple(_tbl, _col, 4, str.tostring(_stats.sellLosses), COL_LOSS, size.tiny)
+    
+    // Row 5: Both wins
+    tblCellSimple(_tbl, _col, 5, str.tostring(_stats.bothWins), COL_BOTH, size.tiny)
+    
+    // Row 6: Buy win %
+    float buyWR = _stats.buyWinRate()
+    tblCellSimple(
+        _tbl, _col, 6, fmtPct(buyWR), 
+        rateColor(buyWR, 60.0, 40.0, COL_WIN, COL_LOSS), size.tiny
+    )
+    
+    // Row 7: Sell win %
+    float sellWR = _stats.sellWinRate()
+    tblCellSimple(
+        _tbl, _col, 7, fmtPct(sellWR), 
+        rateColor(sellWR, 60.0, 40.0, COL_WIN, COL_LOSS), size.tiny
+    )
+    
+    // Row 8: Both win %
+    float bothWR = _stats.bothWinRate()
+    tblCellSimple(
+        _tbl, _col, 8, fmtPct(bothWR), 
+        rateColor(bothWR, 30.0, 15.0, COL_BOTH, COL_NEUTRAL), size.tiny
+    )
+
+// #endregion Display Helpers
+
+// #endregion Functions
+
+//+-------------------------------------------------------+
+//                       EXECUTION                        |
+//+-------------------------------------------------------+
+// #region Execution
+
+// #region One-Time Init **********************************
+
+if barstate.isfirst
+    initHourStats(hourStatsArr)
+    initialized := true
+
+// #endregion One-Time Init
+
+// #region Hour Detection *********************************
+
+int currentHour = hour(time, tzString)
+int prevHour = hour(time[1], tzString)
+bool isNewHour = na(prevHour) ? true : currentHour != prevHour
+
+// #endregion Hour Detection
+
+// #region Trade Management *******************************
+
+// Process all active trades against current bar's high/low
+// Iterate in reverse to safely remove resolved trades
+int arrSize = array.size(activeTrades)
+if arrSize > 0
+    for _rev = 0 to arrSize - 1
+        int idx = arrSize - 1 - _rev
+        HourTrade trade = array.get(activeTrades, idx)
+
+        // Track previous resolution state
+        bool buyWasPending = not trade.buyResolved
+        bool sellWasPending = not trade.sellResolved
+
+        // Check this bar's high/low for TP/SL hits
+        trade := resolveTrade(trade, high, low)
+        array.set(activeTrades, idx, trade)
+
+        // Draw visuals for newly resolved directions
+        if buyWasPending and trade.buyResolved
+            float exitPrice = (trade.buyWon ? trade.buyTP : trade.buySL)
+            drawTradeVisual(
+                trade.entryTime, trade.entryPrice, exitPrice,
+                true, trade.buyWon, i_showVisuals, time
+            )
+        if sellWasPending and trade.sellResolved
+            float exitPrice = (trade.sellWon ? trade.sellTP : trade.sellSL)
+            drawTradeVisual(
+                trade.entryTime, trade.entryPrice, exitPrice,
+                false, trade.sellWon, i_showVisuals, time
+            )
+
+        // If fully resolved, record outcome and remove
+        if isFullyResolved(trade)
+            recordOutcome(trade, hourStatsArr)
+            array.remove(activeTrades, idx)
+
+// At new hour boundary, create a new trade
+if isNewHour
+    HourTrade newTrade = createTrade(
+        currentHour, open, i_risk, i_reward, time
+    )
+
+    // Immediately check the entry bar for TP/SL hits
+    newTrade := resolveTrade(newTrade, high, low)
+
+    // Draw visuals for any directions resolved on entry bar
+    if newTrade.buyResolved
+        float buyExitPrice = (newTrade.buyWon ? newTrade.buyTP : newTrade.buySL)
+        drawTradeVisual(
+            time, open, buyExitPrice,
+            true, newTrade.buyWon, i_showVisuals, time
+        )
+    if newTrade.sellResolved
+        float sellExitPrice = (newTrade.sellWon ? newTrade.sellTP : newTrade.sellSL)
+        drawTradeVisual(
+            time, open, sellExitPrice,
+            false, newTrade.sellWon, i_showVisuals, time
+        )
+
+    // If resolved on entry bar, record immediately
+    if isFullyResolved(newTrade)
+        recordOutcome(newTrade, hourStatsArr)
+    else
+        // Otherwise add to active trades for future checking
+        array.push(activeTrades, newTrade)
+
+// #endregion Trade Management
+
+// #region Display Tables *********************************
+
+if barstate.islast
+    
+    // ── Summary Table (Upper Right) ─────────────────────
+    var table summaryTbl = table.new(
+        position.top_right, 2, 8,
+        bgcolor      = COL_BG,
+        border_color = COL_BORDER,
+        border_width = 1,
+        frame_color  = COL_BORDER,
+        frame_width  = 2
+    )
+    
+    int sampleDays = findMaxTotalTrades(hourStatsArr)
+    int pendingTrades = array.size(activeTrades)
+    [bestHr, worstHr] = findBestWorstHour(hourStatsArr)
+    HourStats bestStats = array.get(hourStatsArr, bestHr)
+    HourStats worstStats = array.get(hourStatsArr, worstHr)
+    
+    // Header row
+    tblCell(
+        summaryTbl, 0, 0, "SAMPLE INFO", color.white, size.normal, 
+        COL_HEADER, text.align_center
+    )
+    tblCell(
+        summaryTbl, 1, 0, "", color.white, size.normal, 
+        COL_HEADER, text.align_center
+    )
+    table.merge_cells(summaryTbl, 0, 0, 1, 0)
+    
+    // Data rows
+    buildSummaryRow(
+        summaryTbl, 1, "Trading Days", 
+        str.tostring(sampleDays), color.white
+    )
+    buildSummaryRow(
+        summaryTbl, 2, "Risk / Reward", 
+        fmtPrice(i_risk) + " / " + fmtPrice(i_reward), color.white
+    )
+    
+    string bestLabel = (
+        fmtHour(bestHr) + ":00  (" + 
+        fmtPct(bestStats.bothWinRate()) +
+        "  BothW:" + str.tostring(bestStats.bothWins) + ")"
+    )
+    buildSummaryRow(summaryTbl, 3, "Best Hour", bestLabel, COL_WIN)
+    
+    string worstLabel = (
+        fmtHour(worstHr) + ":00  (" +
+        fmtPct(worstStats.bothWinRate()) +
+        "  BothW:" + str.tostring(worstStats.bothWins) + ")"
+    )
+    buildSummaryRow(summaryTbl, 4, "Worst Hour", worstLabel, COL_NEUTRAL)
+    buildSummaryRow(summaryTbl, 5, "Timezone", tzString, COL_DIMMER)
+    buildSummaryRow(summaryTbl, 6, "Symbol", syminfo.tickerid, COL_DIMMER)
+    buildSummaryRow(
+        summaryTbl, 7, "Pending Trades", 
+        str.tostring(pendingTrades), COL_DIM
+    )
+    
+    // ── Hourly Tally Table (Bottom Center) ──────────────
+    int COLS = 25
+    int ROWS = 9
+    
+    var table hourlyTbl = table.new(
+        position.bottom_center, COLS, ROWS,
+        bgcolor      = COL_BG,
+        border_color = COL_BORDER,
+        border_width = 1,
+        frame_color  = COL_BORDER,
+        frame_width  = 2
+    )
+    
+    // Row labels (column 0)
+    string[] rowLabels = array.from(
+        "Hour", "Buy ✓", "Buy ✗", "Sell ✓", "Sell ✗",
+        "Both ✓", "Buy %", "Sell %", "Both %"
+    )
+    color[] rowColors = array.from(
+        color.white, COL_WIN, COL_LOSS, COL_WIN, COL_LOSS,
+        COL_BOTH, COL_WIN, COL_WIN, COL_BOTH
+    )
+    
+    for _row = 0 to ROWS - 1
+        tblCell(
+            hourlyTbl, 0, _row, array.get(rowLabels, _row), 
+            array.get(rowColors, _row), size.tiny, COL_BG, text.align_right
+        )
+    
+    // Fill each hour column
+    for _hr = 0 to 23
+        buildHourlyColumn(
+            hourlyTbl, _hr + 1, array.get(hourStatsArr, _hr), _hr
+        )
+
+// #endregion Display Tables
+
+// #endregion Execution
+
+//+-------------------------------------------------------+
+//                          DEBUG                         |
+//+-------------------------------------------------------+
+// #region Debug
+
+if i_debug and barstate.islast
+    string debugInfo = (
+        "Active Trades: " + str.tostring(array.size(activeTrades))
+    )
+    
+    // Show details of up to 3 oldest active trades
+    int showCount = math.min(array.size(activeTrades), 3)
+    if showCount > 0
+        for _i = 0 to showCount - 1
+            HourTrade t = array.get(activeTrades, _i)
+            debugInfo += (
+                "\n[" + str.tostring(_i) + "] " +
+                "Hr:" + fmtHour(t.hourOfDay) +
+                " E:" + fmtPrice(t.entryPrice) +
+                " BuyTP:" + fmtPrice(t.buyTP) +
+                " BuySL:" + fmtPrice(t.buySL) +
+                " BR:" + str.tostring(t.buyResolved) +
+                " SR:" + str.tostring(t.sellResolved)
+            )
+    
+    var label debugLabel = na
+    if not na(debugLabel)
+        label.delete(debugLabel)
+    debugLabel := label.new(
+        bar_index, high,
+        debugInfo,
+        style     = label.style_label_down,
+        color     = color.new(#2962ff, 70),
+        textcolor = color.white,
+        size      = size.small
+    )
+
+// #endregion Debug
