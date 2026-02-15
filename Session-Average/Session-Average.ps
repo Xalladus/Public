@@ -14,180 +14,13 @@
 //@version=6
 indicator("Session High/Low Avereage & Range with History [OneCleverGuy]", shorttitle="Avg Session H/L [1CG]", max_lines_count=500, max_labels_count=500, max_boxes_count = 500, overlay=true)
 
-// imports will go here for necessary libraries
+import OneCleverGuy/InputLibrary/1 as iLib
 
 //+-----------------------------------------------------+
 //                       INPUTS                         |
 //+-----------------------------------------------------+
 //#region INPUTS
 
-//#region Selector ENUMS ********************************
-
-//@enum           Line style enumeration.
-//@field solid    Represents a solid line.
-//@field dotted   Represents a dotted line.
-//@field dashed   Represents a dashed line.
-//@field lArrow   Represents a line with a left arrow.
-//@field rArrow   Represents a line with a right arrow.
-//@field bArrow   Represents a line with arrows on both ends.
-enum LineStyle
-    solid           = "Solid (─)"
-    dotted          = "Dotted (┈)"
-    dashed          = "Dashed (╌)"
-    lArrow          = "Left Arrow (<─)"
-    rArrow          = "Right Arrow (─>)"
-    bArrow          = "Both Arrows (<─>)"
-
-//@enum           Line thickness enumeration.
-//@field thin      Represents a 1px thin line.
-//@field normal    Represents a 2px normal line.
-//@field heavy     Represents a 3px heavy line.
-//@field thick     Represents a 4px thick line.
-//@field wide      Represents a 5px wide line.
-enum LineSize
-    thin            = "1px (thin)"
-    normal          = "2px (normal)"
-    heavy           = "3px (heavy)"
-    thick           = "4px (thick)"
-    wide            = "5px (wide)"
-
-//@enum           Text size enumeration.
-//@field auto      Represents automatic text size.
-//@field tiny      Represents tiny text size.
-//@field small     Represents small text size.
-//@field normal    Represents normal text size.
-//@field large     Represents large text size.
-//@field huge      Represents huge text size.
-enum TextSize 
-    auto            = "Auto"
-    tiny            = "Tiny"
-    small           = "Small"
-    normal          = "Normal"
-    large           = "Large"
-    huge            = "Huge"
-
-//@enum           Horizontal text alignment enumeration.
-//@field left      Aligns text to the left.
-//@field center    Aligns text to the center.
-//@field right     Aligns text to the right.
-enum BoxHAlign
-    left            = "Left"
-    center          = "Center"
-    right           = "Right"
-
-//@enum           Vertical text alignment enumeration.
-//@field top       Aligns text to the top.
-//@field center    Aligns text to the center.
-//@field bottom    Aligns text to the bottom.
-enum BoxVAlign
-    top             = "Top"
-    center          = "Center"
-    bottom          = "Bottom"
-
-// @enum TimeZones - Enum for representing UTC time zones using shorthand naming convention.
-// @field UTCm12 (string) - UTC-12; other fields follow the same pattern, e.g., UTCm11 for UTC-11, UTCp530 for UTC+5:30, etc.
-// @enum TimeZones
-enum TimeZones
-    UTCm12   = "UTC-12"
-    UTCm11   = "UTC-11"
-    UTCm10   = "UTC-10"
-    UTCm930  = "UTC-9:30"
-    UTCm9    = "UTC-9"
-    UTCm8    = "UTC-8"
-    UTCm7    = "UTC-7"
-    UTCm6    = "UTC-6"
-    UTCm5    = "UTC-5"
-    UTCm430  = "UTC-4:30"
-    UTCm4    = "UTC-4"
-    UTCm330  = "UTC-3:30"
-    UTCm3    = "UTC-3"
-    UTCm2    = "UTC-2"
-    UTCm1    = "UTC-1"
-    UTCp0    = "UTC+0"
-    UTCp1    = "UTC+1"
-    UTCp2    = "UTC+2"
-    UTCp3    = "UTC+3"
-    UTCp330  = "UTC+3:30"
-    UTCp4    = "UTC+4"
-    UTCp430  = "UTC+4:30"
-    UTCp5    = "UTC+5"
-    UTCp530  = "UTC+5:30"
-    UTCp545  = "UTC+5:45"
-    UTCp6    = "UTC+6"
-    UTCp630  = "UTC+6:30"
-    UTCp7    = "UTC+7"
-    UTCp8    = "UTC+8"
-    UTCp845  = "UTC+8:45"
-    UTCp9    = "UTC+9"
-    UTCp930  = "UTC+9:30"
-    UTCp10   = "UTC+10"
-    UTCp1030 = "UTC+10:30"
-    UTCp11   = "UTC+11"
-    UTCp12   = "UTC+12"
-    UTCp1245 = "UTC+12:45"
-    UTCp13   = "UTC+13"
-    UTCp14   = "UTC+14"
-
-    
-//#endregion Selector ENUMS 
-
-//#region Methods ***************************************
-
-// @function                        Returns the line style constant based on the provided style name.
-// @param       this (string)       The name of the line style. Defaults to "solid (─)".
-// @returns     (line.style)        The corresponding line style constant for the specified style.
-method lineStyle (LineStyle this) =>
-    switch this
-        LineStyle.solid    => line.style_solid
-        LineStyle.dotted   => line.style_dotted
-        LineStyle.dashed   => line.style_dashed
-        LineStyle.lArrow   => line.style_arrow_left
-        LineStyle.rArrow   => line.style_arrow_right
-        LineStyle.bArrow   => line.style_arrow_both
-
-// @function                        Returns the line thickness based on the provided size description.
-// @param       this (LineSize)     The description of the line thickness.
-// @returns     (int)               The thickness of the line in pixels corresponding to the specified size.
-method lineSize (LineSize this) =>
-    switch this
-        LineSize.thin      => 1
-        LineSize.normal    => 2
-        LineSize.heavy     => 3
-        LineSize.thick     => 4
-        LineSize.wide      => 5
-
-// @function                        Returns the corresponding size value based on the provided text size enumeration.
-// @param       this (TextSize)     The size of the text.
-// @returns     (size)              The corresponding box size based on the input enumeration.
-method textSize (TextSize this) =>
-    switch this
-        TextSize.auto      => size.auto
-        TextSize.tiny      => size.tiny
-        TextSize.small     => size.small
-        TextSize.normal    => size.normal
-        TextSize.large     => size.large
-        TextSize.huge      => size.huge
-
-// @function                       Returns the corresponding horizontal alignment based on the provided enumeration.
-// @param       this (BoxHAlign)   The `BoxHAlign` enumeration specifying the horizontal alignment.
-// @returns     (text_align)       The corresponding horizontal alignment for the text.
-method boxHAlign (BoxHAlign this) =>
-    switch this
-        BoxHAlign.left     => text.align_left
-        BoxHAlign.center   => text.align_center
-        BoxHAlign.right    => text.align_right
-
-// @function                        Returns the corresponding vertical alignment based on the provided enumeration.
-// @param       this (BoxVAlign)   The `BoxVAlign` enumeration specifying the vertical alignment.
-// @returns     (text_align)       The corresponding vertical alignment for the text.
-method boxVAlign (BoxVAlign this) =>
-    switch this
-        BoxVAlign.top      => text.align_top
-        BoxVAlign.center   => text.align_center
-        BoxVAlign.bottom   => text.align_bottom
-
-
-//#endregion Methods
 
 //#region Tooltips **************************************
 
@@ -205,7 +38,7 @@ tt_ranges       = "Values that are the distance from the session open are marked
 
 var iGroup1 = "Session"
 i_sessionTime       = input.session("0300-1200",    "Session",                    group = iGroup1, tooltip = tt_session, inline = "G1A")
-i_timeZone          = input.enum(TimeZones.UTCm5,   " ",                          group = iGroup1, inline = "G1A")
+i_timeZone          = input.enum(iLib.Timezones.ny, " ",                          group = iGroup1, inline = "G1A")
 i_sampleSize        = input.int(14,                 "Session Period",             group = iGroup1, tooltip = tt_sampleSize)
 i_sessionHistory    = input.int(4,                  "Sessions Displayed",         group = iGroup1, tooltip = tt_history)
 
@@ -213,18 +46,18 @@ var iGroup2 = "Lines"
 // Open line
 i_showOpenLine      = input.bool(true,              "",                           group = iGroup2, inline = "G2B")
 i_openLineColor     = input.color(color.gray,     "Open Line       ",           group = iGroup2, inline = "G2B")
-i_openLineWidth     = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+i_openLineWidth     = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
                                                                                   group = iGroup2, inline = "G2B", display = display.none)
-i_openLineStyle     = input.enum(LineStyle.dotted,  " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+i_openLineStyle     = input.enum(iLib.LineStyle.dotted,  " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
                                                                                   group = iGroup2, inline = "G2B", display = display.none)
 i_openLineShowLabel = input.bool(true,              "Label",                      group = iGroup2, inline = "G2B")
 
 // Average
 i_showASD           = input.bool(true,              "",                           group = iGroup2, inline = "G2C")
 i_ASDColor          = input.color(color.new(#4DB14E, 0), "Average High/Low",      group = iGroup2, inline = "G2C")
-i_ASDWidth          = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+i_ASDWidth          = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
                                                                                   group = iGroup2, inline = "G2C", display = display.none)
-i_ASDStyle          = input.enum(LineStyle.solid,   " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+i_ASDStyle          = input.enum(iLib.LineStyle.solid,   " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
                                                                                   group = iGroup2, inline = "G2C", display = display.none)
 i_ASDShowLabel      = input.bool(true,              "Label",                      group = iGroup2, inline = "G2C")
 i_ASDBgColor        = input.color(color.new(#4DB14E, 85), "                      ",
@@ -234,9 +67,9 @@ i_showASDBg         = input.bool(false,             "Background",               
 // Double Average
 i_showASD2          = input.bool(true,              "",                           group = iGroup2, inline = "G2D")
 i_ASD2Color         = input.color(color.new(#368E3C, 0), "2x Avg High/Low ",    group = iGroup2, inline = "G2D")
-i_ASD2Width         = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+i_ASD2Width         = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
                                                                                   group = iGroup2, inline = "G2D", display = display.none)
-i_ASD2Style         = input.enum(LineStyle.solid,   " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+i_ASD2Style         = input.enum(iLib.LineStyle.solid,   " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
                                                                                   group = iGroup2, inline = "G2D", display = display.none)
 i_ASD2ShowLabel     = input.bool(true,              "Label",                      group = iGroup2, inline = "G2D")
 i_ASD2BgColor       = input.color(color.new(#1F5C23, 85), "                      ",
@@ -246,9 +79,9 @@ i_showASD2Bg        = input.bool(true,              "Background",               
 // Triple Average
 i_showASD3          = input.bool(true,              "",                           group = iGroup2, inline = "G2F")
 i_ASD3Color         = input.color(color.new(#368E3C, 0), "3x Avg High/Low ",    group = iGroup2, inline = "G2F")
-i_ASD3Width         = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+i_ASD3Width         = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
                                                                                   group = iGroup2, inline = "G2F", display = display.none)
-i_ASD3Style         = input.enum(LineStyle.solid,   " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+i_ASD3Style         = input.enum(iLib.LineStyle.solid,   " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
                                                                                   group = iGroup2, inline = "G2F", display = display.none)
 i_ASD3ShowLabel     = input.bool(true,             "Label",                       group = iGroup2, inline = "G2F")
 i_ASD3BgColor       = input.color(color.new(#003228, 85), "                      ", 
@@ -258,9 +91,9 @@ i_showASD3Bg        = input.bool(true,              "Background",               
 // Average - Custom1
 i_showCustom1       = input.bool(true,              "",                           group = iGroup2, inline = "G4A")
 i_Custom1Color      = input.color(color.new(#EA3847, 0),  "Custom Line 1   ",   group = iGroup2, inline = "G4A")
-i_Custom1Width      = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+i_Custom1Width      = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
                                                                                   group = iGroup2, inline = "G4A", display = display.none)
-i_Custom1Style      = input.enum(LineStyle.dotted,  " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+i_Custom1Style      = input.enum(iLib.LineStyle.dotted,  " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
                                                                                   group = iGroup2, inline = "G4A", display = display.none)
 i_Custom1ShowLabel  = input.bool(true,              "Label",                      group = iGroup2, inline = "G4A")
 i_Custom1Percentage = input.float(1.0,              "     Multiplier", minval = 0.10, maxval = 4.00, step = 0.1, group = iGroup2, inline = "G4B")
@@ -269,9 +102,9 @@ i_Custom1Mode       = input.string("Range",         "Mode",                     
 // Average - Custom2
 i_showCustom2       = input.bool(true,              "",                           group = iGroup2, inline = "G4C")
 i_Custom2Color      = input.color(color.new(#1F66FF, 0),  "Custom Line 2   ",   group = iGroup2, inline = "G4C")
-i_Custom2Width      = input.enum(LineSize.thin,     " ",                           [LineSize.thin, LineSize.normal, LineSize.heavy, LineSize.thick], 
+i_Custom2Width      = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
                                                                                   group = iGroup2, inline = "G4C", display = display.none)
-i_Custom2Style      = input.enum(LineStyle.dotted,  " ",                           [LineStyle.solid, LineStyle.dotted, LineStyle.dashed], 
+i_Custom2Style      = input.enum(iLib.LineStyle.dotted,  " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
                                                                                   group = iGroup2, inline = "G4C", display = display.none)
 i_Custom2ShowLabel  = input.bool(true,              "Label",                      group = iGroup2, inline = "G4C")
 i_Custom2Percentage = input.float(1.5,              "     Multiplier", minval = 0.10, maxval = 4.00, step = 0.1, group = iGroup2, inline = "G4D")
@@ -280,16 +113,16 @@ i_Custom2Mode       = input.string("Average",         "Mode",                   
 // Labels
 i_showLabels        = input.bool(true,              "  Show Labels. Position",    group = iGroup2, inline = "G2A")
 i_labelPosition     = input.string("Left",          "",                           ["Left", "Right"], group = iGroup2, tooltip = tt_custLabel, inline = "G2A", display = display.none)
-i_labelTextSize     = input.enum(TextSize.small,    "Size",                       group = iGroup2, inline = "G2A", display = display.none)
+i_labelTextSize     = input.enum(iLib.TextSize.small,    "Size",                       group = iGroup2, inline = "G2A", display = display.none)
 
 // Table inputs
 var iGroup3 = "Display Distances"
 i_showRangeData     = input.bool(true,              "  Show Line Distances",      group = iGroup3, tooltip = tt_ranges)
 i_useCustomColor    = input.bool(true,              "  Use Custom Color",         group = iGroup3, inline = "G3A")
 i_dataTextColor     = input.color(color.silver,     "",                         group = iGroup3, inline = "G3A")
-i_dataTextSize      = input.enum(TextSize.small,    "Size",                       group = iGroup3, inline = "G3A", display = display.none)
-i_dataHAlign        = input.enum(BoxHAlign.left,    "H-Alignment        ",        group = iGroup3, inline = "G3B", display = display.none)
-i_dataVAlign        = input.enum(BoxVAlign.top,     "V-Alignment",                group = iGroup3, inline = "G3B", display = display.none)
+i_dataTextSize      = input.enum(iLib.TextSize.small,    "Size",                       group = iGroup3, inline = "G3A", display = display.none)
+i_dataHAlign        = input.enum(iLib.BoxHAlign.left,    "H-Alignment        ",        group = iGroup3, inline = "G3B", display = display.none)
+i_dataVAlign        = input.enum(iLib.BoxVAlign.top,     "V-Alignment",                group = iGroup3, inline = "G3B", display = display.none)
 
 //#endregion Session Inputs
 
@@ -302,7 +135,7 @@ i_dataVAlign        = input.enum(BoxVAlign.top,     "V-Alignment",              
 
 //#region Constants *************************************
 
-var string  TIMEZONE        = str.tostring(i_timeZone)
+var string  TIMEZONE        = i_timeZone.timezoneToString()
 int         DAYNOW          = dayofmonth(timestamp(TIMEZONE, year, month, dayofmonth, hour, minute))
 var int     PRECISION       = na
 color       TRANSPARENT     = color.new(color.white, 100)
@@ -508,13 +341,13 @@ createAllShapes(int _x1, int _x2, float _price, float _boxPrice, float _openPric
 
     // Create Box if applicable
     float rangeData     = na
-    BoxVAlign vAlign    = i_dataVAlign
+    iLib.BoxVAlign vAlign    = i_dataVAlign
     rangeData           := _isHigh ? math.round(_price - _boxPrice, PRECISION) : math.round(_boxPrice - _price, PRECISION)
     if _isHigh
         rangeData       := math.round(_price - _openPrice, PRECISION)
     else
         rangeData       := math.round(_openPrice - _price, PRECISION)
-        vAlign          := vAlign == BoxVAlign.top ? BoxVAlign.bottom : vAlign == BoxVAlign.bottom ? BoxVAlign.top : vAlign
+        vAlign          := vAlign == iLib.BoxVAlign.top ? iLib.BoxVAlign.bottom : vAlign == iLib.BoxVAlign.bottom ? iLib.BoxVAlign.top : vAlign
 
     boxObj = (not na(lineObj) or _lineInput.showBox) and  _boxPrice != _price?
       box.new(left      = _x1, 
@@ -579,7 +412,7 @@ lastSessionBar              = na(session) and not na(session[1])
 
 //#endregion variables
 
-// SESSION START
+// SESSION START 
 if firstSessionBar
     // set initial values
     userSession = sessionInfo.new(initSession.hours, initSession.startTime, initSession.endTime, 
