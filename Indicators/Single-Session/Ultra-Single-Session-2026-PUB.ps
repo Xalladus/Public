@@ -103,16 +103,16 @@ i_alrtSess01        = input.string("No Alerts", "Alert Mode", options=["No Alert
 
 grpTW01 = "Trade Window 01"
 i_showTW01     = input.bool(true, "", group = grpTW01, inline = "V")
-i_tw01         = input.session("1000-1100", "Trade Window 1", group = grpTW01, inline = "V", tooltip = tt_vln, display = display.none)
+i_tw01         = input.session("1000-1100", "Trade Window 1", group = grpTW01, inline = "V", tooltip = tt_vln, display = display.none, active = i_showTW01)
 
-i_showTwLn01      = input.bool(true, "V-Lines", group = grpTW01, inline = "V1")
-i_twLnClr01        = input.color(color.new(#b22833, 0), "", group = grpTW01, inline = "V1")
-i_twBgClr01  = input.color(color.new(#b22833, 90), "", group = grpTW01, inline = "V1")
-i_twLnStyle01         = input.string("solid (─)", "", options=["solid (─)", "dotted (┈)", "dashed (╌)"], group = grpTW01, inline = "V1", display = display.none)
-i_twLnSize01          = input.string("1px (thin)", "", options=["1px (thin)", "2px (normal)", "3px (heavy)", "4px (thick)"], group = grpTW01, inline = "V1", display = display.none)
+i_showTwLn01      = input.bool(true, "V-Lines", group = grpTW01, inline = "V1", active = i_showTW01)
+i_twLnClr01        = input.color(color.new(#b22833, 0), "", group = grpTW01, inline = "V1", active = i_showTW01 and i_showTwLn01)
+i_twBgClr01  = input.color(color.new(#b22833, 90), "", group = grpTW01, inline = "V1", active = i_showTW01)
+i_twLnStyle01         = input.string("solid (─)", "", options=["solid (─)", "dotted (┈)", "dashed (╌)"], group = grpTW01, inline = "V1", display = display.none, active = i_showTW01 and i_showTwLn01)
+i_twLnSize01          = input.string("1px (thin)", "", options=["1px (thin)", "2px (normal)", "3px (heavy)", "4px (thick)"], group = grpTW01, inline = "V1", display = display.none, active = i_showTW01 and i_showTwLn01)
 
-i_twHist01  = input.bool(false, "Show History", group = grpTW01, inline = "V2", display = display.none)
-i_showTwBg01   = input.bool(false, "Background", group = grpTW01, inline = "V2", display = display.none)
+i_twHist01  = input.bool(false, "Show History", group = grpTW01, inline = "V2", display = display.none, active = i_showTW01 and i_showTwLn01)
+i_showTwBg01   = input.bool(false, "Background", group = grpTW01, inline = "V2", display = display.none, active = i_showTW01)
 
 //#endregion Trade Window 01
 
@@ -593,6 +593,13 @@ sessVLines(line[] _startArr, line[] _endArr, string _sess, int _daysLim, bool _h
             line.set_x2(array.get(_endArr, 0), addT)
     true
 
+clearSessVLines(line[] _startArr, line[] _endArr) =>
+    while array.size(_startArr) > 0
+        line.delete(array.pop(_startArr))
+    while array.size(_endArr) > 0
+        line.delete(array.pop(_endArr))
+    true
+
 //#endregion Session V-Line Functions
 
 //#region Shape Functions *******************************
@@ -688,7 +695,10 @@ setHist(sessionData _d, sessionInputs _in, bool _isDaily, string _custLbl = na) 
     i = _in
     int endT = sessEnd(it)
     if _isDaily
-        if i.showLineHist
+        // Daily sessions have no current-session drawings, so keep one historical render path active.
+        bool showDailyLines = i.showHiLo
+        bool showDailyBox = i.showBox
+        if showDailyLines
             it.highLine := createLines(true, true, i.primeColor, i.lineStyle, i.lineSize)
             line.set_xy1(it.highLine, it.highLineStartTime, it.highPrice)
             line.set_xy2(it.highLine, it.lineEndTime, it.highPrice)
@@ -706,7 +716,15 @@ setHist(sessionData _d, sessionInputs _in, bool _isDaily, string _custLbl = na) 
                 label.set_y(it.lowLabel, it.lowPrice)
                 label.set_text(it.lowLabel, not na(_custLbl) ? _custLbl + " Low" : "PDL")
                 label.set_style(it.lowLabel, label.style_label_left)
-        if i.showBoxHist
+            if not i.showLabel
+                label.delete(it.highLabel)
+                label.delete(it.lowLabel)
+                it.highLabel := na
+                it.lowLabel := na
+        if not showDailyLines
+            clearShapes(it, true, true, false)
+
+        if showDailyBox
             it.square := createBox(true, endT, i.primeColor, i.boxSize, i.boxStyle, i.subColor)
             leftT = na(it.sessStartBarTime) ? it.sessStartTime : it.sessStartBarTime
             rightT = na(it.sessEndBarTime) ? endT : it.sessEndBarTime
@@ -714,6 +732,8 @@ setHist(sessionData _d, sessionInputs _in, bool _isDaily, string _custLbl = na) 
             box.set_top(it.square, it.highPrice)
             box.set_right(it.square, rightT)
             box.set_bottom(it.square, it.lowPrice)
+        if not showDailyBox
+            clearShapes(it, false, false, true)
 
     if not _isDaily
         if i.showHiLo and i.showLineHist and i.showLabel
@@ -726,34 +746,14 @@ setHist(sessionData _d, sessionInputs _in, bool _isDaily, string _custLbl = na) 
             clearShapes(it, true, true, false)
 
         if not i.showHiLo and i.showLineHist
-            it.highLine := createLines(true, true, i.primeColor, i.lineStyle, i.lineSize)
-            line.set_xy1(it.highLine, it.highLineStartTime, it.highPrice)
-            line.set_xy2(it.highLine, it.lineEndTime, it.highPrice)
-            it.lowLine := createLines(false, true, i.primeColor, i.lineStyle, i.lineSize)
-            line.set_xy1(it.lowLine, it.lowLineStartTime, it.lowPrice)
-            line.set_xy2(it.lowLine, it.lineEndTime, it.lowPrice)
-            if i.showLabel
-                it.highLabel := createLabels(true, true, true, "", i.primeColor, i.showBox)
-                label.set_x(it.highLabel, it.lineEndTime)
-                label.set_y(it.highLabel, it.highPrice)
-                label.set_text(it.highLabel, "H")
-                label.set_style(it.highLabel, label.style_label_left)
-                it.lowLabel := createLabels(false, true, true, "", i.primeColor, i.showBox)
-                label.set_x(it.lowLabel, it.lineEndTime)
-                label.set_y(it.lowLabel, it.lowPrice)
-                label.set_text(it.lowLabel, "L")
-                label.set_style(it.lowLabel, label.style_label_left)
+            // Parent section is off, so force-clear line history as well.
+            clearShapes(it, true, true, false)
 
         if i.showBox and not i.showBoxHist
             clearShapes(it, false, false, true)
         if not i.showBox and i.showBoxHist
-            it.square := createBox(true, endT, i.primeColor, i.boxSize, i.boxStyle, i.subColor)
-            leftT = na(it.sessStartBarTime) ? it.sessStartTime : it.sessStartBarTime
-            rightT = na(it.sessEndBarTime) ? endT : it.sessEndBarTime
-            box.set_left(it.square, leftT)
-            box.set_top(it.square, it.highPrice)
-            box.set_right(it.square, rightT)
-            box.set_bottom(it.square, it.lowPrice)
+            // Parent section is off, so force-clear box history as well.
+            clearShapes(it, false, false, true)
 
 //#endregion History Functions
 
@@ -828,6 +828,14 @@ renderSess(map<string, sessionInputs> _inMap, string _key, sessionData[] _arr, i
             rm = array.pop(_arr)
             clearShapes(rm, true, true, true)
             map.remove(trkMap, rm.sessStartTime)
+        // For daily sessions, history toggles OFF should still keep 1 prior session visible.
+        if isDaily and array.size(_arr) > 2
+            for idx = 2 to array.size(_arr) - 1
+                histData = array.get(_arr, idx)
+                if not inInfo.showLineHist
+                    clearShapes(histData, true, true, false)
+                if not inInfo.showBoxHist
+                    clearShapes(histData, false, false, true)
         for data in _arr
             bool isDone = map.contains(trkMap, data.sessStartTime) ? not na(map.get(trkMap, data.sessStartTime).endBar) : false
             if isDone
@@ -839,7 +847,7 @@ renderSess(map<string, sessionInputs> _inMap, string _key, sessionData[] _arr, i
                 data.sessEndBarTime := time
             if _now <= endT
                 ensureCurrShapes(data, inInfo, isDaily)
-            if inInfo.showHiLo and not isDaily
+            if inInfo.showHiLo
                 advHiLoLines(data, inInfo.aheadTime, inInfo.showLabel, inInfo.showBox, isDaily, _now)
             if time > endT and time[1] <= endT
                 updLblStyle(data, false)
@@ -880,18 +888,23 @@ procSessBrkAlerts(sessionData[] _arr, string _mode, string _lbl, int _now) =>
     bool shLo = false
 
     if _mode != "No Alerts" and array.size(_arr) > 0
-        sessionData data = array.get(_arr, 0)
-        int endT = sessEnd(data)
-        int key = data.sessStartTime
+        int alertDataIndex = na
+        for idx = 0 to array.size(_arr) - 1
+            cand = array.get(_arr, idx)
+            int candEnd = sessEnd(cand)
+            if _now > candEnd and _now <= cand.lineEndTime
+                alertDataIndex := idx
+                break
 
-        // Initialize tracker if needed
-        if not map.contains(alrtMap, key)
-            map.put(alrtMap, key, brkTrk.new(key, false, false, false, false))
+        if not na(alertDataIndex)
+            sessionData data = array.get(_arr, alertDataIndex)
+            int key = data.sessStartTime
 
-        brkTrk trk = map.get(alrtMap, key)
+            // Initialize tracker if needed
+            if not map.contains(alrtMap, key)
+                map.put(alrtMap, key, brkTrk.new(key, false, false, false, false))
 
-        // Only process after session has closed and before line end
-        if _now > endT and _now <= data.lineEndTime
+            brkTrk trk = map.get(alrtMap, key)
             bool inWin = isInTradeWin()
 
             switch _mode
@@ -996,6 +1009,8 @@ if barstate.islast
 if barstate.isconfirmed
     if i_showTW01 and i_showTwLn01
         sessVLines(vLnStart01, vLnEnd01, i_tw01, i_daysLim, i_twHist01, i_twLnClr01, i_twLnStyle01, i_twLnSize01, NOW)
+    else
+        clearSessVLines(vLnStart01, vLnEnd01)
 
 // Trade window background
 bgcolor(isSession(i_tw01, TZ) and i_showTW01 and i_showTwBg01 and isRun ? i_twBgClr01 : na)

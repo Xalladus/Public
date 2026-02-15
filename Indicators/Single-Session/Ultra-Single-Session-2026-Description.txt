@@ -1,0 +1,216 @@
+Ultra-Single-Session-2026: Professional Session Trading Indicator
+
+ADVANCED SESSION TRADING CAPABILITIES
+
+The Ultra-Single-Session indicator provides three critical advantages for serious session traders:
+
+• HIGHLY CUSTOMIZABLE: Configure every visual element to match your trading preferences - colors, styles, line extensions, and display options provide complete control over chart presentation.
+
+• INTRABAR ACCURACY: Maintains precise session boundaries and high/low detection across all timeframes using 1-minute data, ensuring accuracy regardless of your chart timeframe.
+
+• INTELLIGENT ALERT GATING: Alerts trigger only when price breaks occur within specified trade windows, reducing noise and focusing attention on actionable opportunities during preferred trading periods.
+
+OVERVIEW:
+The Ultra-Single-Session indicator is designed to help traders identify and track key trading sessions throughout the day. It provides visual representations of session boundaries, price levels, and trading opportunities with high precision and extensive customization options. Built on the Ultra-Sessions architecture, it offers intrabar accuracy for higher timeframes and supports multiple session types with flexible alert systems.
+
+KEY FEATURES:
+
+1. SESSION DISPLAY
+   - Visual session box showing the trading range
+   - High and low lines that extend beyond session end
+   - Customizable labels for session identification
+   - Background coloring during active sessions
+
+[IMAGE PLACEHOLDER: Screenshot showing session box with high/low lines and labels]
+
+2. SESSION TYPES
+   - Predefined sessions: London, New York, Asia, and cross sessions
+   - Custom session creation with flexible start/end times
+   - Daily sessions (market open/close or midnight)
+   - Automatic timezone handling
+
+[IMAGE PLACEHOLDER: Dropdown menu showing available session options]
+
+3. VISUAL CUSTOMIZATION
+   - Multiple line styles (solid, dotted, dashed)
+   - Adjustable line thickness (1px to 4px)
+   - Custom color schemes for major/minor elements
+   - Configurable text labels with size and alignment options
+   - Optional background fills for session boxes
+
+[IMAGE PLACEHOLDER: Color picker and style selection interface]
+
+4. ADVANCED LINE EXTENSIONS
+   - Lines start from price or session begin
+   - Configurable frontrun bars ahead of price
+   - Custom end times with optional day extension
+   - History display for previous sessions
+
+[IMAGE PLACEHOLDER: Chart showing extended lines with frontrun ahead of price]
+
+5. TRADE WINDOWS
+   - Vertical lines marking trade window boundaries
+   - Background highlighting during active windows
+   - History display for past trade windows
+   - Integration with alert system
+
+[IMAGE PLACEHOLDER: Chart with vertical lines and background highlighting trade windows]
+
+6. ALERT SYSTEM
+   - Three alert modes for session breakouts:
+     * On Break: Alerts on first price touch of high/low
+     * Close Out: Alerts when candle closes beyond high/low
+     * Close In (Sweep): Alerts when price breaks but closes back inside
+   - Trade window gating (alerts only fire within specified windows)
+   - Visual markers on chart for break events
+
+[IMAGE PLACEHOLDER: Alert configuration panel and example alert triggers]
+
+7. HISTORY & ANALYSIS
+   - Configurable history depth (up to 90 days)
+   - Previous day high/low levels (PDH/PDL)
+   - Session range analysis
+   - Weekend-aware calculations
+
+[IMAGE PLACEHOLDER: Chart showing multiple historical sessions]
+
+8. TIMEZONE SUPPORT
+   - Automatic conversion to user's local timezone
+   - Session times display in familiar format
+   - Cross-timezone session handling
+
+9. INTRABAR ACCURACY
+   - Uses 1-minute data for precise high/low detection
+   - Accurate session boundaries on all timeframes
+   - Handles session starts/ends within bars
+
+[IMAGE PLACEHOLDER: Comparison showing intrabar accuracy vs standard methods]
+
+10. PERFORMANCE OPTIMIZED
+    - Efficient rendering with object limits (500 max each)
+    - Smart history management
+    - Minimal resource usage
+
+USAGE SCENARIOS:
+- Session traders identifying key levels
+- Breakout traders monitoring session ranges
+- Scalpers using intrabar precision
+- Multi-timeframe analysis
+- Alert-based automated strategies
+
+[IMAGE PLACEHOLDER: Real chart example with multiple sessions and alerts]
+
+CONFIGURATION TIPS:
+- Start with default settings and adjust colors for visibility
+- Use "Price" start for dynamic lines, "Session Start" for static
+- Enable trade windows to filter alerts to specific periods
+- Adjust history depth based on your analysis needs
+- Test alert modes to find what works best for your strategy
+
+TECHNICAL NOTES:
+- Requires Input Library import for enhanced functionality
+- Compatible with all TradingView timeframes
+- Session functions embedded for public distribution
+- Follows Ultra-Sessions architecture standards
+
+For more information and updates, visit the project repository.
+
+1. SESSION DISPLAY
+   - Visual session box showing the trading range
+   - High and low lines that extend beyond session end
+   - Customizable labels for session identification
+   - Background coloring during active sessions
+
+[IMAGE PLACEHOLDER: Screenshot showing session box with high/low lines and labels]
+
+2. SESSION TYPES
+   - Predefined sessions: London, New York, Asia, and cross sessions
+   - Custom session creation with flexible start/end times
+   - Daily sessions (market open/close or midnight)
+   - Automatic timezone handling
+
+[IMAGE PLACEHOLDER: Dropdown menu showing available session options]
+
+3. VISUAL CUSTOMIZATION
+   - Multiple line styles (solid, dotted, dashed)
+   - Adjustable line thickness (1px to 4px)
+   - Custom color schemes for major/minor elements
+   - Configurable text labels with size and alignment options
+   - Optional background fills for session boxes
+
+[IMAGE PLACEHOLDER: Color picker and style selection interface]
+
+4. ADVANCED LINE EXTENSIONS
+   - Lines start from price or session begin
+   - Configurable frontrun bars ahead of price
+   - Custom end times with optional day extension
+   - History display for previous sessions
+
+[IMAGE PLACEHOLDER: Chart showing extended lines with frontrun ahead of price]
+
+5. TRADE WINDOWS
+   - Vertical lines marking trade window boundaries
+   - Background highlighting during active windows
+   - History display for past trade windows
+   - Integration with alert system
+
+[IMAGE PLACEHOLDER: Chart with vertical lines and background highlighting trade windows]
+
+6. ALERT SYSTEM
+   - Three alert modes for session breakouts:
+     * On Break: Alerts on first price touch of high/low
+     * Close Out: Alerts when candle closes beyond high/low
+     * Close In (Sweep): Alerts when price breaks but closes back inside
+   - Trade window gating (alerts only fire within specified windows)
+   - Visual markers on chart for break events
+
+[IMAGE PLACEHOLDER: Alert configuration panel and example alert triggers]
+
+7. HISTORY & ANALYSIS
+   - Configurable history depth (up to 90 days)
+   - Previous day high/low levels (PDH/PDL)
+   - Session range analysis
+   - Weekend-aware calculations
+
+[IMAGE PLACEHOLDER: Chart showing multiple historical sessions]
+
+8. TIMEZONE SUPPORT
+   - Automatic conversion to user's local timezone
+   - Session times display in familiar format
+   - Cross-timezone session handling
+
+9. INTRABAR ACCURACY
+   - Uses 1-minute data for precise high/low detection
+   - Accurate session boundaries on all timeframes
+   - Handles session starts/ends within bars
+
+[IMAGE PLACEHOLDER: Comparison showing intrabar accuracy vs standard methods]
+
+10. PERFORMANCE OPTIMIZED
+    - Efficient rendering with object limits (500 max each)
+    - Smart history management
+    - Minimal resource usage
+
+USAGE SCENARIOS:
+- Session traders identifying key levels
+- Breakout traders monitoring session ranges
+- Scalpers using intrabar precision
+- Multi-timeframe analysis
+- Alert-based automated strategies
+
+[IMAGE PLACEHOLDER: Real chart example with multiple sessions and alerts]
+
+CONFIGURATION TIPS:
+- Start with default settings and adjust colors for visibility
+- Use "Price" start for dynamic lines, "Session Start" for static
+- Enable trade windows to filter alerts to specific periods
+- Adjust history depth based on your analysis needs
+- Test alert modes to find what works best for your strategy
+
+TECHNICAL NOTES:
+- Requires Input Library import for enhanced functionality
+- Compatible with all TradingView timeframes
+- Session functions embedded for public distribution
+- Follows Ultra-Sessions architecture standards
+
+For more information and updates, visit the project repository.
