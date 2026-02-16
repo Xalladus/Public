@@ -60,7 +60,7 @@ i_sess01             = input.string("Custom", "Session", ["London", "London Lunc
                                          "Asia", "Asian Lunch", "Asia -> London Open", "Daily (Market)", "Daily (Midnight)", "Custom"],
                                          group = grpSess01, inline = "D6", display = display.none, active = i_show01)
 i_custLbl01         = input.string("Asia", "Label", group = grpSess01, inline = "D6", active = i_show01)
-i_custSess01       = input.session("1600-0000", "Custom Session", group = grpSess01, tooltip = tt_cust, active = i_show01)
+i_custSess01       = input.session("1600-0000", "Custom Session", group = grpSess01, tooltip = tt_cust, active = i_show01, display = display.none)
 
 i_priClr01          = input.color(color.new(#4caf50, 0), "Major Color", group = grpSess01, inline = "D1", active = i_show01)
 i_subClr01            = input.color(color.new(#4caf50, 90), "Minor Color", group = grpSess01, inline = "D1", active = i_show01)
