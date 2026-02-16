@@ -168,6 +168,18 @@ timeSpan(string _timeSpan) =>
         "Day"           => 86400000
         "Week"          => 604800000
 
+isWeekendBar() =>
+    dayofweek(time) == dayofweek.saturday or dayofweek(time) == dayofweek.sunday
+
+// Tracks whether this symbol/timeframe ever prints weekend bars.
+// If it does, do NOT apply weekend-skipping logic.
+var bool s_hasWeekendData = false
+if isWeekendBar()
+    s_hasWeekendData := true
+
+shouldSkipWeekends() =>
+    not s_hasWeekendData
+
 sessToHoursMins(string _session) =>
     startHour = math.round(str.tonumber(str.substring(_session, 0, 2)))
     startMins = math.round(str.tonumber(str.substring(_session, 2, 4)))
@@ -198,34 +210,34 @@ type SessionInfo
     int closeMinute = na
 
 var s_london = SessionInfo.new(
-    "London", "0300-1200:23456", 03, 00, 12, 00
+    "London", "0300-1200", 03, 00, 12, 00
 )
 var s_londonLunch = SessionInfo.new(
-    "London Lunch", "0500-0800:23456", 05, 00, 08, 00
+    "London Lunch", "0500-0800", 05, 00, 08, 00
 )
 var s_londonToNY = SessionInfo.new(
-    "London to NY", "0300-0800:23456", 03, 00, 08, 00
+    "London to NY", "0300-0800", 03, 00, 08, 00
 )
 var s_ny = SessionInfo.new(
-    "New York", "0800-1700:23456", 08, 00, 17, 00
+    "New York", "0800-1700", 08, 00, 17, 00
 )
 var s_nyCross = SessionInfo.new(
-    "NY Cross", "0800-1200:23456", 08, 00, 12, 00
+    "NY Cross", "0800-1200", 08, 00, 12, 00
 )
 var s_asia = SessionInfo.new(
-    "Asia", "2000-0500:23456", 20, 00, 05, 00
+    "Asia", "2000-0500", 20, 00, 05, 00
 )
 var s_asiaLunch = SessionInfo.new(
-    "Asia Lunch", "0000-0300:23456", 00, 00, 03, 00
+    "Asia Lunch", "0000-0300", 00, 00, 03, 00
 )
 var s_asiaToLondon = SessionInfo.new(
-    "Asia to Lon", "2000-0300:23456", 20, 00, 03, 00
+    "Asia to Lon", "2000-0300", 20, 00, 03, 00
 )
 var s_dailyMarket = SessionInfo.new(
-    "Daily", "1700-1700:23456", 17, 00, 17, 00
+    "Daily", "1700-1700", 17, 00, 17, 00
 )
 var s_dailyMidnight = SessionInfo.new(
-    "Daily", "0000-0000:23456", 00, 00, 00, 00
+    "Daily", "0000-0000", 00, 00, 00, 00
 )
 
 getSessionInfo(string _sessName) =>
@@ -340,16 +352,20 @@ isSessIntrabar(bool _isCheckingStart, SessionInfo _session, string _timeZone, in
 //#region Run Time Functions ****************************
 
 getRunTime(int _days, int _timeNow) =>
-    int currentDay = dayofweek(_timeNow)
-    int weekendDays = 0
-    for i = 0 to _days - 1
-        currentDay -= 1
-        if currentDay == 0
-            weekendDays += 2
-            currentDay := 6
-    int totalDays = _days + weekendDays
-    int returnVal = _timeNow - totalDays * timeSpan("Day")
-    returnVal
+    // If the symbol trades weekends, just count back _days directly.
+    if not shouldSkipWeekends()
+        _timeNow - _days * timeSpan("Day")
+    else
+        int currentDay = dayofweek(_timeNow)
+        int weekendDays = 0
+        for i = 0 to _days - 1
+            currentDay -= 1
+            if currentDay == 0
+                weekendDays += 2
+                currentDay := 6
+        int totalDays = _days + weekendDays
+        int returnVal = _timeNow - totalDays * timeSpan("Day")
+        returnVal
 
 isRunTime(int _daysHistory, bool _isNonArray = false, bool _isDay = false, int _timeNow) =>
     int days = _daysHistory
@@ -375,8 +391,6 @@ getLineEndTime(string _timeZone, int _sessEnd, int _sessEndHour, int _sessEndMin
     lineEndHour = math.round(str.tonumber(str.substring(_iLineEndName, 0, 2)))
     lineEndMin = math.round(str.tonumber(str.substring(_iLineEndName, 3, 5)))
     lineCloseTime = timestamp(_timeZone, year, month, dayofmonth, lineEndHour, lineEndMin)
-    weekClose = getWeekClose()
-    nextOpen = weekClose + timeSpan("Day") * 2
     if _isDaily
         xDay :=  timestamp(_timeZone, year, month, dayofmonth, _sessEndHour, _sessEndMins) ==
                  timestamp(_timeZone, year, month, dayofmonth, lineEndHour, lineEndMin) ?  true : false
@@ -384,10 +398,13 @@ getLineEndTime(string _timeZone, int _sessEnd, int _sessEndHour, int _sessEndMin
         lineCloseTime += timeSpan("Day")
     if xDay
         lineCloseTime := lineCloseTime + timeSpan("Day")
-    while lineCloseTime > weekClose and lineCloseTime < nextOpen
-        lineCloseTime += timeSpan("Day")
-    if lineCloseTime >= nextOpen and lineCloseTime < nextOpen + timeSpan("Minute") * 5
-        lineCloseTime += timeSpan("Day")
+    if shouldSkipWeekends()
+        weekClose = getWeekClose()
+        nextOpen = weekClose + timeSpan("Day") * 2
+        while lineCloseTime > weekClose and lineCloseTime < nextOpen
+            lineCloseTime += timeSpan("Day")
+        if lineCloseTime >= nextOpen and lineCloseTime < nextOpen + timeSpan("Minute") * 5
+            lineCloseTime += timeSpan("Day")
     lineCloseTime
 
 //#endregion Session Time Helpers
@@ -418,7 +435,8 @@ createSessionDataCore(sessionInputs _input, SessionInfo _sessInfo, bool _isDaily
     sessStartTime = timestamp(_timeZone, year, month, dayofmonth, _sessInfo.openHour, _sessInfo.openMinute) + _spanAdjust
     sessDuration = sessionDuration(_sessInfo.session)
     sessEndTime = sessStartTime + sessDuration - 1
-    sessEndTime := sessEndTime >= getWeekClose() ? sessEndTime + (timeSpan("Day") * 2) : sessEndTime
+    if shouldSkipWeekends()
+        sessEndTime := sessEndTime >= getWeekClose() ? sessEndTime + (timeSpan("Day") * 2) : sessEndTime
     sessionData.new(
          high,
          sessStartTime,
