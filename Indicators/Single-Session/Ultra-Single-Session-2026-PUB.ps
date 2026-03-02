@@ -483,6 +483,23 @@ setAdjustedData(sessionData _data, float _highPrice, float _lowPrice, int _highT
     _data.highTime := _highTime
     _data.lowTime := _lowTime
 
+isLateSessStart(SessionInfo _si, sessionData[] _arr, string _tz, int _now) =>
+    bool inSess = isSession(_si.session, _tz)
+    if not inSess
+        false
+    else if array.size(_arr) == 0
+        true
+    else
+        sessionData lat = array.get(_arr, 0)
+        lat.sessEndTime < _now
+
+compLateSpanAdj(SessionInfo _si, string _tz, int _spanAdj) =>
+    int stChk = timestamp(_tz, year, month, dayofmonth, _si.openHour, _si.openMinute) + _spanAdj
+    int res = _spanAdj
+    if stChk > time
+        res -= timeSpan("Day")
+    res
+
 //#endregion Helper Functions
 
 //#region Run Session Functions**************************
@@ -496,9 +513,18 @@ runSession(map<string, sessionInputs> _inputMap, string _mapKey, sessionData[] _
     isFirstBarOfSession = isSessFirstBar(sessInfo, timeZone, candleSpanAdjust)
     startFromPrice = isStartPrice(inputInfo.startName)
 
+    bool needsLate = false
+    int actSpanAdj = candleSpanAdjust
+    if not isFirstBarOfSession and not isDaily
+        needsLate := isLateSessStart(sessInfo, _sessDataArray, timeZone, _timeNow)
+        if needsLate
+            actSpanAdj := compLateSpanAdj(sessInfo, timeZone, candleSpanAdjust)
+    bool isNewSess = isFirstBarOfSession or needsLate
+
     if inputInfo.showAll and isRunTime(_daysLimit, false, isDaily, _timeNow)
-        if isFirstBarOfSession
-            firstBarSessionCore(inputInfo, _sessDataArray, sessInfo, isDaily, candleSpanAdjust, timeZone, _timeZoneUser)
+        if isNewSess
+            int spanCreate = (needsLate ? actSpanAdj : candleSpanAdjust)
+            firstBarSessionCore(inputInfo, _sessDataArray, sessInfo, isDaily, spanCreate, timeZone, _timeZoneUser)
             data0 = array.get(_sessDataArray, 0)
             data0.sessStartBarTime := time
         for data in _sessDataArray
@@ -510,8 +536,8 @@ runSession(map<string, sessionInputs> _inputMap, string _mapKey, sessionData[] _
                 if isStartIntra or isEndIntra
                     endTime = isEndIntra ? data.sessEndTime : time_close
                     startTime = isStartIntra ? data.sessStartTime : time
-                    highPrice = not isStartIntra and isEndIntra and not isFirstBarOfSession ? data.highPrice : 0
-                    lowPrice = not isStartIntra and isEndIntra and not isFirstBarOfSession ? data.lowPrice : 69420
+                    highPrice = not isStartIntra and isEndIntra and not isNewSess ? data.highPrice : 0
+                    lowPrice = not isStartIntra and isEndIntra and not isNewSess ? data.lowPrice : 69420
                     [adjHiPrice, adjLowPrice, adjHighTime, adjLowTime] = adjustHighLow(startTime, endTime, highPrice, lowPrice, data.highTime, data.lowTime, _timeNow)
                     setAdjustedData(data, adjHiPrice, adjLowPrice, adjHighTime, adjLowTime)
                     newHighOrLowCore(data, true, true, startFromPrice, true)
@@ -551,6 +577,8 @@ var sessArr01 = array.new<sessionData>()
 // Trade window v-line arrays
 var vLnStart01 = array.new<line>()
 var vLnEnd01 = array.new<line>()
+var int twLastStart01 = na
+var bool twEndAdj01 = false
 
 // Session input UDT
 var sessInput01 = sessionInputs.new(i_show01, i_sess01, i_priClr01, i_subClr01, i_sessBg01, i_showHL01, i_hlStyle01, i_hlSize01, i_showLbl01, i_showBx01,
@@ -593,23 +621,59 @@ sessEnd(sessionData _d) =>
 
 //#region Session V-Line Functions **********************
 
-sessVLines(line[] _startArr, line[] _endArr, string _sess, int _daysLim, bool _hist, color _lnClr, string _lnStyle, string _lnSize, int _now) =>
+sessVLines(line[] _sArr, line[] _eArr, string _sess, int _lim, bool _hist, color _clr, string _lnStyle, string _lnSize, int _now, string _tz, int _lastStart, bool _endAdj) =>
     actSess = getCustomSessionInfo("Custom", _sess, "Active Session")
-    if isRunTime(_daysLim, false, false, _now) and isSessFirstBar(actSess, TZ)
-        addT = time + sessionDuration(actSess.session)
-        lnGap = 0
-        if array.size(_startArr) == 0 or _hist
-            array.unshift(_startArr, line.new(time, open, time, close + lnGap, xloc.bar_time, extend.both, _lnClr, iLib.lineStyleFromString(_lnStyle), iLib.lineSizeFromString(_lnSize)))
-            array.unshift(_endArr, line.new(addT, open, addT, close + lnGap, xloc.bar_time, extend.both, _lnClr, iLib.lineStyleFromString(_lnStyle), iLib.lineSizeFromString(_lnSize)))
-            if array.size(_startArr) > _daysLim + 1
-                line.delete(array.pop(_startArr))
-                line.delete(array.pop(_endArr))
-        if not _hist and array.size(_startArr) == 1
-            line.set_x1(array.get(_startArr, 0), time)
-            line.set_x2(array.get(_startArr, 0), time)
-            line.set_x1(array.get(_endArr, 0), addT)
-            line.set_x2(array.get(_endArr, 0), addT)
-    true
+    int dur = sessionDuration(actSess.session)
+    int spanAdj = dayofweek(time) != dayofweek(time_close) ? timeSpan("Day") : 0
+    int stTime = timestamp(_tz, year, month, dayofmonth, actSess.openHour, actSess.openMinute) + spanAdj
+    bool inTW = isSession(_sess, _tz)
+    if inTW and stTime > time
+        stTime -= timeSpan("Day")
+    int endTime = stTime + dur
+
+    int retStart = _lastStart
+    bool retEndAdj = _endAdj
+    bool drawn = (not na(_lastStart) and _lastStart == stTime)
+
+    bool doDraw = false
+    if not drawn and isRunTime(_lim, false, false, _now)
+        bool rtReady = (not barstate.isrealtime or timenow >= stTime)
+        if isSessFirstBar(actSess, _tz) and rtReady
+            doDraw := true
+        if not doDraw and inTW and rtReady
+            doDraw := true
+
+    if doDraw
+        int stLn = time
+        int endLn = endTime
+        if shouldSkipWeekends()
+            int wkClose = getWeekClose()
+            int nxOpen = wkClose + timeSpan("Day") * 2
+            if endLn > wkClose and endLn < nxOpen
+                endLn += timeSpan("Day") * 2
+        if array.size(_sArr) == 0 or _hist
+            array.unshift(_sArr, line.new(stLn, open, stLn, close, xloc.bar_time, extend.both, _clr, iLib.lineStyleFromString(_lnStyle), iLib.lineSizeFromString(_lnSize)))
+            array.unshift(_eArr, line.new(endLn, open, endLn, close, xloc.bar_time, extend.both, _clr, iLib.lineStyleFromString(_lnStyle), iLib.lineSizeFromString(_lnSize)))
+            if array.size(_sArr) > _lim + 1
+                line.delete(array.pop(_sArr))
+                line.delete(array.pop(_eArr))
+        if not _hist and array.size(_sArr) == 1
+            line.set_x1(array.get(_sArr, 0), stLn)
+            line.set_x2(array.get(_sArr, 0), stLn)
+            line.set_x1(array.get(_eArr, 0), endLn)
+            line.set_x2(array.get(_eArr, 0), endLn)
+        retStart := stTime
+        retEndAdj := false
+
+    if not retEndAdj and not inTW and drawn and array.size(_eArr) > 0
+        line eLn = array.get(_eArr, 0)
+        int curEndX = line.get_x1(eLn)
+        if curEndX > nz(time_close[1], 0) and curEndX < time
+            line.set_x1(eLn, time)
+            line.set_x2(eLn, time)
+        retEndAdj := true
+
+    [retStart, retEndAdj]
 
 clearSessVLines(line[] _startArr, line[] _endArr) =>
     while array.size(_startArr) > 0
@@ -833,16 +897,21 @@ renderSess(map<string, sessionInputs> _inMap, string _key, sessionData[] _arr, i
     spanAdj = dayofweek(time) != dayofweek(time_close) ? iLib.timeSpan("Day") : 0
     isDaily = sInfo.openHour == sInfo.closeHour and sInfo.openMinute == sInfo.closeMinute
     isFirst = isSessFirstBar(sInfo, tz, spanAdj)
+    bool isNew = isFirst
+    if not isNew and not isDaily and array.size(_arr) > 0
+        sessionData latD = array.get(_arr, 0)
+        if not map.contains(trkMap, latD.sessStartTime)
+            isNew := true
 
     if inInfo.showAll and isRunTime(_daysLim, false, isDaily, _now)
-        if isFirst and array.size(_arr) > 0
+        if isNew and array.size(_arr) > 0
             newD = array.get(_arr, 0)
             newD.sessStartBarTime := time
             if not map.contains(trkMap, newD.sessStartTime)
                 map.put(trkMap, newD.sessStartTime, barTrk.new(bar_index, bar_index, bar_index, newD.highLineStartTime, newD.lowLineStartTime))
-        if isFirst and array.size(_arr) > 1
+        if isNew and array.size(_arr) > 1
             setHist(array.get(_arr, 1), inInfo, isDaily)
-        if isFirst and array.size(_arr) > _daysLim + (isDaily ? 2 : 1)
+        if isNew and array.size(_arr) > _daysLim + (isDaily ? 2 : 1)
             rm = array.pop(_arr)
             clearShapes(rm, true, true, true)
             map.remove(trkMap, rm.sessStartTime)
@@ -1024,11 +1093,14 @@ if barstate.islast
 
 //#region Trade Window V-Lines **************************
 
-if barstate.isconfirmed
-    if i_showTW01 and i_showTwLn01
-        sessVLines(vLnStart01, vLnEnd01, i_tw01, i_daysLim, i_twHist01, i_twLnClr01, i_twLnStyle01, i_twLnSize01, NOW)
-    else
-        clearSessVLines(vLnStart01, vLnEnd01)
+if i_showTW01 and i_showTwLn01
+    [twStTmp, twAdjTmp] = sessVLines(vLnStart01, vLnEnd01, i_tw01, i_daysLim, i_twHist01, i_twLnClr01, i_twLnStyle01, i_twLnSize01, NOW, TZ, twLastStart01, twEndAdj01)
+    twLastStart01 := twStTmp
+    twEndAdj01 := twAdjTmp
+else
+    clearSessVLines(vLnStart01, vLnEnd01)
+    twLastStart01 := na
+    twEndAdj01 := false
 
 // Trade window background
 bgcolor(isSession(i_tw01, TZ) and i_showTW01 and i_showTwBg01 and isRun ? i_twBgClr01 : na)
