@@ -853,7 +853,18 @@ CPL_analyzeTwoCandlePattern(
     CandleSize c2Size = _candle2.size
     
     // Calculate common values for pattern detection
-    bool bodyEngulfs = c2BodyHigh > c1BodyHigh and c2BodyLow < c1BodyLow
+    bool mismatchedDir = c1Dir != c2Dir
+    bool equalBodyLows = isEquivalent(c1BodyLow, c2BodyLow, _equivTolerance)
+    bool equalBodyHighs = isEquivalent(c1BodyHigh, c2BodyHigh, _equivTolerance)
+    
+    // Strict engulf requires both sides to geometrically wrap
+    bool strictEngulfs = c2BodyHigh > c1BodyHigh and c2BodyLow < c1BodyLow
+    
+    // Mismatched direction allows the trailing structural floor/ceiling to be equivalent (accommodates gapless continuous charting)
+    bool tolerantBullishEngulf = mismatchedDir and c2Dir == CandleDirection.Bullish and c2BodyHigh > c1BodyHigh and (c2BodyLow < c1BodyLow or equalBodyLows)
+    bool tolerantBearishEngulf = mismatchedDir and c2Dir == CandleDirection.Bearish and c2BodyLow < c1BodyLow and (c2BodyHigh > c1BodyHigh or equalBodyHighs)
+    
+    bool bodyEngulfs = strictEngulfs or tolerantBullishEngulf or tolerantBearishEngulf
     bool closedInsideRange = c2Close <= c1High and c2Close >= c1Low
     bool notShortCandles = c1Size != CandleSize.Short and c2Size != CandleSize.Short
     
