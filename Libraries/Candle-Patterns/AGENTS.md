@@ -2,10 +2,10 @@
 
 Pine Script v6 library for single, two-candle, and three-candle pattern analysis.
 The library classifies candle size and direction first, then derives higher-level
-patterns from `CandleData` objects. Published as `OneCleverGuy/CandlePatternLibrary/1`.
+patterns from `CandleData` objects. Published as `OneCleverGuy/CandlePatternLibrary/3`.
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/1 as CPL
+import OneCleverGuy/CandlePatternLibrary/3 as CPL
 ```
 
 ---
@@ -91,7 +91,7 @@ CPL
 ### Standard Integration Pattern
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/1 as CPL
+import OneCleverGuy/CandlePatternLibrary/3 as CPL
 
 float avgSize           = 250.0
 float sizeThresholdPct  = 50.0
@@ -156,6 +156,27 @@ and `CPL.ThreeCandlePattern.MorningStar`.
 | `_bodyTolerance` | Absolute tolerance used for "small body" classification |
 | `_positionThreshold` | Integer threshold such as `85` for `85:15` body placement and wick checks |
 | `_minGap` | Minimum absolute gap required for Fair Value Gap detection |
+
+---
+
+## FVG Helper Signatures (Strict)
+
+Use the helper functions with exactly **three float arguments** each:
+
+```pine
+bool bullishFvg = CPL.isBullishFairValueGapPattern(c1High, c3Low, minGap)
+bool bearishFvg = CPL.isBearishFairValueGapPattern(c1Low, c3High, minGap)
+```
+
+Argument order:
+
+| Function | Argument 1 | Argument 2 | Argument 3 |
+|----------|------------|------------|------------|
+| `isBullishFairValueGapPattern` | `_c1High` | `_c3Low` | `_minGap` |
+| `isBearishFairValueGapPattern` | `_c1Low` | `_c3High` | `_minGap` |
+
+Do not pass `CandleData` objects directly into these helpers. Extract the required
+price fields first, or call `analyzeThreeCandlePattern()` which handles this wiring.
 
 ---
 
