@@ -158,6 +158,37 @@ determineCandleDirection(float _open, float _close, float _tolerance) =>
     else if _close < _open - _tolerance
         result := CandleDirection.Bearish
     result
+
+// @function scoreCandleSentiment                 - Scores one candle on [-100 .. +100] via Shape * Power.
+// @param    _open            (float)             - Candle open.
+// @param    _high            (float)             - Candle high.
+// @param    _low             (float)             - Candle low.
+// @param    _close           (float)             - Candle close.
+// @param    _atr             (float)             - ATR yardstick.
+// @param    _atrMult         (float)             - Range/ATR needed for full power.
+// @param    _wickWeight      (float)             - Wick influence on shape [0..1].
+// @returns                   ([float x5])        - [score, shape, power, bodyRatio, wickBias].
+export scoreCandleSentiment(
+  float _open,
+  float _high,
+  float _low,
+  float _close,
+  float _atr,
+  float _atrMult,
+  float _wickWeight
+  ) =>
+    float rng = _high - _low
+    float body = _close - _open
+    float upperWick = _high - math.max(_open, _close)
+    float lowerWick = math.min(_open, _close) - _low
+    bool rngOk = not na(rng) and rng > 0.0
+    float bodyRatio = (rngOk ? body / rng : 0.0)
+    float wickBias = (rngOk ? (lowerWick - upperWick) / rng : 0.0)
+    float shape = bodyRatio + _wickWeight * wickBias
+    bool atrOk = not na(_atr) and _atr > 0.0
+    float power = (atrOk and rngOk ? math.min(rng / (_atrMult * _atr), 1.0) : 0.0)
+    float score = shape * power * 100.0
+    [score, shape, power, bodyRatio, wickBias]
 // #region Pattern Detection Functions ********************
 
 is4PriceDoji(bool _highEquivLow, bool _hasEquivBody) =>

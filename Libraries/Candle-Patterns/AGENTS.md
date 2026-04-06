@@ -2,10 +2,11 @@
 
 Pine Script v6 library for single, two-candle, and three-candle pattern analysis.
 The library classifies candle size and direction first, then derives higher-level
-patterns from `CandleData` objects. Published as `OneCleverGuy/CandlePatternLibrary/3`.
+patterns from `CandleData` objects. It also exports candle sentiment scoring for
+ATR-normalized strength measurements. Published as `OneCleverGuy/CandlePatternLibrary/4`.
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/3 as CPL
+import OneCleverGuy/CandlePatternLibrary/4 as CPL
 ```
 
 ---
@@ -32,6 +33,13 @@ CPL
 |        Detects three-candle structures, abandoned babies, stars,
 |        engulfing sandwich, and fair value gaps.
 |        Candle order must be oldest -> newest.
+|
++-- CANDLE SENTIMENT SCORING
+|   |
+|   +-- scoreCandleSentiment(_open, _high, _low, _close,
+|          _atr, _atrMult, _wickWeight) -> [score, shape, power, bodyRatio, wickBias]
+|        Scores one candle on [-100..+100] as:
+|        (bodyRatio + _wickWeight * wickBias) * min(range / (_atrMult * _atr), 1) * 100.
 |
 +-- TWO-CANDLE HELPERS
 |   |
@@ -91,7 +99,7 @@ CPL
 ### Standard Integration Pattern
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/3 as CPL
+import OneCleverGuy/CandlePatternLibrary/4 as CPL
 
 float avgSize           = 250.0
 float sizeThresholdPct  = 50.0
@@ -117,6 +125,10 @@ CPL.TwoCandleData twoBar = CPL.analyzeTwoCandlePattern(
 
 CPL.ThreeCandleData threeBar = CPL.analyzeThreeCandlePattern(
     candleOldest, candleMiddle, candleNewest, minGap)
+
+[sentScore, sentShape, sentPower, sentBody, sentWick] = CPL.scoreCandleSentiment(
+    open, high, low, close,
+    ta.atr(14), 2.0, 0.5)
 ```
 
 ---
@@ -156,6 +168,9 @@ and `CPL.ThreeCandlePattern.MorningStar`.
 | `_bodyTolerance` | Absolute tolerance used for "small body" classification |
 | `_positionThreshold` | Integer threshold such as `85` for `85:15` body placement and wick checks |
 | `_minGap` | Minimum absolute gap required for Fair Value Gap detection |
+| `_atr` | ATR yardstick for sentiment scoring (must be > 0 to produce non-zero power) |
+| `_atrMult` | Range/ATR target for full sentiment power (`power = 1`) |
+| `_wickWeight` | Wick influence in sentiment shape, from `0` (body-only) to `1` (max wick influence) |
 
 ---
 
@@ -189,6 +204,7 @@ price fields first, or call `analyzeThreeCandlePattern()` which handles this wir
 | Keep tolerances in price units | `_equivTolerance`, `_bodyTolerance`, and `_minGap` are absolute values, not ticks or percentages |
 | Use one consistent threshold set | Recompute all candles in a sequence with the same `_avgSize`, tolerances, and `_positionThreshold` |
 | `positionThreshold` is an integer | Use values like `75`, `80`, `85`, `90`, `95`, not strings like `"85:15"` |
+| Sentiment ATR must be valid | If `_atr` is `na` or `<= 0`, sentiment power returns `0`, so score is `0` |
 | Naming helpers are cosmetic | Pattern logic should compare enums, not returned strings |
 | Neutral candles can collapse to Doji | If no directional pattern matches, `analyzeCandle()` can still end as `Doji` |
 | FVG checks are independent | Three-candle analysis can classify pure bullish/bearish FVGs even when star/soldier/crow patterns do not match |
@@ -207,6 +223,9 @@ Expose these in indicators or strategies that use the library:
 | Body Tolerance | `50.0` |
 | Position Threshold | `85` |
 | Minimum Fair Value Gap | `10.0` |
+| Sentiment ATR Length | `14` |
+| Sentiment ATR Mult | `2.0` |
+| Sentiment Wick Weight | `0.5` |
 
 If using ATR for `_avgSize`, compute that in the script and pass the resulting float
 into `analyzeCandle()`. The library does not compute ATR internally.

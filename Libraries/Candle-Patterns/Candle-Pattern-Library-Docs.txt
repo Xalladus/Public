@@ -5,7 +5,7 @@ A comprehensive and easy-to-use Pine Script™ library for detecting single, two
 [b]Quick Start[/b]
 
 [b]1. Import the Library[/b]
-import OneCleverGuy/CandlePatternLibrary/1 as CPL
+import OneCleverGuy/CandlePatternLibrary/4 as CPL
 
 [b]2. Analyze Candles[/b]
 Use the main analysis functions to detect patterns. You can analyze the current forming candle or confirmed historical candles.
@@ -21,6 +21,10 @@ CandleData candleOldest = CPL.analyzeCandle(open[2], high[2], low[2], close[2], 
 var twoCandleData = CPL.analyzeTwoCandlePattern(candleMiddle, candleNewest, 10, 85)
 var threeCandleData = CPL.analyzeThreeCandlePattern(candleOldest, candleMiddle, candleNewest, 10)
 
+// 3. Optional: Score candle sentiment strength on [-100 .. +100]
+[sentScore, sentShape, sentPower, sentBodyRatio, sentWickBias] =
+    CPL.scoreCandleSentiment(open, high, low, close, ta.atr(14), 2.0, 0.5)
+
 [b]Indicator Inputs[/b]
 
 These inputs are defined in the reference indicator (Candle-Pattern-Indicator.ps) and should be exposed to users of the library so they can control how candles are classified before the analysis functions are called.
@@ -33,6 +37,9 @@ These inputs are defined in the reference indicator (Candle-Pattern-Indicator.ps
 - [b]Body Tolerance[/b] (float, default [b]50[/b], step 0.001): Absolute price tolerance for "small body" checks; passed as `_bodyTolerance` to `analyzeCandle`.
 - [b]Position Threshold[/b] (string option, default [b]"85:15"[/b]; options: 99:1, 98:2, 97:3, 96:4, 95:5, 90:10, 85:15, 80:20, 75:25): Converted to an int for `_positionThreshold` to validate hammer/shooting-star body placement and wick ratios in single and two-candle patterns.
 - [b]Minimum Fair Value Gap[/b] (float, default [b]10[/b], step 0.1): Absolute minimum gap size required between candle 1 and candle 3 when classifying Fair Value Gaps (and combined patterns); passed as `_minGap` to `analyzeThreeCandlePattern`.
+- [b]Sentiment ATR Length[/b] (int, default [b]14[/b]): ATR length used to build `_atr` when calling `scoreCandleSentiment`.
+- [b]Sentiment ATR Mult[/b] (float, default [b]2.0[/b], min 0.1 step 0.1): Passed as `_atrMult` for sentiment power scaling.
+- [b]Sentiment Wick Weight[/b] (float, default [b]0.5[/b], min 0 max 1 step 0.05): Passed as `_wickWeight` to control wick influence in sentiment shape.
 - [b]Enable Debug Logging[/b] (bool, default [b]true[/b]): Writes per-bar analysis details to the Pine Logs and colors/plots shapes for detected patterns; leave off in production scripts to avoid noisy logs.
 
 [b]Enums Reference[/b]
@@ -144,6 +151,22 @@ These are the Enum Types exported by the library. When checking results, use the
     [b]_candle3 (CandleData)[/b]: (CandleData)            - The third (newest) candle data.
     [b]_minGap (float)[/b]: (float)                 - Minimum absolute gap size required for Fair Value Gap detection.
   Returns: (ThreeCandleData)       - ThreeCandleData object containing ThreeCandlePattern.
+
+[b]scoreCandleSentiment(_open, _high, _low, _close, _atr, _atrMult, _wickWeight)[/b]
+  scoreCandleSentiment                 - Scores one candle on a continuous scale from -100 (bearish) to +100 (bullish).
+  Formula: (bodyRatio + _wickWeight * wickBias) * min(range / (_atrMult * _atr), 1) * 100
+  Parameters:
+    [b]_open (float)[/b]: (float)                 - Candle open price.
+    [b]_high (float)[/b]: (float)                 - Candle high price.
+    [b]_low (float)[/b]: (float)                 - Candle low price.
+    [b]_close (float)[/b]: (float)                 - Candle close price.
+    [b]_atr (float)[/b]: (float)                 - ATR yardstick for size normalization.
+    [b]_atrMult (float)[/b]: (float)                 - ATR multiplier required for full power (=1).
+    [b]_wickWeight (float)[/b]: (float)                 - Wick influence weight from 0 to 1.
+  Returns: ([float x5])           - [score, shape, power, bodyRatio, wickBias].
+  Notes:
+    - If candle range is invalid, shape components resolve safely to 0.
+    - If `_atr` is `na` or <= 0, power is 0 and final score is 0.
 
 [b]Naming Utilities[/b]
 
