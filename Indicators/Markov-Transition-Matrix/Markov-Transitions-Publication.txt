@@ -1,0 +1,69 @@
+[b]Markov Transition Matrix[/b]
+
+This indicator classifies higher-timeframe returns into three states and then tracks how often price transitions from one state to the next.
+
+The three states are:
+[list]
+[*][b]Bullish[/b] when the N-bar return is above the selected positive threshold
+[*][b]Bearish[/b] when the N-bar return is below the selected negative threshold
+[*][b]Neutral[/b] when the return stays between those thresholds
+[/list]
+
+The result is a 3x3 transition matrix that answers questions such as:
+[list]
+[*]After a bullish state, how often does the next state stay bullish?
+[*]After a neutral state, how often does the next state turn bearish?
+[*]Which current state has the strongest tendency to persist or reverse?
+[/list]
+
+[b]How It Works[/b]
+[list=1]
+[*]Choose an analysis timeframe.
+[*]Choose a lookback window in candles.
+[*]For each completed bar in that timeframe, the script computes the return from close[lookback] to the current close.
+[*]That return is classified as Bullish, Neutral, or Bearish using the threshold input.
+[*]Each one-step transition from the previous state to the new state is added to the cumulative matrix.
+[/list]
+
+[b]What The Table Shows[/b]
+[list]
+[*]The main value in each cell is the one-step transition probability for that row and column.
+[*]The detail row under each cell shows P^2, P^3, and the raw transition count.
+[*]The summary row shows the latest confirmed state plus the current row probabilities for Bullish, Neutral, and Bearish.
+[*]The bottom bar shows a simple directional bias: P(Bull) - P(Bear).
+[/list]
+
+[quote]
+P^2 and P^3 in this script are powers of the one-step probability. They are not full 2-step or 3-step Markov-chain forecasts produced by matrix multiplication.
+[/quote]
+
+[b]Inputs[/b]
+[list]
+[*][b]Threshold (%)[/b]: Minimum absolute return needed to classify a bar as Bullish or Bearish.
+[*][b]Timeframe[/b]: Higher timeframe used for the transition analysis.
+[*][b]Lookback Window[/b]: Number of candles used to measure each return.
+[*][b]Table Position[/b]: Screen location of the matrix.
+[/list]
+
+[b]How To Read It[/b]
+[list]
+[*]Diagonal cells show persistence. High values there mean a state often repeats.
+[*]Off-diagonal cells show transitions. High values there mean a state often rotates into another one.
+[*]A positive bottom-bar reading means Bullish transitions currently outweigh Bearish transitions from the latest confirmed state.
+[*]A negative bottom-bar reading means Bearish transitions currently outweigh Bullish transitions from the latest confirmed state.
+[/list]
+
+[b]Usage Notes[/b]
+[list]
+[*]The chart timeframe must be less than or equal to the selected analysis timeframe.
+[*]The matrix is cumulative across all available history in the selected timeframe context.
+[*]Changing timeframe, threshold, or lookback recompiles the script and rebuilds the tally from scratch.
+[*]This is a state-transition study. It does not place trades or generate broker orders.
+[/list]
+
+[b]Practical Uses[/b]
+[list]
+[*]Compare persistence vs reversal behavior across different symbols.
+[*]Test whether a market spends more time trending or mean-reverting at a chosen timeframe.
+[*]Check whether a recent state has historically led to bullish continuation, neutral drift, or bearish follow-through.
+[/list]
