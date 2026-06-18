@@ -1,0 +1,1016 @@
+//@version=6
+indicator("Candle POI Direction", overlay = true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
+
+//+-------------------------------------------------------+
+//                        INFORMATION                     |
+//+-------------------------------------------------------+
+// #region Information
+
+// Candle POI Direction — Candle + POI Scoring Layer
+//
+// Renders structural components and scores each against a
+// directional bias using a multi-factor weighted engine:
+//
+//   1. Structure Swings   — public pivot adapter using confirmed swing
+//                          highs/lows. relClass (HH/HL/LH/LL/EH/EL)
+//                          modulates weight. Current leg direction gates
+//                          alignment bonuses.
+//
+//   2. Order Blocks      — last opposing candle before impulse.
+//                          Weighted by alignment with structural
+//                          direction and proximity to leg origin.
+//
+//   3. Fair Value Gaps   — three-candle inefficiencies. Weighted by
+//                          alignment and proximity to leg origin.
+//
+//   4. Candle Patterns   — single, two-candle, and three-candle
+//                          patterns via CPL. Scored per column with
+//                          one user weight per column group.
+//
+// Scores are independent per direction (not zero-sum).
+// Bull and bear percentages are each computed against their own
+// theoretical maximum so both can be high or both can be low.
+//
+// Library prefixes:
+//   DIR → CandlePOIDirectionLibrary  (scoring engine, UDTs, tables)
+//
+// All scoring logic, UDTs, and table rendering live in CandlePOIDirectionLibrary.
+// This file is the orchestration layer: inputs, execution, and drawings.
+
+import OneCleverGuy/CandlePOIDirectionLibrary/1 as DIR
+
+// #endregion Information
+
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
+
+// #region Tooltips ***************************************
+
+string tt_drawExtend    = "Bars each structural drawing projects forward from its origin."
+string tt_atrLen        = "ATR lookback length. Shared by structure confirmation, candle analysis, and grouping."
+string tt_atrEquivMult  = "ATR multiple used as equality tolerance for equal highs/lows and Doji/Marubozu body detection."
+  + " Increase for volatile assets (crypto). Decrease for tight-tick assets (forex)."
+string tt_atrBodyMult   = "ATR multiple used as body-size tolerance for small-body pattern detection (Hammer, SpinningTop)."
+  + " Separate from equality so body detection can be tuned independently."
+string tt_showSwings    = "Draw swing-high and swing-low level lines on the chart."
+string tt_lookBackAhead = "Bars left and right of a candle required for it to qualify as a pivot."
+string tt_useATR        = "Require an ATR-sized pullback before a raw pivot is promoted to confirmed."
+string tt_atrMult       = "Multiplier applied to ATR for pivot confirmation."
+string tt_eqMult        = "Equality tolerance as an ATR multiple. Groups equal highs/lows."
+string tt_swingColors   = "Line colours for swing-high and swing-low levels."
+string tt_swingWidth    = "Line width for swing-level lines."
+string tt_showOBs       = "Draw order-block boxes at each confirmed swing."
+string tt_obColors      = "Fill colours for bullish and bearish order blocks."
+string tt_showFVGs      = "Draw fair-value-gap boxes."
+string tt_fvgMinGap     = "Minimum gap in ATR multiples for an FVG to register. 0 accepts any gap."
+string tt_fvgColors     = "Fill colours for bullish and bearish fair value gaps."
+string tt_fvgMode       = "Even: all leg FVGs weighted equally. Prioritize Base: FVGs closer to the leg origin receive higher weight."
+string tt_wStruct       = "1-10 category weight for market structure (swings) in the final score."
+string tt_wOB           = "1-10 category weight for order blocks in the final score."
+string tt_wFVG          = "1-10 category weight for fair value gaps in the final score."
+string tt_wCan1         = "1-10 category weight for single-candle patterns in the final score."
+string tt_wCan2         = "1-10 category weight for two-candle patterns in the final score."
+string tt_wCan3         = "1-10 category weight for three-candle patterns in the final score."
+string tt_volLen        = "Period for the volume moving average used as a multiplier."
+string tt_volMaxMult    = "Maximum volume multiplier applied to any scored element."
+string tt_volMinMult    = "Minimum volume multiplier. Values below 1 slash low-volume signals."
+string tt_showTable     = "Show the scoring table in the corner."
+string tt_showPatLog    = "Show a table of the last 10 detected candle patterns."
+string tt_debug         = "Enable diagnostic event logging to the Pine Logs console."
+
+// #endregion Tooltips
+
+// #region Shared *****************************************
+
+var string iGroupShared = "Shared"
+i_drawExtend = input.int(8, "Draw Extension (bars)", minval = 1, maxval = 200, group = iGroupShared, tooltip = tt_drawExtend)
+
+// #endregion Shared
+
+// #region ATR ********************************************
+
+var string iGroupATR = "ATR"
+i_atrLen       = input.int(14, "ATR Length", minval = 1, group = iGroupATR, tooltip = tt_atrLen)
+i_atrEquivMult = input.float(0.05, "Equality Mult", minval = 0.001, step = 0.005, group = iGroupATR, tooltip = tt_atrEquivMult)
+i_atrBodyMult  = input.float(0.15, "Body Mult", minval = 0.001, step = 0.005, group = iGroupATR, tooltip = tt_atrBodyMult)
+
+// #endregion ATR
+
+// #region Structure ***************************************
+
+var string iGroupMS = "Structure"
+i_showSwings     = input.bool(true, "Show Swing Lines", group = iGroupMS, tooltip = tt_showSwings)
+i_lookBack       = input.int(3, "Pivot Left / Right", minval = 1, group = iGroupMS, inline = "MSLB", tooltip = tt_lookBackAhead)
+i_lookAhead      = input.int(3, "", minval = 1, group = iGroupMS, inline = "MSLB", display = display.none)
+i_useATR         = input.bool(true, "ATR Confirmation", group = iGroupMS, tooltip = tt_useATR)
+i_atrMult        = input.float(1.5, "Pivot ATR Mult", minval = 0.1, step = 0.1, group = iGroupMS, tooltip = tt_atrMult, active = i_useATR)
+i_eqMult         = input.float(0.25, "Equality Mult", minval = 0.0, step = 0.05, group = iGroupMS, tooltip = tt_eqMult)
+i_swingHighColor = input.color(color.new(#EF5350, 0), "Colours H / L", group = iGroupMS, inline = "MSC", tooltip = tt_swingColors)
+i_swingLowColor  = input.color(color.new(#26A69A, 0), "", group = iGroupMS, inline = "MSC", display = display.none)
+i_swingWidth     = input.int(1, "Line Width", minval = 1, maxval = 4, group = iGroupMS, tooltip = tt_swingWidth)
+
+// #endregion Structure
+
+// #region Order Blocks ***********************************
+
+var string iGroupOB = "Order Blocks"
+i_showOBs     = input.bool(true, "Show Order Blocks", group = iGroupOB, tooltip = tt_showOBs)
+i_obBullColor = input.color(color.new(#26A69A, 82), "Colours Bull / Bear", group = iGroupOB, inline = "OBC", tooltip = tt_obColors)
+i_obBearColor = input.color(color.new(#EF5350, 82), "", group = iGroupOB, inline = "OBC", display = display.none)
+
+// #endregion Order Blocks
+
+// #region Fair Value Gaps ********************************
+
+var string iGroupFVG = "Fair Value Gaps"
+i_showFVGs     = input.bool(true, "Show FVGs", group = iGroupFVG, tooltip = tt_showFVGs)
+i_fvgMinGapMlt = input.float(0.1, "Minimum Gap (ATR×)", minval = 0.0, step = 0.05, group = iGroupFVG, tooltip = tt_fvgMinGap)
+i_fvgBullColor = input.color(color.new(#42A5F5, 82), "Colours Bull / Bear", group = iGroupFVG, inline = "FVGC", tooltip = tt_fvgColors)
+i_fvgBearColor = input.color(color.new(#AB47BC, 82), "", group = iGroupFVG, inline = "FVGC", display = display.none)
+i_fvgMode      = input.enum(DIR.dir_FvgWeightMode.Even, "Leg Weight Mode", group = iGroupFVG, tooltip = tt_fvgMode)
+
+// #endregion Fair Value Gaps
+
+// #region Scoring Weights ********************************
+
+var string iGroupScore = "Scoring Weights"
+i_wStruct = input.int(7, "Structure",    options = [1,2,3,4,5,6,7,8,9,10], group = iGroupScore, tooltip = tt_wStruct)
+i_wOB     = input.int(6, "Order Blocks", options = [1,2,3,4,5,6,7,8,9,10], group = iGroupScore, tooltip = tt_wOB)
+i_wFVG    = input.int(6, "Fair Value Gaps", options = [1,2,3,4,5,6,7,8,9,10], group = iGroupScore, tooltip = tt_wFVG)
+i_wCan1   = input.int(4, "1-Candle Patterns", options = [1,2,3,4,5,6,7,8,9,10], group = iGroupScore, tooltip = tt_wCan1)
+i_wCan2   = input.int(6, "2-Candle Patterns", options = [1,2,3,4,5,6,7,8,9,10], group = iGroupScore, tooltip = tt_wCan2)
+i_wCan3   = input.int(8, "3-Candle Patterns", options = [1,2,3,4,5,6,7,8,9,10], group = iGroupScore, tooltip = tt_wCan3)
+
+// #endregion Scoring Weights
+
+// #region Volume Confluence ******************************
+
+var string iGroupVol = "Volume Confluence"
+i_volLen     = input.int(20, "Volume SMA Length", minval = 1, group = iGroupVol, tooltip = tt_volLen)
+i_volMaxMult = input.float(1.5, "Max Multiplier", step = 0.1, group = iGroupVol, tooltip = tt_volMaxMult)
+i_volMinMult = input.float(0.5, "Min Multiplier", step = 0.1, group = iGroupVol, tooltip = tt_volMinMult)
+
+// #endregion Volume Confluence
+
+// #region Display ****************************************
+
+var string iGroupDisplay = "Display"
+i_showTable  = input.bool(true, "Show Scoring Table", group = iGroupDisplay, tooltip = tt_showTable)
+i_showPatLog = input.bool(true, "Show Pattern Log",   group = iGroupDisplay, tooltip = tt_showPatLog)
+
+// #endregion Display
+
+// #region Debug ******************************************
+
+var string iGroupDebug = "Debug"
+i_debug = input.bool(false, "Enable Debug", group = iGroupDebug, tooltip = tt_debug)
+
+// #endregion Debug
+
+// #endregion Inputs
+
+//+-------------------------------------------------------+
+//                           UDT'S                        |
+//+-------------------------------------------------------+
+// #region UDT's
+
+// Visual record for one swing and its co-located OB.
+type SwingVisual
+    line   swingLine
+    label  swingLabel
+    box    obBox
+    label  obLabel
+    int    pivotIdx
+    bool   isHigh
+    bool   touched
+
+// Visual record for one FVG.
+type FVGVisual
+    box    fvgBox
+    label  fvgLabel
+
+enum PublicEventCode
+    AddConfirmed
+
+type PublicPivot
+    bool             isHigh
+    float            price
+    int              timeUnix
+    DIR.dir_RelClass relClass
+
+type PublicEvent
+    PublicEventCode code
+    int             pivotIndex
+
+// #endregion UDT's
+
+//+-------------------------------------------------------+
+//                          METHODS                       |
+//+-------------------------------------------------------+
+// #region Methods
+
+// (none required)
+
+// #endregion Methods
+
+//+-------------------------------------------------------+
+//                      GLOBAL VARIABLES                  |
+//+-------------------------------------------------------+
+// #region Global Variables
+
+// --- Public structure adapter state ---------------------
+var PublicPivot[]    pivots = array.new<PublicPivot>()
+var DIR.dir_Direction msDir = DIR.dir_Direction.Unknown
+
+// --- OHLC + vol cache keyed by bar time -----------------
+var map<int, float> cacheOpen     = map.new<int, float>()
+var map<int, float> cacheClose    = map.new<int, float>()
+var map<int, float> cacheVolRatio = map.new<int, float>()
+var map<int, int>   cachePrevTime = map.new<int, int>()
+var map<int, int>   cacheNextTime = map.new<int, int>()
+
+// --- Drawing trackers -----------------------------------
+// swingVisuals[i] ↔ swings[i] ↔ obZones[i]   (parallel arrays)
+// fvgVisuals[j]   ↔ fvgZones[j]              (parallel arrays)
+var SwingVisual[]      swingVisuals = array.new<SwingVisual>()
+var FVGVisual[]        fvgVisuals   = array.new<FVGVisual>()
+var DIR.dir_Swing[]    swings       = array.new<DIR.dir_Swing>()
+var DIR.dir_Zone[]     obZones      = array.new<DIR.dir_Zone>()
+var DIR.dir_Zone[]     fvgZones     = array.new<DIR.dir_Zone>()
+
+// --- Per-bar derived ------------------------------------
+int barPeriodMs = timeframe.in_seconds() * 1000
+
+// #endregion Global Variables
+
+//+-------------------------------------------------------+
+//                         FUNCTIONS                      |
+//+-------------------------------------------------------+
+// #region Functions
+
+// #region Cache Lookup ***********************************
+
+// Fetch cached OHLC for a bar time, its predecessor, and its successor.
+lookupBarData(_cOpen, _cClose, _cPrevTime, _cNextTime, _targetTime) =>
+    float pOpen  = map.get(_cOpen,  _targetTime)
+    float pClose = map.get(_cClose, _targetTime)
+    int   pPrevT = map.get(_cPrevTime, _targetTime)
+    bool  hasPrev = not na(pPrevT)
+    float prOpen  = (hasPrev ? map.get(_cOpen,  pPrevT) : float(na))
+    float prClose = (hasPrev ? map.get(_cClose, pPrevT) : float(na))
+    int   pNextT  = map.get(_cNextTime, _targetTime)
+    bool  hasNext = not na(pNextT)
+    float nxOpen  = (hasNext ? map.get(_cOpen,  pNextT) : float(na))
+    float nxClose = (hasNext ? map.get(_cClose, pNextT) : float(na))
+    [pOpen, pClose, prOpen, prClose, pPrevT, nxOpen, nxClose]
+
+// #endregion Cache Lookup
+
+// #region Public Pivot Adapter ***************************
+
+classifyRelClass(_pivots, _isHigh, _price, _tol) =>
+    DIR.dir_RelClass result = DIR.dir_RelClass.XX
+    int sz = array.size(_pivots)
+    if sz > 0
+        for [rev, _] in _pivots
+            int idx = sz - 1 - rev
+            PublicPivot p = array.get(_pivots, idx)
+            if p.isHigh == _isHigh
+                bool isEqual = math.abs(_price - p.price) <= _tol
+                if _isHigh
+                    result := isEqual ? DIR.dir_RelClass.EH : (_price > p.price ? DIR.dir_RelClass.HH : DIR.dir_RelClass.LH)
+                else
+                    result := isEqual ? DIR.dir_RelClass.EL : (_price > p.price ? DIR.dir_RelClass.HL : DIR.dir_RelClass.LL)
+                break
+    result
+
+findNewestPivotIdx(_pivots, _isHigh) =>
+    int result = -1
+    int sz = array.size(_pivots)
+    if sz > 0
+        for [rev, _] in _pivots
+            int idx = sz - 1 - rev
+            PublicPivot p = array.get(_pivots, idx)
+            if p.isHigh == _isHigh
+                result := idx
+                break
+    result
+
+passesAtrConfirmation(_pivots, _isHigh, _price, _useAtr, _atr, _atrMult) =>
+    bool result = true
+    if _useAtr
+        int oppIdx = findNewestPivotIdx(_pivots, not _isHigh)
+        if oppIdx >= 0
+            PublicPivot opp = array.get(_pivots, oppIdx)
+            result := math.abs(_price - opp.price) >= _atr * _atrMult
+    result
+
+directionName(_dir) =>
+    switch _dir
+        DIR.dir_Direction.Rising  => "Rising"
+        DIR.dir_Direction.Falling => "Falling"
+        DIR.dir_Direction.Ranging => "Ranging"
+        => "Unknown"
+
+// #endregion Public Pivot Adapter
+
+// #region Time Helpers ***********************************
+
+computeExtendedTime(_startTime, _barPeriodMs, _bars) =>
+    _startTime + _barPeriodMs * _bars
+
+// #endregion Time Helpers
+
+// #region State Styling **********************************
+
+// --- Swing line -----------------------------------------
+
+swingStateToLineStyle(_state) =>
+    switch _state
+        DIR.dir_SwingState.Swept  => line.style_dashed
+        DIR.dir_SwingState.Broken => line.style_dotted
+        => line.style_solid
+
+swingStateToLineColor(_baseColor, _state) =>
+    switch _state
+        DIR.dir_SwingState.Swept  => color.new(#FF9800, 0)
+        DIR.dir_SwingState.Broken => color.new(#F44336, 40)
+        => _baseColor
+
+swingLineWidth(_baseWidth, _brokeOpposing) =>
+    (_brokeOpposing ? _baseWidth + 1 : _baseWidth)
+
+// --- Swing label ----------------------------------------
+
+swingStateText(_state, _brokeOpposing) =>
+    string sym = switch _state
+        DIR.dir_SwingState.Swept  => "↻"
+        DIR.dir_SwingState.Broken => "✗"
+        => ""
+    string bo  = (_brokeOpposing ? "★" : "")
+    string sep = (sym != "" and bo != "" ? " " : "")
+    sym + sep + bo
+
+swingStateToLabelColor(_state) =>
+    switch _state
+        DIR.dir_SwingState.Swept  => color.new(#FF9800, 0)
+        DIR.dir_SwingState.Broken => color.new(#F44336, 0)
+        => color.white
+
+// --- Zone box -------------------------------------------
+
+zoneStateToBorderStyle(_state) =>
+    switch _state
+        DIR.dir_ZoneState.Swept  => line.style_dashed
+        DIR.dir_ZoneState.Broken => line.style_dotted
+        => line.style_solid
+
+zoneStateToBorderColor(_baseColor, _state) =>
+    switch _state
+        DIR.dir_ZoneState.Tested    => color.white
+        DIR.dir_ZoneState.Respected => color.new(#4CAF50, 0)
+        DIR.dir_ZoneState.Swept     => color.new(#FF9800, 0)
+        DIR.dir_ZoneState.Broken    => color.new(#F44336, 40)
+        => color.new(_baseColor, 0)
+
+zoneStateToBorderWidth(_state, _brokeOpposing) =>
+    int base = (_state == DIR.dir_ZoneState.Tested ? 2 : 1)
+    (_brokeOpposing ? base + 1 : base)
+
+zoneStateToFillColor(_baseFill, _state) =>
+    switch _state
+        DIR.dir_ZoneState.Tested => color.new(_baseFill, 70)
+        DIR.dir_ZoneState.Broken => color.new(_baseFill, 95)
+        => _baseFill
+
+// --- Zone label -----------------------------------------
+
+zoneStateText(_state, _brokeOpposing, _isBullish, _type) =>
+    string arrow = (_isBullish ? "▲" : "▼")
+    string sym   = switch _state
+        DIR.dir_ZoneState.Tested    => "⚡ "
+        DIR.dir_ZoneState.Respected => "✓ "
+        DIR.dir_ZoneState.Swept     => "↻ "
+        DIR.dir_ZoneState.Broken    => "✗ "
+        => ""
+    string bo = (_brokeOpposing ? " ★" : "")
+    sym + arrow + " " + _type + bo
+
+zoneStateTextColor(_state, _baseColor) =>
+    switch _state
+        DIR.dir_ZoneState.Tested    => color.white
+        DIR.dir_ZoneState.Respected => color.new(#4CAF50, 0)
+        DIR.dir_ZoneState.Swept     => color.new(#FF9800, 0)
+        DIR.dir_ZoneState.Broken    => color.new(#F44336, 0)
+        => color.new(_baseColor, 0)
+
+// #endregion State Styling
+
+// #endregion Functions
+
+//+-------------------------------------------------------+
+//                         EXECUTION                      |
+//+-------------------------------------------------------+
+// #region Execution
+
+// #region Bar Cache Update ********************************
+
+float atrValue   = ta.atr(i_atrLen)
+float volSma     = ta.sma(nz(volume, 0.0), i_volLen)
+float volRatioCur = (not na(volSma) and volSma > 0.0
+    ? (nz(volume, 0.0) / volSma)
+    : 1.0)
+
+map.put(cacheOpen,     time, open)
+map.put(cacheClose,    time, close)
+map.put(cacheVolRatio, time, volRatioCur)
+if not na(time[1])
+    map.put(cachePrevTime, time,    time[1])
+    map.put(cacheNextTime, time[1], time)
+
+// #endregion Bar Cache Update
+
+// #region Structure Engine ********************************
+
+PublicEvent[] events = array.new<PublicEvent>()
+float pivotHigh = ta.pivothigh(high, i_lookBack, i_lookAhead)
+float pivotLow  = ta.pivotlow(low, i_lookBack, i_lookAhead)
+float relTol    = atrValue * i_eqMult
+
+if barstate.isconfirmed
+    if not na(pivotHigh) and passesAtrConfirmation(pivots, true, pivotHigh, i_useATR, atrValue, i_atrMult)
+        DIR.dir_RelClass highRelClass = classifyRelClass(pivots, true, pivotHigh, relTol)
+        array.push(pivots, PublicPivot.new(true, pivotHigh, time[i_lookAhead], highRelClass))
+        array.push(events, PublicEvent.new(PublicEventCode.AddConfirmed, array.size(pivots) - 1))
+    if not na(pivotLow) and passesAtrConfirmation(pivots, false, pivotLow, i_useATR, atrValue, i_atrMult)
+        DIR.dir_RelClass lowRelClass = classifyRelClass(pivots, false, pivotLow, relTol)
+        array.push(pivots, PublicPivot.new(false, pivotLow, time[i_lookAhead], lowRelClass))
+        array.push(events, PublicEvent.new(PublicEventCode.AddConfirmed, array.size(pivots) - 1))
+
+// --- Leg window derivation ------------------------------
+// The public adapter tracks two structural pivots: the current high
+// and the current low. The NEWER of the two is the
+// END of the most recently completed leg. The OLDER is the START of
+// that leg. We anchor legStartTime to the OLDER pivot so the entire
+// completed leg plus the now-forming leg remain visible and scorable.
+//
+// Example:
+//   extLow  at T1
+//   extHigh at T2 (newer)  → bullish leg ran T1→T2, bearish forming T2→now
+//   legStartTime = T1      → keep everything from the bullish leg's origin
+//
+// When a new external low forms at T3 (breaking below T1):
+//   extHigh at T2, extLow at T3 (newer)
+//   legStartTime = T2      → prune the old bullish leg, keep T2→now
+
+int extHighIdx = findNewestPivotIdx(pivots, true)
+int extLowIdx  = findNewestPivotIdx(pivots, false)
+
+int  legStartTime = int(na)
+bool legIsBullish = false
+
+int pivCount = array.size(pivots)
+bool hasExtHigh = extHighIdx >= 0 and extHighIdx < pivCount
+bool hasExtLow  = extLowIdx  >= 0 and extLowIdx  < pivCount
+
+if hasExtHigh and hasExtLow
+    PublicPivot extHigh = array.get(pivots, extHighIdx)
+    PublicPivot extLow  = array.get(pivots, extLowIdx)
+    if not na(extHigh) and not na(extLow)
+        // Older pivot = leg origin. Newer pivot determines leg direction.
+        if extLow.timeUnix <= extHigh.timeUnix
+            // Low is older → leg ran low→high → bullish leg completed
+            legStartTime := extLow.timeUnix
+            legIsBullish := true
+        else
+            // High is older → leg ran high→low → bearish leg completed
+            legStartTime := extHigh.timeUnix
+            legIsBullish := false
+    msDir := legIsBullish ? DIR.dir_Direction.Rising : DIR.dir_Direction.Falling
+else if hasExtHigh
+    PublicPivot extHigh = array.get(pivots, extHighIdx)
+    if not na(extHigh)
+        legStartTime := extHigh.timeUnix
+        legIsBullish := false
+        msDir := DIR.dir_Direction.Falling
+else if hasExtLow
+    PublicPivot extLow = array.get(pivots, extLowIdx)
+    if not na(extLow)
+        legStartTime := extLow.timeUnix
+        legIsBullish := true
+        msDir := DIR.dir_Direction.Rising
+
+// FVG minimum gap in price units (ATR-relative)
+float fvgMinGap = atrValue * i_fvgMinGapMlt
+
+// #endregion Structure Engine
+
+// #region Pivot Events ***********************************
+
+if barstate.isconfirmed
+    for ev in events
+        bool isNewPivot = ev.code == PublicEventCode.AddConfirmed
+        if isNewPivot and ev.pivotIndex >= 0
+            PublicPivot p = array.get(pivots, ev.pivotIndex)
+
+            // --- Swing state record ----------------------
+            float vRatio = map.get(cacheVolRatio, p.timeUnix)
+            if na(vRatio)
+                vRatio := 1.0
+            DIR.dir_Swing swingRec = DIR.dir_newSwing(p.relClass, p.isHigh, p.price, p.timeUnix, vRatio)
+            array.push(swings, swingRec)
+
+            // --- Swing line ------------------------------
+            line swingLn = na
+            if i_showSwings
+                int   swingEnd   = computeExtendedTime(p.timeUnix, barPeriodMs, i_drawExtend)
+                color swingColor = (p.isHigh ? i_swingHighColor : i_swingLowColor)
+                swingLn := line.new(
+                    p.timeUnix, p.price,
+                    swingEnd,   p.price,
+                    xloc  = xloc.bar_time,
+                    color = swingColor,
+                    width = i_swingWidth)
+
+            // --- Pivot dot label -------------------------
+            label swingLbl = na
+            if i_showSwings
+                color pivColor = (p.isHigh ? i_swingHighColor : i_swingLowColor)
+                swingLbl := label.new(
+                    p.timeUnix, p.price,
+                    "●",
+                    xloc      = xloc.bar_time,
+                    style     = (p.isHigh ? label.style_label_down : label.style_label_up),
+                    color     = color.new(color.black, 100),
+                    textcolor = pivColor,
+                    size      = size.tiny)
+
+            // --- Order block geometry --------------------
+            [pvOpen, pvClose, prOpen, prClose, prTime, nxOpen, nxClose] = lookupBarData(
+                cacheOpen, cacheClose, cachePrevTime, cacheNextTime, p.timeUnix)
+
+            DIR.dir_OrderBlock ob = (p.isHigh
+                ? DIR.dir_resolveOBHigh(p.price, pvOpen, pvClose, prOpen, prClose, nxOpen, nxClose, prTime)
+                : DIR.dir_resolveOBLow(p.price,  pvOpen, pvClose, prOpen, prClose, nxOpen, nxClose, prTime)
+                )
+
+            // --- OB zone record --------------------------
+            DIR.dir_Zone obZoneRec = na
+            if ob.valid
+                float obRatio = map.get(cacheVolRatio, ob.anchorTime)
+                if na(obRatio)
+                    obRatio := 1.0
+                // OBs start with readyForRetest=false because price is still at the pivot.
+                obZoneRec := DIR.dir_newZone(ob.top, ob.bottom, ob.anchorTime, ob.isBullish, bar_index, false, obRatio)
+            array.push(obZones, obZoneRec)
+
+            // --- OB box + label --------------------------
+            box   obBx  = na
+            label obLbl = na
+            if i_showOBs and ob.valid
+                int   obEnd  = computeExtendedTime(ob.anchorTime, barPeriodMs, i_drawExtend)
+                color obFill = (ob.isBullish ? i_obBullColor : i_obBearColor)
+                obBx := box.new(
+                    ob.anchorTime, ob.top,
+                    obEnd, ob.bottom,
+                    xloc         = xloc.bar_time,
+                    border_color = color.new(obFill, 0),
+                    bgcolor      = obFill)
+                float obMid = (ob.top + ob.bottom) / 2.0
+                obLbl := label.new(
+                    obEnd, obMid,
+                    zoneStateText(DIR.dir_ZoneState.New, false, ob.isBullish, "OB"),
+                    xloc      = xloc.bar_time,
+                    style     = label.style_label_right,
+                    color     = color.new(color.black, 100),
+                    textcolor = color.new(obFill, 0),
+                    size      = size.small)
+
+            // --- Push to parallel visual array -----------
+            array.push(swingVisuals, SwingVisual.new(swingLn, swingLbl, obBx, obLbl, ev.pivotIndex, p.isHigh, false))
+
+// #endregion Pivot Events
+
+// #region Swing Tick *************************************
+// Continuously monitor non-Broken swings for a close through the level.
+// This catches breaks and sweeps after a pivot has been confirmed.
+
+for [i, sv] in swingVisuals
+    DIR.dir_Swing s = array.get(swings, i)
+    if (not na(s)) and s.swingState != DIR.dir_SwingState.Broken
+        bool closedThrough = (s.isHigh ? close > s.price : close < s.price)
+        bool wickedThrough = (s.isHigh ? high > s.price : low < s.price)
+        bool isSweep      = wickedThrough and not closedThrough
+        if wickedThrough and (not sv.touched) and (not na(sv.swingLine))
+            line.set_x2(sv.swingLine, time)
+            sv.touched := true
+        if closedThrough or isSweep
+            DIR.dir_applySwingEvent(s, closedThrough, isSweep)
+            if not na(sv.swingLine)
+                color baseCol = (s.isHigh ? i_swingHighColor : i_swingLowColor)
+                line.set_style(sv.swingLine, swingStateToLineStyle(s.swingState))
+                line.set_color(sv.swingLine, swingStateToLineColor(baseCol, s.swingState))
+                line.set_width(sv.swingLine, swingLineWidth(i_swingWidth, s.brokeOpposing))
+            if i_showSwings
+                string swTxt = swingStateText(s.swingState, s.brokeOpposing)
+                color  swCol = swingStateToLabelColor(s.swingState)
+                if swTxt != ""
+                    if na(sv.swingLabel)
+                        sv.swingLabel := label.new(
+                            s.anchorTime, s.price,
+                            swTxt,
+                            xloc      = xloc.bar_time,
+                            style     = (s.isHigh ? label.style_label_down : label.style_label_up),
+                            color     = color.new(color.black, 100),
+                            textcolor = swCol,
+                            size      = size.tiny)
+                    else
+                        label.set_text(sv.swingLabel, swTxt)
+                        label.set_textcolor(sv.swingLabel, swCol)
+            if closedThrough
+                int crSwIdx = DIR.dir_findCreditSwingIdx(swings, s.isHigh)
+                if crSwIdx >= 0
+                    SwingVisual   crSv = array.get(swingVisuals, crSwIdx)
+                    DIR.dir_Swing crS  = array.get(swings, crSwIdx)
+                    crS.brokeOpposing := true
+                    if not na(crSv.swingLine)
+                        line.set_width(crSv.swingLine, swingLineWidth(i_swingWidth, true))
+                    if i_showSwings
+                        string crTxt = swingStateText(crS.swingState, true)
+                        color  crCol = swingStateToLabelColor(crS.swingState)
+                        if crTxt != ""
+                            if na(crSv.swingLabel)
+                                crSv.swingLabel := label.new(
+                                    crS.anchorTime, crS.price, crTxt,
+                                    xloc      = xloc.bar_time,
+                                    style     = (crS.isHigh ? label.style_label_down : label.style_label_up),
+                                    color     = color.new(color.black, 100),
+                                    textcolor = crCol,
+                                    size      = size.tiny)
+                            else
+                                label.set_text(crSv.swingLabel, crTxt)
+                                label.set_textcolor(crSv.swingLabel, crCol)
+
+                int crObIdx = DIR.dir_findCreditZoneIdx(obZones, s.isHigh)
+                if crObIdx >= 0
+                    SwingVisual crObSv = array.get(swingVisuals, crObIdx)
+                    DIR.dir_Zone crObZ = array.get(obZones, crObIdx)
+                    crObZ.brokeOpposing := true
+                    if not na(crObSv.obBox)
+                        color obBase = (crObZ.isBullish ? i_obBullColor : i_obBearColor)
+                        box.set_border_width(crObSv.obBox, zoneStateToBorderWidth(crObZ.zoneState, true))
+                        if not na(crObSv.obLabel)
+                            label.set_text(crObSv.obLabel, zoneStateText(crObZ.zoneState, true, crObZ.isBullish, "OB"))
+                            label.set_textcolor(crObSv.obLabel, zoneStateTextColor(crObZ.zoneState, obBase))
+
+                int crFvgIdx = DIR.dir_findCreditZoneIdx(fvgZones, s.isHigh)
+                if crFvgIdx >= 0
+                    FVGVisual crFv = array.get(fvgVisuals, crFvgIdx)
+                    DIR.dir_Zone crFvgZ = array.get(fvgZones, crFvgIdx)
+                    crFvgZ.brokeOpposing := true
+                    if not na(crFv.fvgBox)
+                        color fvgBase = (crFvgZ.isBullish ? i_fvgBullColor : i_fvgBearColor)
+                        box.set_border_width(crFv.fvgBox, zoneStateToBorderWidth(crFvgZ.zoneState, true))
+                        if not na(crFv.fvgLabel)
+                            label.set_text(crFv.fvgLabel, zoneStateText(crFvgZ.zoneState, true, crFvgZ.isBullish, "FVG"))
+                            label.set_textcolor(crFv.fvgLabel, zoneStateTextColor(crFvgZ.zoneState, fvgBase))
+
+// #endregion Swing Tick
+
+// #region Zone Tick **************************************
+
+// OB zones
+if i_showOBs
+    for [i, sv] in swingVisuals
+        DIR.dir_Zone z = array.get(obZones, i)
+        if (not na(z)) and (not na(sv.obBox))
+            bool wasBroken = z.zoneState == DIR.dir_ZoneState.Broken
+            DIR.dir_tickZone(z, high, low, close, bar_index)
+            color baseFill = (z.isBullish ? i_obBullColor : i_obBearColor)
+            box.set_border_style(sv.obBox, zoneStateToBorderStyle(z.zoneState))
+            box.set_border_color(sv.obBox, zoneStateToBorderColor(baseFill, z.zoneState))
+            box.set_border_width(sv.obBox, zoneStateToBorderWidth(z.zoneState, z.brokeOpposing))
+            box.set_bgcolor(sv.obBox, zoneStateToFillColor(baseFill, z.zoneState))
+            if not na(sv.obLabel)
+                label.set_text(sv.obLabel,
+                    zoneStateText(z.zoneState, z.brokeOpposing, z.isBullish, "OB"))
+                label.set_textcolor(sv.obLabel,
+                    zoneStateTextColor(z.zoneState, baseFill))
+            if (not wasBroken) and z.zoneState == DIR.dir_ZoneState.Broken
+                box.set_right(sv.obBox, time)
+                if not na(sv.obLabel)
+                    label.set_x(sv.obLabel, time)
+
+// FVG zones
+if i_showFVGs
+    for [i, fv] in fvgVisuals
+        DIR.dir_Zone z = array.get(fvgZones, i)
+        if (not na(z)) and (not na(fv.fvgBox))
+            bool wasBroken = z.zoneState == DIR.dir_ZoneState.Broken
+            DIR.dir_tickZone(z, high, low, close, bar_index)
+            color baseFill = (z.isBullish ? i_fvgBullColor : i_fvgBearColor)
+            box.set_border_style(fv.fvgBox, zoneStateToBorderStyle(z.zoneState))
+            box.set_border_color(fv.fvgBox, zoneStateToBorderColor(baseFill, z.zoneState))
+            box.set_border_width(fv.fvgBox, zoneStateToBorderWidth(z.zoneState, z.brokeOpposing))
+            box.set_bgcolor(fv.fvgBox, zoneStateToFillColor(baseFill, z.zoneState))
+            if not na(fv.fvgLabel)
+                label.set_text(fv.fvgLabel,
+                    zoneStateText(z.zoneState, z.brokeOpposing, z.isBullish, "FVG"))
+                label.set_textcolor(fv.fvgLabel,
+                    zoneStateTextColor(z.zoneState, baseFill))
+            if (not wasBroken) and z.zoneState == DIR.dir_ZoneState.Broken
+                box.set_right(fv.fvgBox, time)
+                if not na(fv.fvgLabel)
+                    label.set_x(fv.fvgLabel, time)
+
+// #endregion Zone Tick
+
+// #region Extend Active POIs *****************************
+// Pull the most recent UNBROKEN point-of-interest of each kind forward
+// so its right edge tracks the current bar plus the draw extension.
+// This keeps the most actionable levels visually prominent while older
+// POIs stay fixed and broken zones clamp to their break candle.
+
+int activeEndTime = computeExtendedTime(time, barPeriodMs, i_drawExtend)
+
+// --- Swings (one high, one low) -------------------------
+int svSz = array.size(swingVisuals)
+if svSz > 0
+    bool foundHigh = false
+    bool foundLow  = false
+    for [rev, _] in swingVisuals
+        int idx = svSz - 1 - rev
+        SwingVisual   sv = array.get(swingVisuals, idx)
+        DIR.dir_Swing s  = array.get(swings, idx)
+        if na(s) or na(sv.swingLine)
+            continue
+        if s.swingState == DIR.dir_SwingState.Broken
+            continue
+        if s.isHigh and not foundHigh
+            line.set_x2(sv.swingLine, activeEndTime)
+            foundHigh := true
+        else if (not s.isHigh) and not foundLow
+            line.set_x2(sv.swingLine, activeEndTime)
+            foundLow := true
+        if foundHigh and foundLow
+            break
+
+// --- Order Blocks (one bullish, one bearish) ------------
+if svSz > 0
+    bool foundBullOB = false
+    bool foundBearOB = false
+    for [rev, _] in swingVisuals
+        int idx = svSz - 1 - rev
+        SwingVisual  sv = array.get(swingVisuals, idx)
+        DIR.dir_Zone z  = array.get(obZones, idx)
+        if na(z) or na(sv.obBox)
+            continue
+        if z.zoneState == DIR.dir_ZoneState.Broken
+            continue
+        if z.isBullish and not foundBullOB
+            box.set_right(sv.obBox, activeEndTime)
+            if not na(sv.obLabel)
+                label.set_x(sv.obLabel, activeEndTime)
+            foundBullOB := true
+        else if (not z.isBullish) and not foundBearOB
+            box.set_right(sv.obBox, activeEndTime)
+            if not na(sv.obLabel)
+                label.set_x(sv.obLabel, activeEndTime)
+            foundBearOB := true
+        if foundBullOB and foundBearOB
+            break
+
+// --- FVGs (one bullish, one bearish) --------------------
+int fvSz = array.size(fvgVisuals)
+if fvSz > 0
+    bool foundBullFvg = false
+    bool foundBearFvg = false
+    for [rev, _] in fvgVisuals
+        int idx = fvSz - 1 - rev
+        FVGVisual    fv = array.get(fvgVisuals, idx)
+        DIR.dir_Zone z  = array.get(fvgZones, idx)
+        if na(z) or na(fv.fvgBox)
+            continue
+        if z.zoneState == DIR.dir_ZoneState.Broken
+            continue
+        if z.isBullish and not foundBullFvg
+            box.set_right(fv.fvgBox, activeEndTime)
+            if not na(fv.fvgLabel)
+                label.set_x(fv.fvgLabel, activeEndTime)
+            foundBullFvg := true
+        else if (not z.isBullish) and not foundBearFvg
+            box.set_right(fv.fvgBox, activeEndTime)
+            if not na(fv.fvgLabel)
+                label.set_x(fv.fvgLabel, activeEndTime)
+            foundBearFvg := true
+        if foundBullFvg and foundBearFvg
+            break
+
+// #endregion Extend Active POIs
+
+// #region FVG Scan ***************************************
+
+if barstate.isconfirmed and bar_index >= 2
+    DIR.dir_FairValueGap fvg = DIR.dir_detectFVG(
+        high[2], low[2],
+        high,    low,
+        fvgMinGap,
+        time[2])
+
+    if fvg.valid
+        float fvgRatio = map.get(cacheVolRatio, fvg.anchorTime)
+        if na(fvgRatio)
+            fvgRatio := 1.0
+        // FVGs start readyForRetest=true because they form at a gap — price has already
+        // moved away from candle 1 by definition.
+        DIR.dir_Zone fvgZoneRec = DIR.dir_newZone(
+            fvg.top, fvg.bottom, fvg.anchorTime, fvg.isBullish, bar_index, true, fvgRatio)
+        array.push(fvgZones, fvgZoneRec)
+
+        box   fvgBx  = na
+        label fvgLbl = na
+        if i_showFVGs
+            int   fvgEnd  = computeExtendedTime(fvg.anchorTime, barPeriodMs, i_drawExtend)
+            color fvgFill = (fvg.isBullish ? i_fvgBullColor : i_fvgBearColor)
+            fvgBx := box.new(
+                fvg.anchorTime, fvg.top,
+                fvgEnd, fvg.bottom,
+                xloc         = xloc.bar_time,
+                border_color = color.new(fvgFill, 0),
+                bgcolor      = fvgFill)
+            float fvgMid = (fvg.top + fvg.bottom) / 2.0
+            fvgLbl := label.new(
+                fvgEnd, fvgMid,
+                zoneStateText(DIR.dir_ZoneState.New, false, fvg.isBullish, "FVG"),
+                xloc      = xloc.bar_time,
+                style     = label.style_label_right,
+                color     = color.new(color.black, 100),
+                textcolor = color.new(fvgFill, 0),
+                size      = size.small)
+
+        array.push(fvgVisuals, FVGVisual.new(fvgBx, fvgLbl))
+
+// #endregion FVG Scan
+
+// #region Leg Transition Pruning *************************
+// When a new leg begins (legStartTime has advanced past previously drawn elements),
+// remove drawings that belong entirely to the previous leg.
+// "Entirely previous" = the element's anchorTime is strictly before the current legStartTime.
+// Swings, OBs, and FVGs are all pruned together to keep the parallel arrays in sync.
+
+if not na(legStartTime) and barstate.isconfirmed
+    // --- Prune swing/OB parallel arrays ---
+    bool anySwingPruned = true
+    while anySwingPruned and array.size(swingVisuals) > 0
+        anySwingPruned := false
+        SwingVisual   firstSv = array.get(swingVisuals, 0)
+        DIR.dir_Swing firstS  = array.get(swings, 0)
+        if not na(firstS) and firstS.anchorTime < legStartTime
+            // Delete drawings
+            if not na(firstSv.swingLine)
+                line.delete(firstSv.swingLine)
+            if not na(firstSv.swingLabel)
+                label.delete(firstSv.swingLabel)
+            if not na(firstSv.obBox)
+                box.delete(firstSv.obBox)
+            if not na(firstSv.obLabel)
+                label.delete(firstSv.obLabel)
+            array.shift(swingVisuals)
+            array.shift(swings)
+            array.shift(obZones)
+            anySwingPruned := true
+
+    // --- Prune FVG parallel arrays ---
+    bool anyFvgPruned = true
+    while anyFvgPruned and array.size(fvgVisuals) > 0
+        anyFvgPruned := false
+        FVGVisual    firstFv = array.get(fvgVisuals, 0)
+        DIR.dir_Zone firstFz = array.get(fvgZones, 0)
+        if not na(firstFz) and firstFz.anchorTime < legStartTime
+            if not na(firstFv.fvgBox)
+                box.delete(firstFv.fvgBox)
+            if not na(firstFv.fvgLabel)
+                label.delete(firstFv.fvgLabel)
+            array.shift(fvgVisuals)
+            array.shift(fvgZones)
+            anyFvgPruned := true
+
+// #endregion Leg Transition Pruning
+
+// #endregion Execution
+
+//+-------------------------------------------------------+
+//                           DEBUG                        |
+//+-------------------------------------------------------+
+// #region Debug
+
+// #region Debug Log **************************************
+
+if i_debug and barstate.isconfirmed
+    log.info("Candle POI Direction | pivots={0}, swings={1}, obs={2}, fvgs={3}, dir={4}",
+        array.size(pivots), array.size(swings), array.size(obZones), array.size(fvgZones), directionName(msDir))
+
+// #endregion Debug Log
+
+// #region Scoring Engine *********************************
+
+// Scores only update on confirmed (closed) bars — the live open candle
+// is intentionally excluded so backtests and live readings agree exactly.
+var DIR.CandleScores cs  = na
+var float bullStNrm  = 0.0
+var float bearStNrm  = 0.0
+var float bullObNrm  = 0.0
+var float bearObNrm  = 0.0
+var float bullFvgNrm = 0.0
+var float bearFvgNrm = 0.0
+var float bullTotal  = 0.0
+var float bearTotal  = 0.0
+
+if barstate.isconfirmed
+    cs := DIR.computeCandleScores(atrValue, i_atrEquivMult, i_atrBodyMult)
+
+    float volMultCur = DIR.volClamp(volRatioCur, i_volMinMult, i_volMaxMult)
+
+    // --- Structure --------------------------------------
+    [bullStRaw, bearStRaw] = DIR.computeStructureScore(swings, legStartTime, msDir, i_volMinMult, i_volMaxMult)
+    float stMax  = DIR.structureMaxRaw(swings, legStartTime, i_volMaxMult)
+    bullStNrm := DIR.normalizeScore(bullStRaw, stMax)
+    bearStNrm := DIR.normalizeScore(bearStRaw, stMax)
+
+    // --- Order Blocks -----------------------------------
+    [bullObRaw, bearObRaw] = DIR.computeZoneScore(obZones, legStartTime, msDir, i_fvgMode, i_volMinMult, i_volMaxMult)
+    float obMax  = DIR.zoneMaxRaw(obZones, legStartTime, i_fvgMode, i_volMaxMult)
+    bullObNrm := DIR.normalizeScore(bullObRaw, obMax)
+    bearObNrm := DIR.normalizeScore(bearObRaw, obMax)
+
+    // --- Fair Value Gaps --------------------------------
+    [bullFvgRaw, bearFvgRaw] = DIR.computeZoneScore(fvgZones, legStartTime, msDir, i_fvgMode, i_volMinMult, i_volMaxMult)
+    float fvgMax  = DIR.zoneMaxRaw(fvgZones, legStartTime, i_fvgMode, i_volMaxMult)
+    bullFvgNrm := DIR.normalizeScore(bullFvgRaw, fvgMax)
+    bearFvgNrm := DIR.normalizeScore(bearFvgRaw, fvgMax)
+
+    // --- Candle columns (apply vol, clamp to [0,1]) -----
+    float bullC1Nrm = math.min(cs.bull1 * volMultCur, 1.0)
+    float bearC1Nrm = math.min(cs.bear1 * volMultCur, 1.0)
+    float bullC2Nrm = math.min(cs.bull2 * volMultCur, 1.0)
+    float bearC2Nrm = math.min(cs.bear2 * volMultCur, 1.0)
+    float bullC3Nrm = math.min(cs.bull3 * volMultCur, 1.0)
+    float bearC3Nrm = math.min(cs.bear3 * volMultCur, 1.0)
+
+    // --- Independent totals -----------------------------
+    // Each normalized category score is in [0,1]. Weight by its user-chosen
+    // category weight, then divide by the sum of weights so the result is a
+    // proper weighted average in [0,1]. Multiply by 100 for display.
+    // Final value is capped at 99 — a perfect score is treated as asymptotic.
+    float wSum = float(i_wStruct + i_wOB + i_wFVG + i_wCan1 + i_wCan2 + i_wCan3)
+
+    float bullWeighted = (
+        bullStNrm  * float(i_wStruct) +
+        bullObNrm  * float(i_wOB) +
+        bullFvgNrm * float(i_wFVG) +
+        bullC1Nrm  * float(i_wCan1) +
+        bullC2Nrm  * float(i_wCan2) +
+        bullC3Nrm  * float(i_wCan3))
+
+    float bearWeighted = (
+        bearStNrm  * float(i_wStruct) +
+        bearObNrm  * float(i_wOB) +
+        bearFvgNrm * float(i_wFVG) +
+        bearC1Nrm  * float(i_wCan1) +
+        bearC2Nrm  * float(i_wCan2) +
+        bearC3Nrm  * float(i_wCan3))
+
+    bullTotal := (wSum > 0.0 ? math.min(bullWeighted / wSum * 100.0, 99.0) : 0.0)
+    bearTotal := (wSum > 0.0 ? math.min(bearWeighted / wSum * 100.0, 99.0) : 0.0)
+
+// #endregion Scoring Engine
+
+// #region Scoring Table **********************************
+
+// Table highlighting should follow the currently derived leg, not the raw
+// external-direction state. `msDir` still drives score alignment logic above.
+DIR.dir_Direction tableDir = (not na(legStartTime)
+    ? (legIsBullish ? DIR.dir_Direction.Rising : DIR.dir_Direction.Falling)
+    : msDir)
+
+if i_showTable
+    DIR.dir_drawScoreTable(
+        bullStNrm,  bearStNrm,
+        bullObNrm,  bearObNrm,
+        bullFvgNrm, bearFvgNrm,
+        cs,
+        bullTotal,  bearTotal,
+        tableDir)
+
+// #endregion Scoring Table
+
+// #region Legend Table ***********************************
+
+if i_showPatLog
+    DIR.dir_drawLegendTable(i_wCan1, i_wCan2, i_wCan3)
+
+// #endregion Legend Table
+
+// #endregion Debug

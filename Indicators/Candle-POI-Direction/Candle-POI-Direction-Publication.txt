@@ -1,0 +1,56 @@
+[b]Candle POI Direction[/b]
+
+Candle POI Direction is a public Pine Script v6 indicator that scores bullish and bearish directional pressure using structure swings, order blocks, fair value gaps, candle patterns, and volume confluence.
+
+Bullish and bearish values are scored independently. This means both sides can be strong, weak, or mixed at the same time; the table is a directional pressure readout, not a zero-sum oscillator.
+
+[b]What It Does[/b]
+[list]
+[*]Detects public swing highs and lows with confirmed pivots.
+[*]Classifies relative swing context as HH, HL, LH, LL, EH, or EL.
+[*]Builds order block zones from confirmed pivots.
+[*]Detects fair value gaps from 3-candle windows.
+[*]Tracks whether swings and zones are new, swept, respected, or broken.
+[*]Scores structure, OBs, FVGs, and 1-, 2-, and 3-candle patterns.
+[*]Applies optional volume confluence and user-selected category weights.
+[*]Renders optional score and pattern legend tables.
+[/list]
+
+[b]Inputs[/b]
+[list]
+[*]Structure: pivot length, ATR confirmation, equality tolerance, swing visibility, and swing styling.
+[*]Order Blocks: visibility and bullish/bearish colors.
+[*]Fair Value Gaps: visibility, minimum ATR gap, colors, and leg weighting mode.
+[*]Scoring Weights: independent weights for structure, OBs, FVGs, and candle pattern groups.
+[*]Volume Confluence: volume SMA length plus minimum and maximum volume multipliers.
+[*]Display: scoring table and pattern legend toggles.
+[/list]
+
+[b]How To Read It[/b]
+[list]
+[*]Structure scores reflect active swing context in the current structural leg.
+[*]OB scores reflect active order block zones and their lifecycle state.
+[*]FVG scores reflect active fair value gaps and their position inside the leg.
+[*]Candle columns reflect current single-, two-, and three-candle pattern conviction.
+[*]The final Bull and Bear totals are weighted averages capped below 100.
+[/list]
+
+[b]Public-Safe Design[/b]
+
+This indicator imports only the public Candle POI Direction Library:
+
+[pine]
+import OneCleverGuy/CandlePOIDirectionLibrary/1 as DIR
+[/pine]
+
+The structure adapter is local to the indicator and uses confirmed pivots from ta.pivothigh() and ta.pivotlow(). No private market-structure library is required.
+
+[b]Notes[/b]
+[list]
+[*]Pivots confirm after the configured right-side lookahead, so new swing levels appear only after confirmation.
+[*]Drawings use bar-time coordinates and extend forward by the selected draw-extension value.
+[*]Order blocks start inactive for retests until price has moved away from the zone.
+[*]Fair value gaps start ready for retest because the gap itself implies departure.
+[*]Scores update on confirmed bars so live and historical readings remain consistent.
+[*]This script is analytical only. It does not place trades or send broker orders.
+[/list]

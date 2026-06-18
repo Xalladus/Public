@@ -1,0 +1,119 @@
+[b]Candle POI Direction Library[/b]
+
+A public Pine Script v6 direction-scoring library for combining structure swings, order blocks, fair value gaps, and candle-pattern conviction into normalized bullish and bearish scores.
+
+The library owns public UDTs, swing and zone lifecycle state machines, raw scoring helpers, normalization helpers, and optional score/legend tables. Host indicators own inputs, pivot detection, drawings, array pruning, alerts, and final weighting.
+
+[b]Imports[/b]
+[pine]
+import OneCleverGuy/CandlePOIDirectionLibrary/1 as DIR
+import OneCleverGuy/CandlePatternLibrary/3 as CPL
+[/pine]
+
+Candle POI Direction Library imports CandlePatternLibrary only. It does not depend on private market-structure libraries. Consumers can use any public or custom structure source as long as they translate that source into DIR.dir_RelClass and DIR.dir_Direction.
+
+[b]What The Library Provides[/b]
+[list]
+[*]UDTs for swings, zones, order blocks, fair value gaps, and candle score bundles.
+[*]Swing states: New, Swept, Broken.
+[*]Zone states: New, Tested, Respected, Swept, Broken.
+[*]Order block and fair value gap geometry helpers.
+[*]Structure, zone, candle-pattern, volume, proximity, and direction-alignment scoring helpers.
+[*]Normalization helpers for converting raw category scores into 0-1 values.
+[*]Optional score and pattern legend tables.
+[/list]
+
+[b]Basic State Setup[/b]
+[pine]
+var DIR.dir_Swing[] swings = array.new<DIR.dir_Swing>()
+var DIR.dir_Zone[] orderBlocks = array.new<DIR.dir_Zone>()
+var DIR.dir_Zone[] fvgs = array.new<DIR.dir_Zone>()
+[/pine]
+
+[b]Create Records[/b]
+[pine]
+DIR.dir_RelClass relClass = DIR.dir_RelClass.HH
+DIR.dir_Swing swing = DIR.dir_newSwing(relClass, isHigh, pivotPrice, pivotTime, volRatio)
+array.push(swings, swing)
+
+DIR.dir_OrderBlock obRaw = isHigh
+    ? DIR.dir_resolveOBHigh(pivotHigh, pivotOpen, pivotClose, prevOpen, prevClose, nextOpen, nextClose, prevTime)
+    : DIR.dir_resolveOBLow(pivotLow, pivotOpen, pivotClose, prevOpen, prevClose, nextOpen, nextClose, prevTime)
+
+if obRaw.valid
+    array.push(orderBlocks,
+        DIR.dir_newZone(obRaw.top, obRaw.bottom, obRaw.anchorTime, obRaw.isBullish, bar_index, false, volRatio))
+
+DIR.dir_FairValueGap fvgRaw = DIR.dir_detectFVG(high[2], low[2], high, low, minGap, time[2])
+if fvgRaw.valid
+    array.push(fvgs,
+        DIR.dir_newZone(fvgRaw.top, fvgRaw.bottom, fvgRaw.anchorTime, fvgRaw.isBullish, bar_index, true, volRatio))
+[/pine]
+
+[b]Update State[/b]
+[pine]
+for [i, z] in orderBlocks
+    z := DIR.dir_tickZone(z, high, low, close, bar_index)
+    array.set(orderBlocks, i, z)
+[/pine]
+
+Use DIR.dir_applySwingEvent(...) the same way for swing records when a sweep or close-through break occurs.
+
+[b]Compute Scores[/b]
+[pine]
+DIR.CandleScores cs = DIR.computeCandleScores(atrValue, equivAtrMult, bodyAtrMult)
+
+[bullStructRaw, bearStructRaw] =
+    DIR.computeStructureScore(swings, legStartTime, dir, volMinMult, volMaxMult)
+
+[bullObRaw, bearObRaw] =
+    DIR.computeZoneScore(orderBlocks, legStartTime, dir, DIR.dir_FvgWeightMode.Even, volMinMult, volMaxMult)
+
+[bullFvgRaw, bearFvgRaw] =
+    DIR.computeZoneScore(fvgs, legStartTime, dir, fvgMode, volMinMult, volMaxMult)
+
+float structMax = DIR.structureMaxRaw(swings, legStartTime, volMaxMult)
+float obMax = DIR.zoneMaxRaw(orderBlocks, legStartTime, DIR.dir_FvgWeightMode.Even, volMaxMult)
+float fvgMax = DIR.zoneMaxRaw(fvgs, legStartTime, fvgMode, volMaxMult)
+
+float bullStructNrm = DIR.normalizeScore(bullStructRaw, structMax)
+float bearStructNrm = DIR.normalizeScore(bearStructRaw, structMax)
+float bullObNrm = DIR.normalizeScore(bullObRaw, obMax)
+float bearObNrm = DIR.normalizeScore(bearObRaw, obMax)
+float bullFvgNrm = DIR.normalizeScore(bullFvgRaw, fvgMax)
+float bearFvgNrm = DIR.normalizeScore(bearFvgRaw, fvgMax)
+[/pine]
+
+[b]Main Public Functions[/b]
+[list]
+[*]DIR.dir_resolveOBLow(...) and DIR.dir_resolveOBHigh(...): resolve raw order block geometry from a confirmed pivot.
+[*]DIR.dir_detectFVG(...): detects bullish or bearish fair value gaps from a 3-candle window.
+[*]DIR.dir_newSwing(...) and DIR.dir_applySwingEvent(...): create and update swing lifecycle records.
+[*]DIR.dir_newZone(...) and DIR.dir_tickZone(...): create and update OB/FVG lifecycle records.
+[*]DIR.dir_singlePatternMeta(...), DIR.dir_twoPatternMeta(...), and DIR.dir_threePatternMeta(...): return candle pattern names, abbreviations, display weights, and bull/bear weights together.
+[*]DIR.computeCandleScores(...): scores current single-, two-, and three-candle patterns.
+[*]DIR.computeStructureScore(...): returns raw bullish and bearish structure scores.
+[*]DIR.computeZoneScore(...): returns raw bullish and bearish OB or FVG scores.
+[*]DIR.normalizeScore(...): converts raw scores to 0-1 normalized values.
+[*]DIR.dir_drawScoreTable(...) and DIR.dir_drawLegendTable(...): optional table renderers.
+[/list]
+
+[b]Behavior Notes[/b]
+[list]
+[*]Broken swings credit the opposite direction in structure scoring.
+[*]Broken zones credit the opposite direction in zone scoring.
+[*]Tested zones score the same as New zones.
+[*]Respected is the strongest non-terminal zone state.
+[*]Swept means price wicked beyond the far side of the zone but closed back through the near side.
+[*]readyForRetest prevents a brand-new zone from scoring creation-bar noise as a retest.
+[*]computeCandleScores(...) expects an ATR value from the host script; it does not calculate ATR internally.
+[/list]
+
+[b]Integration Notes[/b]
+[list]
+[*]Declare persistent arrays with var in the host indicator.
+[*]Pass volume ratio values such as volume / ta.sma(volume, len), not raw volume.
+[*]Keep drawings, alerts, input declarations, and final category weighting in the host indicator.
+[*]Normalize each score with the matching max helper using the same array, leg start, volume cap, and FVG mode.
+[*]Call the table helpers every bar when enabled; they render only on the last bar.
+[/list]

@@ -1,0 +1,1123 @@
+//@version=6
+library("CandlePOIDirectionLibrary", overlay = true)
+
+//+-------------------------------------------------------+
+//                        INFORMATION                     |
+//+-------------------------------------------------------+
+// #region Information
+
+// CandlePOIDirectionLibrary — Candle + POI Direction Scoring Engine
+//
+// Provides all data types, state machines, scoring functions,
+// and standard table rendering used by the Direction indicator family.
+//
+// What is exported (public surface area):
+//   Enums:   dir_FvgWeightMode, dir_RelClass, dir_Direction, dir_SwingState, dir_ZoneState
+//   Types:   dir_OrderBlock, dir_FairValueGap, dir_Swing, dir_Zone, dir_PatternMeta, CandleScores
+//   OB/FVG:  dir_resolveOBLow, dir_resolveOBHigh, dir_detectFVG
+//   State:   dir_newSwing, dir_applySwingEvent, dir_findCreditSwingIdx, dir_swingStateName
+//            dir_newZone, dir_tickZone, dir_findCreditZoneIdx, dir_zoneStateName
+//   Scoring: volClamp, relClassMultiplier, dirAlignmentMultiplier
+//            swingStateScore, zoneStateScore, computeSeekStructureBias, proximityWeight
+//            dir_singlePatternMeta, dir_twoPatternMeta, dir_threePatternMeta
+//            dir_singlePatternRows, dir_twoPatternRows, dir_threePatternRows
+//            computeCandleScores, computeStructureScore, computeZoneScore
+//            normalizeScore, structureMaxRaw, zoneMaxRaw
+//   Tables:  dir_drawScoreTable, dir_drawLegendTable
+//
+// What stays in the indicator:
+//   All input.* declarations, indicator UDTs (SwingVisual, FVGVisual),
+//   all drawing code (lines, boxes, labels), execution orchestration loop.
+//
+// Caller import convention:
+//   import OneCleverGuy/CandlePOIDirectionLibrary/1 as DIR
+
+import OneCleverGuy/CandlePatternLibrary/3    as CPL
+
+// #endregion Information
+
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
+
+// (none — libraries do not declare inputs)
+
+// #endregion Inputs
+
+//+-------------------------------------------------------+
+//                           UDT'S                        |
+//+-------------------------------------------------------+
+// #region UDT's
+
+// @enum  dir_FvgWeightMode    FVG zone proximity weighting strategy.
+export enum dir_FvgWeightMode
+    Even
+    PrioritizeBase
+
+// @enum  dir_RelClass         Relative pivot classification for structure scoring.
+export enum dir_RelClass
+    HH
+    HL
+    LH
+    LL
+    EH
+    EL
+    XX
+
+// @enum  dir_Direction        External or current leg direction.
+export enum dir_Direction
+    Unknown
+    Rising
+    Falling
+    Ranging
+
+// @enum  dir_SwingState       Lifecycle state of a confirmed swing pivot.
+export enum dir_SwingState
+    New
+    Swept
+    Broken
+
+// @enum  dir_ZoneState        Lifecycle state of an order block or FVG zone.
+export enum dir_ZoneState
+    New
+    Tested
+    Respected
+    Swept
+    Broken
+
+// @type  dir_OrderBlock       Raw order block geometry derived from a swing pivot.
+export type dir_OrderBlock
+    bool   valid
+    float  top
+    float  bottom
+    int    anchorTime
+    bool   isBullish
+
+// @type  dir_FairValueGap     Raw fair value gap geometry from a three-candle window.
+export type dir_FairValueGap
+    bool   valid
+    float  top
+    float  bottom
+    int    anchorTime
+    bool   isBullish
+
+// @type  dir_Swing            Swing tracker — one per confirmed pivot in the active window.
+export type dir_Swing
+    dir_RelClass   relClass
+    bool           isHigh
+    float          price
+    int            anchorTime
+    dir_SwingState swingState
+    bool           brokeOpposing
+    float          volRatio
+
+// @type  dir_Zone             Zone tracker shared by order blocks and fair value gaps.
+export type dir_Zone
+    float         top
+    float         bottom
+    int           anchorTime
+    bool          isBullish
+    int           creationBar
+    dir_ZoneState zoneState
+    bool          brokeOpposing
+    bool          hasEntered
+    bool          everWickedFar
+    bool          resolved
+    bool          readyForRetest
+    float         volRatio
+
+// @type  CandleScores         Bundled per-bar candle scoring output.
+//                             bull*/bear* are [0,1] conviction before volume multiplier.
+//                             abbr* are ≤10-char display strings for the scoring table.
+export type CandleScores
+    float  bull1
+    float  bear1
+    float  bull2
+    float  bear2
+    float  bull3
+    float  bear3
+    string abbr1
+    string abbr2
+    string abbr3
+
+// @type  dir_PatternMeta      Shared candle-pattern metadata for scoring and legend display.
+export type dir_PatternMeta
+    string fullName
+    string abbr
+    string weightText
+    float  bullWeight
+    float  bearWeight
+
+// #endregion UDT's
+
+//+-------------------------------------------------------+
+//                          LIBRARY                       |
+//+-------------------------------------------------------+
+// #region Library
+
+// #region Order Block Resolution *************************
+
+// @function  dir_resolveOBLow           - Build a bullish order block from a swing-low pivot.
+//                                         OB top = lowest body-top across pivot ± 1 candles.
+//                                         OB bottom = the swing-low price itself.
+// @param     _lowPrice     (float)      - Swing-low price (OB bottom anchor).
+// @param     _pivotOpen    (float)      - Open of the pivot candle.
+// @param     _pivotClose   (float)      - Close of the pivot candle.
+// @param     _prevOpen     (float)      - Open of the candle before the pivot.
+// @param     _prevClose    (float)      - Close of the candle before the pivot.
+// @param     _nextOpen     (float)      - Open of the candle after the pivot.
+// @param     _nextClose    (float)      - Close of the candle after the pivot.
+// @param     _prevTime     (int)        - Bar time of the candle before the pivot (anchor).
+// @returns                 (dir_OrderBlock) - Resolved bullish OB; valid=false if geometry fails.
+export dir_resolveOBLow(
+  float _lowPrice,
+  float _pivotOpen,  float _pivotClose,
+  float _prevOpen,   float _prevClose,
+  float _nextOpen,   float _nextClose,
+  int   _prevTime
+  ) =>
+    bool hasPivot = (not na(_pivotOpen)) and (not na(_pivotClose))
+    // Body top = open for bearish candle, close for bullish candle
+    float pivotBodyTop = (hasPivot
+        ? (_pivotClose < _pivotOpen ? _pivotOpen : _pivotClose)
+        : float(na)
+        )
+    bool  hasPrev     = (not na(_prevOpen)) and (not na(_prevClose))
+    float prevBodyTop = (hasPrev
+        ? (_prevClose < _prevOpen ? _prevOpen : _prevClose)
+        : float(na)
+        )
+    bool  hasNext     = (not na(_nextOpen)) and (not na(_nextClose))
+    float nextBodyTop = (hasNext
+        ? (_nextClose < _nextOpen ? _nextOpen : _nextClose)
+        : float(na)
+        )
+    float obTop = pivotBodyTop
+    if (not na(prevBodyTop)) and (na(obTop) or prevBodyTop < obTop)
+        obTop := prevBodyTop
+    if (not na(nextBodyTop)) and (not na(obTop)) and nextBodyTop < obTop
+        obTop := nextBodyTop
+    int anchor = (na(_prevTime) ? int(na) : _prevTime)
+    dir_OrderBlock.new(hasPivot and (not na(obTop)), obTop, _lowPrice, anchor, true)
+
+// @function  dir_resolveOBHigh          - Build a bearish order block from a swing-high pivot.
+//                                         OB bottom = highest body-bottom across pivot ± 1 candles.
+//                                         OB top = the swing-high price itself.
+// @param     _highPrice    (float)      - Swing-high price (OB top anchor).
+// @param     _pivotOpen    (float)      - Open of the pivot candle.
+// @param     _pivotClose   (float)      - Close of the pivot candle.
+// @param     _prevOpen     (float)      - Open of the candle before the pivot.
+// @param     _prevClose    (float)      - Close of the candle before the pivot.
+// @param     _nextOpen     (float)      - Open of the candle after the pivot.
+// @param     _nextClose    (float)      - Close of the candle after the pivot.
+// @param     _prevTime     (int)        - Bar time of the candle before the pivot (anchor).
+// @returns                 (dir_OrderBlock) - Resolved bearish OB; valid=false if geometry fails.
+export dir_resolveOBHigh(
+  float _highPrice,
+  float _pivotOpen,  float _pivotClose,
+  float _prevOpen,   float _prevClose,
+  float _nextOpen,   float _nextClose,
+  int   _prevTime
+  ) =>
+    bool hasPivot = (not na(_pivotOpen)) and (not na(_pivotClose))
+    // Body bottom = open for bullish candle, close for bearish candle
+    float pivotBodyBot = (hasPivot
+        ? (_pivotClose > _pivotOpen ? _pivotOpen : _pivotClose)
+        : float(na)
+        )
+    bool  hasPrev     = (not na(_prevOpen)) and (not na(_prevClose))
+    float prevBodyBot = (hasPrev
+        ? (_prevClose > _prevOpen ? _prevOpen : _prevClose)
+        : float(na)
+        )
+    bool  hasNext     = (not na(_nextOpen)) and (not na(_nextClose))
+    float nextBodyBot = (hasNext
+        ? (_nextClose > _nextOpen ? _nextOpen : _nextClose)
+        : float(na)
+        )
+    float obBottom = pivotBodyBot
+    if (not na(prevBodyBot)) and (na(obBottom) or prevBodyBot > obBottom)
+        obBottom := prevBodyBot
+    if (not na(nextBodyBot)) and (not na(obBottom)) and nextBodyBot > obBottom
+        obBottom := nextBodyBot
+    int anchor = (na(_prevTime) ? int(na) : _prevTime)
+    dir_OrderBlock.new(hasPivot and (not na(obBottom)), _highPrice, obBottom, anchor, false)
+
+// #endregion Order Block Resolution
+
+// #region FVG Detection **********************************
+
+// @function  dir_detectFVG              - Detect a fair value gap from a three-candle window.
+// @param     _c1High       (float)      - High of candle 1 (oldest).
+// @param     _c1Low        (float)      - Low of candle 1 (oldest).
+// @param     _c3High       (float)      - High of candle 3 (newest).
+// @param     _c3Low        (float)      - Low of candle 3 (newest).
+// @param     _minGap       (float)      - Minimum gap size in price units (0 = any gap).
+// @param     _anchorTime   (int)        - Bar time to stamp the FVG record.
+// @returns                 (dir_FairValueGap) - Detected FVG; valid=false if no gap found.
+export dir_detectFVG(
+  float _c1High,
+  float _c1Low,
+  float _c3High,
+  float _c3Low,
+  float _minGap,
+  int   _anchorTime
+  ) =>
+    bool  isBull = CPL.isBullishFairValueGapPattern(_c1High, _c3Low, _minGap)
+    bool  isBear = CPL.isBearishFairValueGapPattern(_c1Low, _c3High, _minGap)
+    float gapTop = (isBull ? _c3Low  : (isBear ? _c1Low  : float(na)))
+    float gapBot = (isBull ? _c1High : (isBear ? _c3High : float(na)))
+    dir_FairValueGap.new(isBull or isBear, gapTop, gapBot, _anchorTime, isBull)
+
+// #endregion FVG Detection
+
+// #region Swing State ************************************
+
+// @function  dir_newSwing               - Create a new swing tracker record in state New.
+// @param     _relClass     (dir_RelClass) - Relative pivot classification.
+// @param     _isHigh       (bool)       - True if this is a swing high.
+// @param     _price        (float)      - Pivot price level.
+// @param     _anchorTime   (int)        - Bar time of the pivot.
+// @param     _volRatio     (float)      - Volume ratio at pivot creation (vol / vol SMA).
+// @returns                 (dir_Swing) - New swing record.
+export dir_newSwing(
+  dir_RelClass _relClass,
+  bool         _isHigh,
+  float        _price,
+  int          _anchorTime,
+  float        _volRatio
+  ) =>
+    dir_Swing.new(_relClass, _isHigh, _price, _anchorTime, dir_SwingState.New, false, _volRatio)
+
+// @function  dir_applySwingEvent        - Advance a swing's state from a touch-family event.
+//                                         Sweep is non-terminal (stays Swept).
+//                                         Break is terminal (Broken).
+// @param     _swing        (dir_Swing) - Swing record to mutate.
+// @param     _isBreak      (bool)       - True if the event is a close-through break.
+// @param     _isSweep      (bool)       - True if the event is a wick-through sweep.
+// @returns                 (dir_Swing) - Mutated swing record.
+export dir_applySwingEvent(dir_Swing _swing, bool _isBreak, bool _isSweep) =>
+    if _isBreak
+        _swing.swingState := dir_SwingState.Broken
+    else if _isSweep and _swing.swingState == dir_SwingState.New
+        _swing.swingState := dir_SwingState.Swept
+    _swing
+
+// @function  dir_findCreditSwingIdx     - Scan newest-to-oldest for the nearest non-broken
+//                                         swing on the opposite side from the broken one.
+// @param     _swings       (dir_Swing[]) - Parallel swing array.
+// @param     _brokenWasHigh (bool)       - True if the swing that broke was a high.
+// @returns                 (int)        - Index of the credit target, or -1 if none found.
+export dir_findCreditSwingIdx(dir_Swing[] _swings, bool _brokenWasHigh) =>
+    int result = -1
+    int sz = array.size(_swings)
+    for [rev, _] in _swings
+        int idx = sz - 1 - rev
+        dir_Swing s = array.get(_swings, idx)
+        if (not na(s)) and s.isHigh != _brokenWasHigh and s.swingState != dir_SwingState.Broken
+            result := idx
+            break
+    result
+
+// @function  dir_swingStateName         - Convert a dir_SwingState to a display string.
+// @param     _state        (dir_SwingState) - State to convert.
+// @returns                 (string)     - Human-readable state name.
+export dir_swingStateName(dir_SwingState _state) =>
+    switch _state
+        dir_SwingState.New    => "New"
+        dir_SwingState.Swept  => "Swept"
+        dir_SwingState.Broken => "Broken"
+        => "?"
+
+// #endregion Swing State
+
+// #region Zone State *************************************
+
+// @function  dir_newZone                - Create a new zone tracker record in state New.
+// @param     _top          (float)      - Zone upper boundary.
+// @param     _bottom       (float)      - Zone lower boundary.
+// @param     _anchorTime   (int)        - Bar time to stamp the zone.
+// @param     _isBullish    (bool)       - True for a bullish (demand) zone.
+// @param     _creationBar  (int)        - bar_index at creation (used to skip creation bar).
+// @param     _readyForRetest (bool)     - True if price has already departed the zone (e.g. FVGs).
+// @param     _volRatio     (float)      - Volume ratio at creation.
+// @returns                 (dir_Zone)  - New zone record.
+export dir_newZone(
+  float _top,
+  float _bottom,
+  int   _anchorTime,
+  bool  _isBullish,
+  int   _creationBar,
+  bool  _readyForRetest,
+  float _volRatio
+  ) =>
+    dir_Zone.new(
+        _top, _bottom, _anchorTime, _isBullish, _creationBar,
+        dir_ZoneState.New,
+        false,           // brokeOpposing
+        false,           // hasEntered
+        false,           // everWickedFar
+        false,           // resolved
+        _readyForRetest,
+        _volRatio)
+
+// @function  dir_tickZone               - Advance a zone's state machine by one bar.
+//                                         States: New → Tested → Respected | Swept | Broken.
+//                                         Only Broken is terminal (resolved = true).
+//                                         Respected and Swept reset trackers for re-testing.
+// @param     _zone         (dir_Zone)  - Zone record to mutate.
+// @param     _high         (float)      - Current bar high.
+// @param     _low          (float)      - Current bar low.
+// @param     _close        (float)      - Current bar close.
+// @param     _barIdx       (int)        - Current bar_index.
+// @returns                 (dir_Zone)  - Mutated zone record.
+export dir_tickZone(
+  dir_Zone _zone,
+  float    _high,
+  float    _low,
+  float    _close,
+  int      _barIdx
+  ) =>
+    if (not _zone.resolved) and (_barIdx > _zone.creationBar)
+        float farSide  = (_zone.isBullish ? _zone.bottom : _zone.top)
+        float nearSide = (_zone.isBullish ? _zone.top    : _zone.bottom)
+
+        bool barInZone        = _low <= _zone.top and _high >= _zone.bottom
+        bool wickedBeyondFar  = (_zone.isBullish ? _low  < farSide  : _high > farSide)
+        bool closedBeyondFar  = (_zone.isBullish ? _close < farSide : _close > farSide)
+        bool closedBeyondNear = (_zone.isBullish ? _close > nearSide : _close < nearSide)
+        // readyForRetest becomes true once price has moved fully away from the zone
+        // on the "friendly" side, guaranteeing a new approach is a retest, not creation noise.
+        bool entirelyAway = (_zone.isBullish ? _low > _zone.top : _high < _zone.bottom)
+        if entirelyAway and not _zone.readyForRetest
+            _zone.readyForRetest := true
+
+        if barInZone and (not _zone.hasEntered) and _zone.readyForRetest
+            _zone.hasEntered := true
+            _zone.zoneState  := dir_ZoneState.Tested
+
+        if wickedBeyondFar
+            _zone.everWickedFar := true
+
+        // Resolution priority: Swept > Respected > Broken
+        // Swept: wicked far side but closed back through near side (zone held).
+        // Respected: entered but never wicked far and closed near side (clean rejection).
+        // Broken: closed beyond far side (immediate if never ready; else terminal).
+        if _zone.everWickedFar and closedBeyondNear
+            _zone.zoneState     := dir_ZoneState.Swept
+            _zone.hasEntered    := false
+            _zone.everWickedFar := false
+        else if _zone.hasEntered and (not _zone.everWickedFar) and closedBeyondNear
+            _zone.zoneState  := dir_ZoneState.Respected
+            _zone.hasEntered := false
+        else if closedBeyondFar and (not _zone.readyForRetest)
+            _zone.zoneState := dir_ZoneState.Broken
+            _zone.resolved  := true
+        else if closedBeyondFar and _zone.hasEntered
+            _zone.zoneState := dir_ZoneState.Broken
+            _zone.resolved  := true
+    _zone
+
+// @function  dir_findCreditZoneIdx      - Scan newest-to-oldest for the nearest non-broken
+//                                         zone aligned with the direction of a break.
+//                                         A broken HIGH is bullish → credit bullish zones.
+// @param     _zones        (dir_Zone[]) - Zone array to scan.
+// @param     _brokenWasHigh (bool)      - True if the broken swing was a high.
+// @returns                 (int)       - Index of the credit target, or -1 if none found.
+export dir_findCreditZoneIdx(dir_Zone[] _zones, bool _brokenWasHigh) =>
+    int result = -1
+    int sz = array.size(_zones)
+    for [rev, _] in _zones
+        int idx = sz - 1 - rev
+        dir_Zone z = array.get(_zones, idx)
+        if (not na(z)) and (z.isBullish == _brokenWasHigh) and z.zoneState != dir_ZoneState.Broken
+            result := idx
+            break
+    result
+
+// @function  dir_zoneStateName          - Convert a dir_ZoneState to a display string.
+// @param     _state        (dir_ZoneState) - State to convert.
+// @returns                 (string)     - Human-readable state name.
+export dir_zoneStateName(dir_ZoneState _state) =>
+    switch _state
+        dir_ZoneState.New       => "New"
+        dir_ZoneState.Tested    => "Tested"
+        dir_ZoneState.Respected => "Respected"
+        dir_ZoneState.Swept     => "Swept"
+        dir_ZoneState.Broken    => "Broken"
+        => "?"
+
+// #endregion Zone State
+
+// #region Scoring Helpers ********************************
+
+// @function  volClamp                   - Clamp a volume ratio within user-defined bounds.
+// @param     _ratio        (float)      - Raw volume ratio (vol / vol SMA).
+// @param     _minMult      (float)      - Minimum allowed multiplier.
+// @param     _maxMult      (float)      - Maximum allowed multiplier.
+// @returns                 (float)      - Clamped multiplier.
+export volClamp(float _ratio, float _minMult, float _maxMult) =>
+    math.max(_minMult, math.min(_ratio, _maxMult))
+
+// @function  relClassMultiplier         - Multiplier for how strongly a swing's relClass
+//                                         confirms its structural side.
+//                                         HH/LL = strong; HL/LH = moderate;
+//                                         EH/EL = equal level; XX = neutral.
+// @param     _relClass     (dir_RelClass) - Pivot relative classification.
+// @returns                 (float)       - Weight multiplier.
+export relClassMultiplier(dir_RelClass _relClass) =>
+    switch _relClass
+        dir_RelClass.HH => 1.5
+        dir_RelClass.LL => 1.5
+        dir_RelClass.HL => 1.3
+        dir_RelClass.LH => 1.3
+        dir_RelClass.EH => 1.1
+        dir_RelClass.EL => 1.1
+        => 1.0 // XX
+
+// @function  dirAlignmentMultiplier     - Multiplier based on external direction alignment.
+//                                         Aligned signal = bonus; opposed = discount;
+//                                         Ranging / Unknown = neutral.
+// @param     _dir            (dir_Direction) - Current external or leg direction.
+// @param     _isBullishSignal (bool)    - True if the signal being scored is bullish.
+// @returns                   (float)   - Alignment multiplier.
+export dirAlignmentMultiplier(dir_Direction _dir, bool _isBullishSignal) =>
+    bool rising  = _dir == dir_Direction.Rising
+    bool falling = _dir == dir_Direction.Falling
+    bool aligned = (_isBullishSignal and rising) or (not _isBullishSignal and falling)
+    bool opposed = (_isBullishSignal and falling) or (not _isBullishSignal and rising)
+    (aligned ? 1.25 : (opposed ? 0.75 : 1.0))
+
+// @function  swingStateScore            - Raw internal score for a swing state.
+//                                         New=0.5, Swept=0.75, Broken=1.0 (credited to opposite direction).
+// @param     _state        (dir_SwingState) - State to score.
+// @returns                 (float)      - Score in [0, 1].
+export swingStateScore(dir_SwingState _state) =>
+    switch _state
+        dir_SwingState.New    => 0.5
+        dir_SwingState.Swept  => 0.75
+        dir_SwingState.Broken => 1.0
+        => 0.0
+
+// @function  zoneStateScore             - Raw internal score for a zone state.
+//                                         Tested=0.4 (visual only, score unchanged from New);
+//                                         Respected=0.9; Swept=0.75; Broken=1.0 (opposite dir).
+// @param     _state        (dir_ZoneState) - State to score.
+// @returns                 (float)      - Score in [0, 1].
+export zoneStateScore(dir_ZoneState _state) =>
+    switch _state
+        dir_ZoneState.New       => 0.4
+        dir_ZoneState.Tested    => 0.4
+        dir_ZoneState.Respected => 0.9
+        dir_ZoneState.Swept     => 0.75
+        dir_ZoneState.Broken    => 1.0
+        => 0.0
+
+// Private helpers — must precede computeSeekStructureBias (no forward-reference in Pine).
+zoneCanSeekOpposingStructure(_state) =>
+    _state == dir_ZoneState.Respected or _state == dir_ZoneState.Swept
+
+zoneSeekStrength(_state) =>
+    switch _state
+        dir_ZoneState.Swept     => 0.75
+        dir_ZoneState.Respected => 0.9
+        => 0.0
+
+findNewestSeekZoneIdx(_zones, _isBullish, _legStartTime) =>
+    int result = -1
+    int sz = array.size(_zones)
+    for [rev, _] in _zones
+        int idx = sz - 1 - rev
+        dir_Zone z = array.get(_zones, idx)
+        if na(z)
+            continue
+        if z.isBullish != _isBullish
+            continue
+        if not na(_legStartTime) and z.anchorTime < _legStartTime
+            continue
+        if zoneCanSeekOpposingStructure(z.zoneState)
+            result := idx
+            break
+    result
+
+findNewestTargetSwingIdx(_swings, _wantHigh, _legStartTime) =>
+    int result = -1
+    int sz = array.size(_swings)
+    for [rev, _] in _swings
+        int idx = sz - 1 - rev
+        dir_Swing s = array.get(_swings, idx)
+        if na(s)
+            continue
+        if s.isHigh != _wantHigh
+            continue
+        if not na(_legStartTime) and s.anchorTime < _legStartTime
+            continue
+        if s.swingState != dir_SwingState.Broken
+            result := idx
+            break
+    result
+
+// @function  computeSeekStructureBias   - Returns normalized hidden continuation bias [0,1]
+//                                         per direction. After a zone is Respected or Swept,
+//                                         price seeks the opposing structure; if structure confirms
+//                                         the direction, a continuation bias is awarded.
+// @param     _swings       (dir_Swing[])  - Active swing array.
+// @param     _zones        (dir_Zone[])   - Active zone array (OBs or FVGs combined).
+// @param     _legStartTime (int)          - Leg origin timestamp filter.
+// @param     _dir          (dir_Direction) - Current external or leg direction.
+// @returns                 ([float, float]) - [bullBias, bearBias] each in [0, 1].
+export computeSeekStructureBias(
+  dir_Swing[] _swings,
+  dir_Zone[]  _zones,
+  int         _legStartTime,
+  dir_Direction _dir
+  ) =>
+    float bull = 0.0
+    float bear = 0.0
+
+    int bullZoneIdx = findNewestSeekZoneIdx(_zones, true, _legStartTime)
+    if bullZoneIdx >= 0 and _dir == dir_Direction.Rising
+        int bullTargetIdx = findNewestTargetSwingIdx(_swings, true, _legStartTime)
+        if bullTargetIdx >= 0
+            dir_Zone z = array.get(_zones, bullZoneIdx)
+            bull := zoneSeekStrength(z.zoneState)
+
+    int bearZoneIdx = findNewestSeekZoneIdx(_zones, false, _legStartTime)
+    if bearZoneIdx >= 0 and _dir == dir_Direction.Falling
+        int bearTargetIdx = findNewestTargetSwingIdx(_swings, false, _legStartTime)
+        if bearTargetIdx >= 0
+            dir_Zone z = array.get(_zones, bearZoneIdx)
+            bear := zoneSeekStrength(z.zoneState)
+
+    [bull, bear]
+
+// @function  proximityWeight            - Proximity weight for a zone within a leg.
+//                                         Zones closest to the leg origin score highest.
+//                                         With PrioritizeBase mode returns [1.0, 2.5];
+//                                         Even mode always returns 1.0.
+// @param     _posInLeg     (float)      - Normalized position: 0.0 = origin, 1.0 = newest.
+// @param     _fvgMode      (dir_FvgWeightMode) - Weighting strategy.
+// @returns                 (float)      - Proximity multiplier.
+export proximityWeight(float _posInLeg, dir_FvgWeightMode _fvgMode) =>
+    float inverted = 1.0 - _posInLeg
+    float base = (
+        _fvgMode == dir_FvgWeightMode.PrioritizeBase
+            ? 1.0 + inverted * 1.5
+            : 1.0
+        )
+    base
+
+// #endregion Scoring Helpers
+
+// #region Candle Pattern Metadata ************************
+
+dir_patternMeta(string _fullName, string _abbr, string _weightText, float _bullWeight, float _bearWeight) =>
+    dir_PatternMeta.new(_fullName, _abbr, _weightText, _bullWeight, _bearWeight)
+
+// @function  dir_singlePatternMeta      - Metadata and score weights for a single-candle pattern.
+// @param     _cd           (CPL.CandleData) - Analyzed candle data from CPL.
+// @returns                 (dir_PatternMeta) - Full name, abbreviation, display weight, bull/bear weights.
+export dir_singlePatternMeta(CPL.CandleData _cd) =>
+    CPL.CandlePattern pat = _cd.pattern
+    CPL.CandleSize    sz  = _cd.size
+    bool isLong = sz == CPL.CandleSize.Long
+    bool isNorm = sz == CPL.CandleSize.Normal
+
+    switch pat
+        CPL.CandlePattern.BullishMarubozu =>
+            dir_patternMeta("Bullish Marubozu", "BullMaru", (isLong ? "1.0" : "0.8"), (isLong ? 1.0 : 0.8), 0.0)
+        CPL.CandlePattern.BearishMarubozu =>
+            dir_patternMeta("Bearish Marubozu", "BearMaru", (isLong ? "1.0" : "0.8"), 0.0, (isLong ? 1.0 : 0.8))
+        CPL.CandlePattern.Hammer =>
+            dir_patternMeta("Hammer", "Hammer", "0.7", 0.7, 0.0)
+        CPL.CandlePattern.ShootingStar =>
+            dir_patternMeta("Shooting Star", "ShootStar", "0.7", 0.0, 0.7)
+        CPL.CandlePattern.RegularBullish =>
+            dir_patternMeta("Regular Bullish", "Bullish", (isLong ? "0.75" : (isNorm ? "0.45" : "0.2")), (isLong ? 0.75 : (isNorm ? 0.45 : 0.2)), 0.0)
+        CPL.CandlePattern.RegularBearish =>
+            dir_patternMeta("Regular Bearish", "Bearish", (isLong ? "0.75" : (isNorm ? "0.45" : "0.2")), 0.0, (isLong ? 0.75 : (isNorm ? 0.45 : 0.2)))
+        CPL.CandlePattern.DragonflyDoji =>
+            dir_patternMeta("Dragonfly Doji", "Dragonfly", "0.55", 0.55, 0.0)
+        CPL.CandlePattern.GravestoneDoji =>
+            dir_patternMeta("Gravestone Doji", "Gravestone", "0.55", 0.0, 0.55)
+        CPL.CandlePattern.LongLeggedDoji =>
+            dir_patternMeta("Long Legged Doji", "LongLegDj", "0.15", 0.15, 0.15)
+        CPL.CandlePattern.CrossDoji =>
+            dir_patternMeta("Cross Doji", "CrossDoji", "0.1", 0.1, 0.1)
+        CPL.CandlePattern.InvertedCrossDoji =>
+            dir_patternMeta("Inverted Cross Doji", "InvCrossDj", "0.1", 0.1, 0.1)
+        CPL.CandlePattern.Doji =>
+            dir_patternMeta("Doji", "Doji", "0.1", 0.1, 0.1)
+        CPL.CandlePattern.SpinningTop =>
+            if _cd.direction == CPL.CandleDirection.Bullish
+                dir_patternMeta("Spinning Top", "SpinTop", "0.25", 0.25, 0.0)
+            else if _cd.direction == CPL.CandleDirection.Bearish
+                dir_patternMeta("Spinning Top", "SpinTop", "0.25", 0.0, 0.25)
+            else
+                dir_patternMeta("Spinning Top", "SpinTop", "0.1", 0.1, 0.1)
+        CPL.CandlePattern.FourPriceDoji =>
+            dir_patternMeta("Four Price Doji", "4PriceDj", "0.05", 0.05, 0.05)
+        => dir_patternMeta("", "-", "0.0", 0.0, 0.0)
+
+// @function  dir_twoPatternMeta         - Metadata and score weights for a two-candle pattern.
+// @param     _pat          (CPL.TwoCandlePattern) - Pattern to map.
+// @returns                 (dir_PatternMeta) - Full name, abbreviation, display weight, bull/bear weights.
+export dir_twoPatternMeta(CPL.TwoCandlePattern _pat) =>
+    switch _pat
+        CPL.TwoCandlePattern.BullishRailRoad        => dir_patternMeta("Bullish Rail Road", "BullRail", "1.0", 1.0, 0.0)
+        CPL.TwoCandlePattern.BearishRailRoad        => dir_patternMeta("Bearish Rail Road", "BearRail", "1.0", 0.0, 1.0)
+        CPL.TwoCandlePattern.BullishEngulfingStrong => dir_patternMeta("Bullish Engulfing (Strong)", "BullEngStr", "0.9", 0.9, 0.0)
+        CPL.TwoCandlePattern.BearishEngulfingStrong => dir_patternMeta("Bearish Engulfing (Strong)", "BearEngStr", "0.9", 0.0, 0.9)
+        CPL.TwoCandlePattern.TweezerBottom          => dir_patternMeta("Tweezer Bottom", "TweezerBot", "0.75", 0.75, 0.0)
+        CPL.TwoCandlePattern.TweezerTop             => dir_patternMeta("Tweezer Top", "TweezerTop", "0.75", 0.0, 0.75)
+        CPL.TwoCandlePattern.BullishEngulfingWeak   => dir_patternMeta("Bullish Engulfing (Weak)", "BullEngWk", "0.6", 0.6, 0.0)
+        CPL.TwoCandlePattern.BearishEngulfingWeak   => dir_patternMeta("Bearish Engulfing (Weak)", "BearEngWk", "0.6", 0.0, 0.6)
+        CPL.TwoCandlePattern.InsideBar              => dir_patternMeta("Inside Bar", "InsideBar", "0.15", 0.15, 0.15)
+        => dir_patternMeta("", "-", "0.0", 0.0, 0.0)
+
+// @function  dir_threePatternMeta       - Metadata and score weights for a three-candle pattern.
+// @param     _pat          (CPL.ThreeCandlePattern) - Pattern to map.
+// @returns                 (dir_PatternMeta) - Full name, abbreviation, display weight, bull/bear weights.
+export dir_threePatternMeta(CPL.ThreeCandlePattern _pat) =>
+    switch _pat
+        CPL.ThreeCandlePattern.ThreeWhiteSoldiersWithBullishFVG => dir_patternMeta("3 White Soldiers + Bull FVG", "3WS+BuFVG", "1.0", 1.0, 0.0)
+        CPL.ThreeCandlePattern.ThreeBlackCrowsWithBearishFVG    => dir_patternMeta("3 Black Crows + Bear FVG", "3BC+BeFVG", "1.0", 0.0, 1.0)
+        CPL.ThreeCandlePattern.BullishAbandonedBaby             => dir_patternMeta("Bullish Abandoned Baby", "BullAbBaby", "0.95", 0.95, 0.0)
+        CPL.ThreeCandlePattern.BearishAbandonedBaby             => dir_patternMeta("Bearish Abandoned Baby", "BearAbBaby", "0.95", 0.0, 0.95)
+        CPL.ThreeCandlePattern.ThreeWhiteSoldiers               => dir_patternMeta("Three White Soldiers", "3Soldiers", "0.9", 0.9, 0.0)
+        CPL.ThreeCandlePattern.ThreeBlackCrows                  => dir_patternMeta("Three Black Crows", "3Crows", "0.9", 0.0, 0.9)
+        CPL.ThreeCandlePattern.ThreeWhiteSoldiersWithBearishFVG => dir_patternMeta("3 White Soldiers + Bear FVG", "3WS+BeFVG", "0.85", 0.85, 0.0)
+        CPL.ThreeCandlePattern.ThreeBlackCrowsWithBullishFVG    => dir_patternMeta("3 Black Crows + Bull FVG", "3BC+BuFVG", "0.85", 0.0, 0.85)
+        CPL.ThreeCandlePattern.MorningStar                      => dir_patternMeta("Morning Star", "MornStar", "0.8", 0.8, 0.0)
+        CPL.ThreeCandlePattern.EveningStar                      => dir_patternMeta("Evening Star", "EvenStar", "0.8", 0.0, 0.8)
+        CPL.ThreeCandlePattern.BullishFairValueGap              => dir_patternMeta("Bullish Fair Value Gap", "BullFVG", "0.5", 0.5, 0.0)
+        CPL.ThreeCandlePattern.BearishFairValueGap              => dir_patternMeta("Bearish Fair Value Gap", "BearFVG", "0.5", 0.0, 0.5)
+        CPL.ThreeCandlePattern.EngulfingSandwich                => dir_patternMeta("Engulfing Sandwich", "EngSandwch", "0.3", 0.3, 0.3)
+        => dir_patternMeta("", "-", "0.0", 0.0, 0.0)
+
+// @function  dir_singlePatternRows      - Legend rows for single-candle metadata.
+// @returns                 (dir_PatternMeta[]) - Display rows in legend order.
+export dir_singlePatternRows() =>
+    dir_PatternMeta[] rows = array.new<dir_PatternMeta>()
+    array.push(rows, dir_patternMeta("Bullish Marubozu", "BullMaru", "0.8-1.0", 1.0, 0.0))
+    array.push(rows, dir_patternMeta("Bearish Marubozu", "BearMaru", "0.8-1.0", 0.0, 1.0))
+    array.push(rows, dir_patternMeta("Regular Bullish", "Bullish", "0.2-0.75", 0.75, 0.0))
+    array.push(rows, dir_patternMeta("Regular Bearish", "Bearish", "0.2-0.75", 0.0, 0.75))
+    array.push(rows, dir_patternMeta("Hammer", "Hammer", "0.7", 0.7, 0.0))
+    array.push(rows, dir_patternMeta("Shooting Star", "ShootStar", "0.7", 0.0, 0.7))
+    array.push(rows, dir_patternMeta("Dragonfly Doji", "Dragonfly", "0.55", 0.55, 0.0))
+    array.push(rows, dir_patternMeta("Gravestone Doji", "Gravestone", "0.55", 0.0, 0.55))
+    array.push(rows, dir_patternMeta("Spinning Top", "SpinTop", "0.1/0.25", 0.25, 0.25))
+    array.push(rows, dir_patternMeta("Long Legged Doji", "LongLegDj", "0.15", 0.15, 0.15))
+    array.push(rows, dir_patternMeta("Cross Doji", "CrossDoji", "0.1", 0.1, 0.1))
+    array.push(rows, dir_patternMeta("Inverted Cross Doji", "InvCrossDj", "0.1", 0.1, 0.1))
+    array.push(rows, dir_patternMeta("Doji", "Doji", "0.1", 0.1, 0.1))
+    array.push(rows, dir_patternMeta("Four Price Doji", "4PriceDj", "0.05", 0.05, 0.05))
+    rows
+
+// @function  dir_twoPatternRows         - Legend rows for two-candle metadata.
+// @returns                 (dir_PatternMeta[]) - Display rows in legend order.
+export dir_twoPatternRows() =>
+    dir_PatternMeta[] rows = array.new<dir_PatternMeta>()
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.BullishRailRoad))
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.BearishRailRoad))
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.BullishEngulfingStrong))
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.BearishEngulfingStrong))
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.TweezerTop))
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.TweezerBottom))
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.BullishEngulfingWeak))
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.BearishEngulfingWeak))
+    array.push(rows, dir_twoPatternMeta(CPL.TwoCandlePattern.InsideBar))
+    rows
+
+// @function  dir_threePatternRows       - Legend rows for three-candle metadata.
+// @returns                 (dir_PatternMeta[]) - Display rows in legend order.
+export dir_threePatternRows() =>
+    dir_PatternMeta[] rows = array.new<dir_PatternMeta>()
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.ThreeWhiteSoldiersWithBullishFVG))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.ThreeBlackCrowsWithBearishFVG))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.BullishAbandonedBaby))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.BearishAbandonedBaby))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.ThreeWhiteSoldiers))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.ThreeBlackCrows))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.ThreeWhiteSoldiersWithBearishFVG))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.ThreeBlackCrowsWithBullishFVG))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.MorningStar))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.EveningStar))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.BullishFairValueGap))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.BearishFairValueGap))
+    array.push(rows, dir_threePatternMeta(CPL.ThreeCandlePattern.EngulfingSandwich))
+    rows
+
+// #endregion Candle Pattern Metadata
+
+// #region Candle Pattern Scoring *************************
+// @function  computeCandleScores        - Compute candle pattern scores for the current bar.
+//                                         Returns raw [0,1] conviction per column per direction
+//                                         plus display abbreviations. Volume multiplier is NOT
+//                                         applied here — caller applies it for consistency.
+// @param     _atr          (float)      - Current ATR value.
+// @param     _equivMult    (float)      - ATR multiplier for equality / Doji / Marubozu tolerance.
+// @param     _bodyMult     (float)      - ATR multiplier for small-body detection (Hammer, SpinTop).
+// @returns                 (CandleScores) - Bundled scores and abbreviations.
+export computeCandleScores(float _atr, float _equivMult, float _bodyMult) =>
+    float equivTol = _atr * _equivMult
+    float bodyTol  = _atr * _bodyMult
+
+    CPL.CandleData c0 = CPL.analyzeCandle(
+        open,    high,    low,    close,    _atr, 10.0, equivTol, bodyTol, 70)
+    CPL.CandleData c1 = CPL.analyzeCandle(
+        open[1], high[1], low[1], close[1], _atr, 10.0, equivTol, bodyTol, 70)
+    CPL.CandleData c2 = CPL.analyzeCandle(
+        open[2], high[2], low[2], close[2], _atr, 10.0, equivTol, bodyTol, 70)
+
+    CPL.TwoCandleData   tc  = CPL.analyzeTwoCandlePattern(c1, c0, equivTol, 70)
+    CPL.ThreeCandleData thc = CPL.analyzeThreeCandlePattern(c2, c1, c0, equivTol)
+
+    dir_PatternMeta m1 = dir_singlePatternMeta(c0)
+    dir_PatternMeta m2 = dir_twoPatternMeta(tc.pattern)
+    dir_PatternMeta m3 = dir_threePatternMeta(thc.pattern)
+
+    CandleScores.new(
+        m1.bullWeight, m1.bearWeight,
+        m2.bullWeight, m2.bearWeight,
+        m3.bullWeight, m3.bearWeight,
+        m1.abbr, m2.abbr, m3.abbr)
+
+// #endregion Candle Pattern Scoring
+
+// #region Structure Scoring ******************************
+
+// @function  computeStructureScore      - Compute bull and bear raw structure scores for all
+//                                         swings in the current leg. relClass and direction
+//                                         alignment modulate each swing's contribution.
+//                                         Broken swings credit the OPPOSITE direction.
+// @param     _swings       (dir_Swing[])  - Active swing array.
+// @param     _legStartTime (int)          - Leg origin timestamp; swings before this are excluded.
+// @param     _dir          (dir_Direction) - Current external or leg direction.
+// @param     _volMinMult   (float)        - User minimum volume multiplier.
+// @param     _volMaxMult   (float)        - User maximum volume multiplier.
+// @returns                 ([float, float]) - [bullRaw, bearRaw] accumulated scores.
+export computeStructureScore(
+  dir_Swing[] _swings,
+  int         _legStartTime,
+  dir_Direction _dir,
+  float       _volMinMult,
+  float       _volMaxMult
+  ) =>
+    float bull = 0.0
+    float bear = 0.0
+    int   sz   = array.size(_swings)
+    if sz > 0
+        for i = 0 to sz - 1
+            dir_Swing s = array.get(_swings, i)
+            if na(s)
+                continue
+            if not na(_legStartTime) and s.anchorTime < _legStartTime
+                continue
+
+            float stateScore = swingStateScore(s.swingState)
+            float vol        = volClamp(s.volRatio, _volMinMult, _volMaxMult)
+
+            float relMult = relClassMultiplier(s.relClass)
+
+            // A swing low supports bullish direction; a swing high supports bearish.
+            bool  signalIsBull = not s.isHigh
+            float dirMult      = dirAlignmentMultiplier(_dir, signalIsBull)
+            float pts          = stateScore * vol * relMult * dirMult
+
+            if s.isHigh
+                if s.swingState == dir_SwingState.Broken
+                    bull += pts
+                else
+                    bear += pts
+            else
+                if s.swingState == dir_SwingState.Broken
+                    bear += pts
+                else
+                    bull += pts
+    [bull, bear]
+
+// @function  computeZoneScore           - Compute bull and bear raw zone scores for OBs or FVGs
+//                                         in the current leg. Proximity to leg origin weights
+//                                         older zones higher (configurable). Broken zones credit
+//                                         the OPPOSITE direction.
+// @param     _zones        (dir_Zone[])      - Zone array to score.
+// @param     _legStartTime (int)             - Leg origin timestamp filter.
+// @param     _dir          (dir_Direction)   - Current external or leg direction.
+// @param     _mode         (dir_FvgWeightMode) - Proximity weighting strategy.
+// @param     _volMinMult   (float)           - User minimum volume multiplier.
+// @param     _volMaxMult   (float)           - User maximum volume multiplier.
+// @returns                 ([float, float])  - [bullRaw, bearRaw] accumulated scores.
+export computeZoneScore(
+  dir_Zone[]       _zones,
+  int              _legStartTime,
+  dir_Direction    _dir,
+  dir_FvgWeightMode _mode,
+  float            _volMinMult,
+  float            _volMaxMult
+  ) =>
+    float bull = 0.0
+    float bear = 0.0
+    int   sz   = array.size(_zones)
+    if sz == 0
+        [bull, bear]
+    else
+        int[] legIdxList = array.new_int(0)
+        for i = 0 to sz - 1
+            dir_Zone z = array.get(_zones, i)
+            if na(z)
+                continue
+            if not na(_legStartTime) and z.anchorTime < _legStartTime
+                continue
+            array.push(legIdxList, i)
+
+        int legCount = array.size(legIdxList)
+        if legCount > 0
+            for [listPos, zoneIdx] in legIdxList
+                dir_Zone z = array.get(_zones, zoneIdx)
+
+                float posInLeg = (legCount > 1
+                    ? float(listPos) / float(legCount - 1)
+                    : 0.0)
+                float proxMult   = proximityWeight(posInLeg, _mode)
+                float stateScore = zoneStateScore(z.zoneState)
+                float vol        = volClamp(z.volRatio, _volMinMult, _volMaxMult)
+                float dirMult    = dirAlignmentMultiplier(_dir, z.isBullish)
+                float pts        = stateScore * vol * proxMult * dirMult
+
+                if z.isBullish
+                    if z.zoneState == dir_ZoneState.Broken
+                        bear += pts
+                    else
+                        bull += pts
+                else
+                    if z.zoneState == dir_ZoneState.Broken
+                        bull += pts
+                    else
+                        bear += pts
+        [bull, bear]
+
+// #endregion Structure Scoring
+
+// #region Final Score Assembly ***************************
+
+// @function  normalizeScore             - Normalize a raw category score to [0, 1].
+// @param     _rawScore     (float)      - Accumulated raw score for one direction.
+// @param     _maxRaw       (float)      - Theoretical maximum for this category.
+// @returns                 (float)      - Normalized score clamped to [0, 1].
+export normalizeScore(float _rawScore, float _maxRaw) =>
+    (_maxRaw > 0.0 ? math.min(_rawScore / _maxRaw, 1.0) : 0.0)
+
+// @function  structureMaxRaw            - Theoretical maximum raw structure score for a leg.
+//                                         Each swing can contribute up to:
+//                                         stateScore(1.0) × volMax × relClassMax(1.5) × dirAlignMax(1.25).
+// @param     _swings       (dir_Swing[]) - Active swing array.
+// @param     _legStartTime (int)         - Leg origin timestamp filter.
+// @param     _volMaxMult   (float)       - User maximum volume multiplier.
+// @returns                 (float)       - Theoretical maximum raw score.
+export structureMaxRaw(dir_Swing[] _swings, int _legStartTime, float _volMaxMult) =>
+    int count = 0
+    for s in _swings
+        if na(s)
+            continue
+        if not na(_legStartTime) and s.anchorTime < _legStartTime
+            continue
+        count += 1
+    float(math.max(count, 1)) * 1.0 * _volMaxMult * 1.5 * 1.25
+
+// @function  zoneMaxRaw                 - Theoretical maximum raw zone score for a leg.
+//                                         Each zone can contribute up to:
+//                                         stateScore(1.0) × volMax × proxMax × dirAlignMax(1.25).
+// @param     _zones        (dir_Zone[])      - Zone array.
+// @param     _legStartTime (int)             - Leg origin timestamp filter.
+// @param     _mode         (dir_FvgWeightMode) - Proximity weighting strategy.
+// @param     _volMaxMult   (float)           - User maximum volume multiplier.
+// @returns                 (float)           - Theoretical maximum raw score.
+export zoneMaxRaw(
+  dir_Zone[]        _zones,
+  int               _legStartTime,
+  dir_FvgWeightMode _mode,
+  float             _volMaxMult
+  ) =>
+    int count = 0
+    for z in _zones
+        if na(z)
+            continue
+        if not na(_legStartTime) and z.anchorTime < _legStartTime
+            continue
+        count += 1
+    float maxProx = (_mode == dir_FvgWeightMode.PrioritizeBase ? 2.5 : 1.0)
+    float(math.max(count, 1)) * 1.0 * _volMaxMult * maxProx * 1.25
+
+// #endregion Final Score Assembly
+
+// #region Table Rendering ********************************
+
+// @function  dir_drawScoreTable         - Draw or update the 8×3 scoring table (top-right).
+//                                         Creates the table once via var on the first call
+//                                         at barstate.islast and updates cells every time.
+//                                         All score params are normalized [0,1] except
+//                                         bullTotal/bearTotal which are in [0, 99].
+// @param     _bullStNrm    (float)      - Normalized bull structure score.
+// @param     _bearStNrm    (float)      - Normalized bear structure score.
+// @param     _bullObNrm    (float)      - Normalized bull order block score.
+// @param     _bearObNrm    (float)      - Normalized bear order block score.
+// @param     _bullFvgNrm   (float)      - Normalized bull FVG score.
+// @param     _bearFvgNrm   (float)      - Normalized bear FVG score.
+// @param     _cs           (CandleScores) - Candle scores bundle for abbreviations and row routing.
+// @param     _bullTotal    (float)      - Final weighted bull score in [0, 99].
+// @param     _bearTotal    (float)      - Final weighted bear score in [0, 99].
+// @param     _dir          (dir_Direction) - Current leg direction; matching row is highlighted.
+// @returns                 (void)
+export dir_drawScoreTable(
+  float        _bullStNrm,
+  float        _bearStNrm,
+  float        _bullObNrm,
+  float        _bearObNrm,
+  float        _bullFvgNrm,
+  float        _bearFvgNrm,
+  CandleScores _cs,
+  float        _bullTotal,
+  float        _bearTotal,
+  dir_Direction _dir
+  ) =>
+    if barstate.islast
+        // Columns: Direction | Struct | OB | FVG | 1-Can | 2-Can | 3-Can | Total
+        var table scoreTbl = table.new(
+            position.top_right, 8, 3,
+            border_width = 1,
+            border_color = color.new(color.gray, 60),
+            frame_color  = color.new(color.gray, 60),
+            frame_width  = 1)
+
+        color hdrBg  = color.new(color.gray, 80)
+        color rowBg  = color.new(#131722, 0)
+        color lblCol = color.new(color.white, 20)
+        color bullC  = color.new(#4CAF50, 0)
+        color bearC  = color.new(#F44336, 0)
+        color mutedC = color.new(color.gray, 40)
+
+        // Highlight the active leg row with a subtle directional tint.
+        color bullRowBg = (_dir == dir_Direction.Rising  ? color.new(#4CAF50, 88) : rowBg)
+        color bearRowBg = (_dir == dir_Direction.Falling ? color.new(#F44336, 88) : rowBg)
+
+        // Header row
+        table.cell(scoreTbl, 0, 0, "Direction", bgcolor = hdrBg, text_color = color.white, text_size = size.small)
+        table.cell(scoreTbl, 1, 0, "Struct",    bgcolor = hdrBg, text_color = lblCol,      text_size = size.small)
+        table.cell(scoreTbl, 2, 0, "OB",        bgcolor = hdrBg, text_color = lblCol,      text_size = size.small)
+        table.cell(scoreTbl, 3, 0, "FVG",       bgcolor = hdrBg, text_color = lblCol,      text_size = size.small)
+        table.cell(scoreTbl, 4, 0, "1-Can",     bgcolor = hdrBg, text_color = lblCol,      text_size = size.small)
+        table.cell(scoreTbl, 5, 0, "2-Can",     bgcolor = hdrBg, text_color = lblCol,      text_size = size.small)
+        table.cell(scoreTbl, 6, 0, "3-Can",     bgcolor = hdrBg, text_color = lblCol,      text_size = size.small)
+        table.cell(scoreTbl, 7, 0, "Total",     bgcolor = hdrBg, text_color = color.white, text_size = size.small)
+
+        // Candle cell helper: show abbreviation only in the row that owns it.
+        // A pattern "belongs" to whichever side has higher conviction.
+        // Neutral patterns (equal conviction) appear in both rows.
+        string bull1Txt = (_cs.bull1 >= _cs.bear1 and _cs.abbr1 != "-" ? _cs.abbr1 : "-")
+        string bear1Txt = (_cs.bear1 >= _cs.bull1 and _cs.abbr1 != "-" ? _cs.abbr1 : "-")
+        string bull2Txt = (_cs.bull2 >= _cs.bear2 and _cs.abbr2 != "-" ? _cs.abbr2 : "-")
+        string bear2Txt = (_cs.bear2 >= _cs.bull2 and _cs.abbr2 != "-" ? _cs.abbr2 : "-")
+        string bull3Txt = (_cs.bull3 >= _cs.bear3 and _cs.abbr3 != "-" ? _cs.abbr3 : "-")
+        string bear3Txt = (_cs.bear3 >= _cs.bull3 and _cs.abbr3 != "-" ? _cs.abbr3 : "-")
+
+        // Bullish row — Struct/OB/FVG show 0–100; candle columns show abbreviations
+        table.cell(scoreTbl, 0, 1, "▲ Bullish", bgcolor = bullRowBg, text_color = bullC, text_size = size.small)
+        table.cell(scoreTbl, 1, 1, str.tostring(math.round(_bullStNrm  * 100)), bgcolor = bullRowBg, text_color = color.white, text_size = size.small)
+        table.cell(scoreTbl, 2, 1, str.tostring(math.round(_bullObNrm  * 100)), bgcolor = bullRowBg, text_color = color.white, text_size = size.small)
+        table.cell(scoreTbl, 3, 1, str.tostring(math.round(_bullFvgNrm * 100)), bgcolor = bullRowBg, text_color = color.white, text_size = size.small)
+        table.cell(scoreTbl, 4, 1, bull1Txt, bgcolor = bullRowBg, text_color = (bull1Txt == "-" ? mutedC : color.white), text_size = size.small)
+        table.cell(scoreTbl, 5, 1, bull2Txt, bgcolor = bullRowBg, text_color = (bull2Txt == "-" ? mutedC : color.white), text_size = size.small)
+        table.cell(scoreTbl, 6, 1, bull3Txt, bgcolor = bullRowBg, text_color = (bull3Txt == "-" ? mutedC : color.white), text_size = size.small)
+        table.cell(scoreTbl, 7, 1, str.tostring(math.round(_bullTotal)) + "%", bgcolor = bullRowBg, text_color = bullC, text_size = size.small)
+
+        // Bearish row
+        table.cell(scoreTbl, 0, 2, "▼ Bearish", bgcolor = bearRowBg, text_color = bearC, text_size = size.small)
+        table.cell(scoreTbl, 1, 2, str.tostring(math.round(_bearStNrm  * 100)), bgcolor = bearRowBg, text_color = color.white, text_size = size.small)
+        table.cell(scoreTbl, 2, 2, str.tostring(math.round(_bearObNrm  * 100)), bgcolor = bearRowBg, text_color = color.white, text_size = size.small)
+        table.cell(scoreTbl, 3, 2, str.tostring(math.round(_bearFvgNrm * 100)), bgcolor = bearRowBg, text_color = color.white, text_size = size.small)
+        table.cell(scoreTbl, 4, 2, bear1Txt, bgcolor = bearRowBg, text_color = (bear1Txt == "-" ? mutedC : color.white), text_size = size.small)
+        table.cell(scoreTbl, 5, 2, bear2Txt, bgcolor = bearRowBg, text_color = (bear2Txt == "-" ? mutedC : color.white), text_size = size.small)
+        table.cell(scoreTbl, 6, 2, bear3Txt, bgcolor = bearRowBg, text_color = (bear3Txt == "-" ? mutedC : color.white), text_size = size.small)
+        table.cell(scoreTbl, 7, 2, str.tostring(math.round(_bearTotal)) + "%", bgcolor = bearRowBg, text_color = bearC, text_size = size.small)
+
+// Helper for `dir_drawLegendTable()`: draw one metadata row group and return next row.
+dir_drawPatternLegendRows(
+  table _tbl,
+  int _startRow,
+  dir_PatternMeta[] _rows,
+  color _rowBg,
+  color _nameTxt,
+  color _abbrTxt,
+  color _weightTxt
+  ) =>
+    int r = _startRow
+    for meta in _rows
+        table.cell(_tbl, 0, r, meta.fullName, bgcolor = _rowBg, text_color = _nameTxt, text_size = size.tiny, text_halign = text.align_left)
+        table.cell(_tbl, 1, r, meta.abbr, bgcolor = _rowBg, text_color = _abbrTxt, text_size = size.tiny)
+        table.cell(_tbl, 2, r, meta.weightText, bgcolor = _rowBg, text_color = _weightTxt, text_size = size.tiny)
+        r += 1
+    r
+
+dir_drawPatternLegendGroup(
+  table _tbl,
+  int _startRow,
+  string _title,
+  int _groupWeight,
+  dir_PatternMeta[] _rows,
+  color _groupBg,
+  color _rowBg,
+  color _groupTxt,
+  color _nameTxt,
+  color _abbrTxt,
+  color _weightTxt
+  ) =>
+    int r = _startRow
+    table.cell(_tbl, 0, r, _title, bgcolor = _groupBg, text_color = _groupTxt, text_size = size.small, text_halign = text.align_left)
+    table.cell(_tbl, 1, r, "", bgcolor = _groupBg, text_size = size.small)
+    table.cell(_tbl, 2, r, "Wt: " + str.tostring(_groupWeight), bgcolor = _groupBg, text_color = _weightTxt, text_size = size.small)
+    r += 1
+    dir_drawPatternLegendRows(_tbl, r, _rows, _rowBg, _nameTxt, _abbrTxt, _weightTxt)
+
+// @function  dir_drawLegendTable        - Draw or update the 3x40 pattern legend table (middle-right).
+//                                         Creates the table once via var on the first call
+//                                         at barstate.islast and updates cells every time.
+// @param     _wCan1        (int)        - User weight for single-candle patterns (shown in header).
+// @param     _wCan2        (int)        - User weight for two-candle patterns (shown in header).
+// @param     _wCan3        (int)        - User weight for three-candle patterns (shown in header).
+// @returns                 (void)
+export dir_drawLegendTable(int _wCan1, int _wCan2, int _wCan3) =>
+    if barstate.islast
+        var table legTbl = table.new(
+            position.middle_right, 3, 40,
+            border_width = 1,
+            border_color = color.new(color.gray, 60),
+            frame_color  = color.new(color.gray, 60),
+            frame_width  = 1)
+
+        color hdrBg   = color.new(color.gray, 80)
+        color grpBg   = color.new(color.gray, 88)
+        color rowBg   = color.new(#131722, 0)
+        color hdrTxt  = color.white
+        color grpTxt  = color.new(color.white, 30)
+        color nameTxt = color.new(color.white, 10)
+        color abvTxt  = color.new(#42A5F5, 0)
+        color wgtTxt  = color.new(#FFA726, 0)
+
+        int r = 0
+        table.cell(legTbl, 0, r, "Pattern Name", bgcolor = hdrBg, text_color = hdrTxt, text_size = size.small, text_halign = text.align_left)
+        table.cell(legTbl, 1, r, "Abbrev",       bgcolor = hdrBg, text_color = hdrTxt, text_size = size.small)
+        table.cell(legTbl, 2, r, "Wt",           bgcolor = hdrBg, text_color = hdrTxt, text_size = size.small)
+        r += 1
+
+        r := dir_drawPatternLegendGroup(legTbl, r, "-- 1-Candle --", _wCan1, dir_singlePatternRows(), grpBg, rowBg, grpTxt, nameTxt, abvTxt, wgtTxt)
+        r := dir_drawPatternLegendGroup(legTbl, r, "-- 2-Candle --", _wCan2, dir_twoPatternRows(), grpBg, rowBg, grpTxt, nameTxt, abvTxt, wgtTxt)
+        r := dir_drawPatternLegendGroup(legTbl, r, "-- 3-Candle --", _wCan3, dir_threePatternRows(), grpBg, rowBg, grpTxt, nameTxt, abvTxt, wgtTxt)
+// #endregion Table Rendering
+
+// #endregion Library
+
+
+
