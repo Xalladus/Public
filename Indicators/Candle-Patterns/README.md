@@ -7,10 +7,10 @@ The Candlestick Pattern Library is a comprehensive Pine Script library designed 
 ## File Relationships
 
 - `Indicators/Candle-Patterns/Candle-Pattern+Lib.ps`: Combined dev script that contains both the indicator scaffold and the full library code in one place for iterative testing.
-- `Public/Libraries/Candle-Patterns/1CG-Candle-Pattern-Library.ps`: Published library file; the exported version of the library functions/types consumed via `import`.
-- `Indicators/Candle-Patterns/Candle-Pattern-Indicator.ps`: Lean indicator that imports the published library (`1CG-Candle-Pattern-Library.ps`) and handles inputs, logging, and visualization.
+- `Public/Libraries/Candle-Patterns/1CG-Candle-Pattern-Library.pine`: Published library file; the exported version of the library functions/types consumed via `import`.
+- `Indicators/Candle-Patterns/Candle-Pattern-Indicator.ps`: Lean indicator that imports the published library (`1CG-Candle-Pattern-Library.pine`) and handles inputs, logging, and visualization.
 
-When iterating: edit and test inside `Candle-Pattern+Lib.ps`, then mirror the library changes into `1CG-Candle-Pattern-Library.ps` and keep the indicator logic in `Candle-Pattern-Indicator.ps` in sync with the combined dev file.
+When iterating: edit and test inside `Candle-Pattern+Lib.ps`, then mirror the library changes into `1CG-Candle-Pattern-Library.pine` and keep the indicator logic in `Candle-Pattern-Indicator.ps` in sync with the combined dev file.
 
 ## Architecture
 

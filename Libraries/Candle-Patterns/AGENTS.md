@@ -8,7 +8,7 @@ rendering, alerts, and any strategy logic built on top of the returned data.
 Published as:
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/4 as CPL
+import OneCleverGuy/CandlePatternLibrary/5 as CPL
 ```
 
 Dependency note: this library has no imported-library dependencies.
@@ -18,16 +18,22 @@ Dependency note: this library has no imported-library dependencies.
 ## Public API
 
 ```pine
+CPL.CandleAnalysisConfig.new(
+    float sizeThresholdPct,
+    float equivTolerance,
+    float bodyTolerance,
+    int positionThreshold,
+    float fvgMinGap,
+    float atrMultiplier,
+    float wickWeight) -> CPL.CandleAnalysisConfig
+
 CPL.analyzeCandle(
     float _open,
     float _high,
     float _low,
     float _close,
     float _avgSize,
-    float _sizeThresholdPct,
-    float _equivTolerance,
-    float _bodyTolerance,
-    int _positionThreshold) -> CPL.CandleData
+    CPL.CandleAnalysisConfig _config) -> CPL.CandleData
 
 CPL.scoreCandleSentiment(
     float _open,
@@ -35,8 +41,7 @@ CPL.scoreCandleSentiment(
     float _low,
     float _close,
     float _atr,
-    float _atrMult,
-    float _wickWeight) -> [float, float, float, float, float]
+    CPL.CandleAnalysisConfig _config) -> [float, float, float, float, float]
 
 CPL.isEngulfingPattern(bool _bodyEngulfs, CPL.CandleDirection _c2Dir, CPL.CandleDirection _targetDir) -> bool
 CPL.isInsideBarPattern(float _c2High, float _c1High, float _c2Low, float _c1Low) -> bool
@@ -51,11 +56,11 @@ CPL.isEveningStarPattern(CPL.CandleSize _c1Size, CPL.CandleDirection _c1Dir, CPL
 CPL.isBullishAbandonedBabyPattern(CPL.CandleSize _c1Size, CPL.CandleDirection _c1Dir, float _c1Low, CPL.CandlePattern _c2Pattern, float _c2High, CPL.CandleSize _c3Size, CPL.CandleDirection _c3Dir, float _c3Low) -> bool
 CPL.isBearishAbandonedBabyPattern(CPL.CandleSize _c1Size, CPL.CandleDirection _c1Dir, float _c1High, CPL.CandlePattern _c2Pattern, float _c2Low, CPL.CandleSize _c3Size, CPL.CandleDirection _c3Dir, float _c3High) -> bool
 CPL.isEngulfingSandwichPattern(float _c1High, float _c1Low, float _c2High, float _c2Low, float _c3High, float _c3Low) -> bool
-CPL.isBullishFairValueGapPattern(float _c1High, float _c3Low, float _minGap) -> bool
-CPL.isBearishFairValueGapPattern(float _c1Low, float _c3High, float _minGap) -> bool
+CPL.isBullishFairValueGapPattern(float _c1High, float _c3Low, CPL.CandleAnalysisConfig _config) -> bool
+CPL.isBearishFairValueGapPattern(float _c1Low, float _c3High, CPL.CandleAnalysisConfig _config) -> bool
 
-CPL.analyzeTwoCandlePattern(CPL.CandleData _candle1, CPL.CandleData _candle2, float _equivTolerance, int _positionThreshold) -> CPL.TwoCandleData
-CPL.analyzeThreeCandlePattern(CPL.CandleData _candle1, CPL.CandleData _candle2, CPL.CandleData _candle3, float _minGap) -> CPL.ThreeCandleData
+CPL.analyzeTwoCandlePattern(CPL.CandleData _candle1, CPL.CandleData _candle2, CPL.CandleAnalysisConfig _config) -> CPL.TwoCandleData
+CPL.analyzeThreeCandlePattern(CPL.CandleData _candle1, CPL.CandleData _candle2, CPL.CandleData _candle3, CPL.CandleAnalysisConfig _config) -> CPL.ThreeCandleData
 
 CPL.getPatternName(CPL.CandlePattern _pattern) -> string
 CPL.getTwoCandlePatternName(CPL.TwoCandlePattern _pattern) -> string
@@ -460,37 +465,41 @@ CPL
 ## Standard Integration Pattern
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/4 as CPL
+import OneCleverGuy/CandlePatternLibrary/5 as CPL
 
 float avgSize = ta.atr(14)
-float equivTolerance = 10.0
-float bodyTolerance = 50.0
-int positionThreshold = 85
-float minGap = 10.0
+CPL.CandleAnalysisConfig config = CPL.CandleAnalysisConfig.new(
+    50.0,
+    10.0,
+    50.0,
+    85,
+    10.0,
+    2.0,
+    0.5)
 
 CPL.CandleData newest = CPL.analyzeCandle(
     open, high, low, close,
-    avgSize, 50.0, equivTolerance, bodyTolerance, positionThreshold)
+    avgSize, config)
 
 CPL.CandleData middle = CPL.analyzeCandle(
     open[1], high[1], low[1], close[1],
-    avgSize, 50.0, equivTolerance, bodyTolerance, positionThreshold)
+    avgSize, config)
 
 CPL.CandleData oldest = CPL.analyzeCandle(
     open[2], high[2], low[2], close[2],
-    avgSize, 50.0, equivTolerance, bodyTolerance, positionThreshold)
+    avgSize, config)
 
 CPL.TwoCandleData two = CPL.analyzeTwoCandlePattern(
-    middle, newest, equivTolerance, positionThreshold)
+    middle, newest, config)
 
 CPL.ThreeCandleData three = CPL.analyzeThreeCandlePattern(
-    oldest, middle, newest, minGap)
+    oldest, middle, newest, config)
 
 bool hammer = newest.pattern == CPL.CandlePattern.Hammer
 bool morningStar = three.pattern == CPL.ThreeCandlePattern.MorningStar
 
 [score, shape, power, bodyRatio, wickBias] =
-    CPL.scoreCandleSentiment(open, high, low, close, ta.atr(14), 2.0, 0.5)
+    CPL.scoreCandleSentiment(open, high, low, close, ta.atr(14), config)
 ```
 
 Chronological order is strict:

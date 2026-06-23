@@ -5,41 +5,44 @@ A comprehensive and easy-to-use Pine Script™ library for detecting single, two
 [b]Quick Start[/b]
 
 [b]1. Import the Library[/b]
-import OneCleverGuy/CandlePatternLibrary/4 as CPL
+import OneCleverGuy/CandlePatternLibrary/5 as CPL
 
 [b]2. Analyze Candles[/b]
-Use the main analysis functions to detect patterns. You can analyze the current forming candle or confirmed historical candles.
+Use the main analysis functions to detect patterns. Start by building one `CandleAnalysisConfig` object, then reuse it across all analysis and sentiment calls.
+
+float avgSize = 250
+CPL.CandleAnalysisConfig config = CPL.CandleAnalysisConfig.new(50.0, 10.0, 50.0, 85, 10.0, 2.0, 0.5)
 
 // 1. Analyze candles (Current [0], Previous [1], and the one before [2])
 // Note: We use full variable names for clarity.
-CandleData candleNewest = CPL.analyzeCandle(open, high, low, close, 250, 50, 10, 50, 85)
-CandleData candleMiddle = CPL.analyzeCandle(open[1], high[1], low[1], close[1], 250, 50, 10, 50, 85)
-CandleData candleOldest = CPL.analyzeCandle(open[2], high[2], low[2], close[2], 250, 50, 10, 50, 85)
+CPL.CandleData candleNewest = CPL.analyzeCandle(open, high, low, close, avgSize, config)
+CPL.CandleData candleMiddle = CPL.analyzeCandle(open[1], high[1], low[1], close[1], avgSize, config)
+CPL.CandleData candleOldest = CPL.analyzeCandle(open[2], high[2], low[2], close[2], avgSize, config)
 
 // 2. Analyze multi-candle patterns
 // Pass candles in chronological order: Oldest -> Newest
-var twoCandleData = CPL.analyzeTwoCandlePattern(candleMiddle, candleNewest, 10, 85)
-var threeCandleData = CPL.analyzeThreeCandlePattern(candleOldest, candleMiddle, candleNewest, 10)
+var twoCandleData = CPL.analyzeTwoCandlePattern(candleMiddle, candleNewest, config)
+var threeCandleData = CPL.analyzeThreeCandlePattern(candleOldest, candleMiddle, candleNewest, config)
 
 // 3. Optional: Score candle sentiment strength on [-100 .. +100]
 [sentScore, sentShape, sentPower, sentBodyRatio, sentWickBias] =
-    CPL.scoreCandleSentiment(open, high, low, close, ta.atr(14), 2.0, 0.5)
+    CPL.scoreCandleSentiment(open, high, low, close, ta.atr(14), config)
 
 [b]Indicator Inputs[/b]
 
-These inputs are defined in the reference indicator (Candle-Pattern-Indicator.ps) and should be exposed to users of the library so they can control how candles are classified before the analysis functions are called.
+These inputs are defined in the reference indicator (Candle-Pattern-Indicator.ps) and should be exposed to users of the library so they can populate the shared `CandleAnalysisConfig` before the analysis functions are called.
 
 - [b]Use ATR for Average Size[/b] (bool, default [b]false[/b]): When enabled, uses `ta.atr(ATR Length)` as the baseline candle size; when disabled, uses the manual Average Candle Size value.
 - [b]ATR Length[/b] (int, default [b]14[/b], active when ATR is enabled): Lookback for the ATR calculation that supplies the average candle size.
 - [b]Average Candle Size[/b] (float, default [b]250[/b], active when ATR is disabled): Manual baseline wick range used as `_avgSize` in `analyzeCandle`.
-- [b]Size Threshold (%) [/b] (float, default [b]50.0[/b], min 5 max 100 step 5): Percent difference from the baseline to classify a candle as Long or Short; passed as `_sizeThresholdPct`.
-- [b]Equivalence Tolerance[/b] (float, default [b]10[/b], step 0.001): Absolute price tolerance for equality checks (Doji, Marubozu, Tweezer matching); passed to `analyzeCandle` and `analyzeTwoCandlePattern`.
-- [b]Body Tolerance[/b] (float, default [b]50[/b], step 0.001): Absolute price tolerance for "small body" checks; passed as `_bodyTolerance` to `analyzeCandle`.
-- [b]Position Threshold[/b] (string option, default [b]"85:15"[/b]; options: 99:1, 98:2, 97:3, 96:4, 95:5, 90:10, 85:15, 80:20, 75:25): Converted to an int for `_positionThreshold` to validate hammer/shooting-star body placement and wick ratios in single and two-candle patterns.
-- [b]Minimum Fair Value Gap[/b] (float, default [b]10[/b], step 0.1): Absolute minimum gap size required between candle 1 and candle 3 when classifying Fair Value Gaps (and combined patterns); passed as `_minGap` to `analyzeThreeCandlePattern`.
+- [b]Size Threshold (%) [/b] (float, default [b]50.0[/b], min 5 max 100 step 5): Percent difference from the baseline to classify a candle as Long or Short; store in `config.sizeThresholdPct`.
+- [b]Equivalence Tolerance[/b] (float, default [b]10[/b], step 0.001): Absolute price tolerance for equality checks (Doji, Marubozu, Tweezer matching); store in `config.equivTolerance`.
+- [b]Body Tolerance[/b] (float, default [b]50[/b], step 0.001): Absolute price tolerance for "small body" checks; store in `config.bodyTolerance`.
+- [b]Position Threshold[/b] (string option, default [b]"85:15"[/b]; options: 99:1, 98:2, 97:3, 96:4, 95:5, 90:10, 85:15, 80:20, 75:25): Converted to an int for `config.positionThreshold` to validate hammer/shooting-star body placement and wick ratios in single and two-candle patterns.
+- [b]Minimum Fair Value Gap[/b] (float, default [b]10[/b], step 0.1): Absolute minimum gap size required between candle 1 and candle 3 when classifying Fair Value Gaps (and combined patterns); store in `config.fvgMinGap`.
 - [b]Sentiment ATR Length[/b] (int, default [b]14[/b]): ATR length used to build `_atr` when calling `scoreCandleSentiment`.
-- [b]Sentiment ATR Mult[/b] (float, default [b]2.0[/b], min 0.1 step 0.1): Passed as `_atrMult` for sentiment power scaling.
-- [b]Sentiment Wick Weight[/b] (float, default [b]0.5[/b], min 0 max 1 step 0.05): Passed as `_wickWeight` to control wick influence in sentiment shape.
+- [b]Sentiment ATR Mult[/b] (float, default [b]2.0[/b], min 0.1 step 0.1): Store in `config.atrMultiplier` for sentiment power scaling.
+- [b]Sentiment Wick Weight[/b] (float, default [b]0.5[/b], min 0 max 1 step 0.05): Store in `config.wickWeight` to control wick influence in sentiment shape.
 - [b]Enable Debug Logging[/b] (bool, default [b]true[/b]): Writes per-bar analysis details to the Pine Logs and colors/plots shapes for detected patterns; leave off in production scripts to avoid noisy logs.
 
 [b]Enums Reference[/b]

@@ -1,0 +1,55 @@
+[b]Release Notes[/b]
+[b]v5[/b]
+
+Added a shared CandleAnalysisConfig UDT so the library's main analysis calls can use one reusable config object instead of separate positional settings.
+
+[b]Changed[/b]
+[list]
+[*]Added CandleAnalysisConfig with: sizeThresholdPct, equivTolerance, bodyTolerance, positionThreshold, fvgMinGap, atrMultiplier, and wickWeight.
+[*]Updated analyzeCandle(...) to accept _avgSize and CandleAnalysisConfig.
+[*]Updated analyzeTwoCandlePattern(...) to accept CandleAnalysisConfig.
+[*]Updated analyzeThreeCandlePattern(...) to accept CandleAnalysisConfig.
+[*]Updated scoreCandleSentiment(...) to accept CandleAnalysisConfig.
+[/list]
+
+[b]Migration[/b]
+[list]
+[*]Build one CandleAnalysisConfig in the host script.
+[*]Reuse that same config object for single-candle, two-candle, three-candle, and sentiment calls.
+[*]Previous positional-argument calls for thresholds and sentiment settings must be updated for v5.
+[/list]
+
+[b]v5 Example[/b]
+[pine]
+import OneCleverGuy/CandlePatternLibrary/5 as CPL
+
+float avgSize = ta.atr(14)
+
+CPL.CandleAnalysisConfig config = CPL.CandleAnalysisConfig.new(
+    50.0,
+    10.0,
+    50.0,
+    85,
+    10.0,
+    2.0,
+    0.5
+)
+
+CPL.CandleData newest =
+    CPL.analyzeCandle(open, high, low, close, avgSize, config)
+
+CPL.CandleData middle =
+    CPL.analyzeCandle(open[1], high[1], low[1], close[1], avgSize, config)
+
+CPL.CandleData oldest =
+    CPL.analyzeCandle(open[2], high[2], low[2], close[2], avgSize, config)
+
+CPL.TwoCandleData two =
+    CPL.analyzeTwoCandlePattern(middle, newest, config)
+
+CPL.ThreeCandleData three =
+    CPL.analyzeThreeCandlePattern(oldest, middle, newest, config)
+
+[score, shape, power, bodyRatio, wickBias] =
+    CPL.scoreCandleSentiment(open, high, low, close, ta.atr(14), config)
+[/pine]
