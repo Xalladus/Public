@@ -1,0 +1,968 @@
+﻿//@version=6
+indicator("Market Structure Analysis", "MSAnalysis", overlay=true, max_bars_back=5000, max_labels_count=500)
+
+import OneCleverGuy/InputLibrary/4 as iLib
+import OneCleverGuy/MarketStructureLibrary/30 as MS
+import OneCleverGuy/ATRxSession/4 as ATRxS
+
+//+-------------------------------------------------------+
+//                       INFORMATION                      |
+//+-------------------------------------------------------+
+// #region Information
+
+// Market Structure Analysis — two modes via the Analysis Type input.
+//
+// ── LEG ANALYSIS ──────────────────────────────────────────────────────────
+// Measures swing-to-swing legs (low→high = bullish, high→low = bearish).
+// Consecutive same-direction swings collapse to the most extreme point.
+// Broken down by Side → Session → Trend / Structure / combinations.
+//
+// ── REVISIT ANALYSIS ──────────────────────────────────────────────────────
+// Tracks what happens when a confirmed swing level is touched/broken. Records
+// the age at break, what structure formed next, and price / time distance to
+// the next confirmed high and low after the break.
+//
+// ── REVISIT DETECTION LOGIC ───────────────────────────────────────────────
+// Every confirmed pivot is stored in an active registry. On each bar the
+// current high/low is tested against every active level; the moment price
+// reaches a level (high >= a stored high, or low <= a stored low) it is marked
+// broken and removed. A record then waits for the next confirmed swing high
+// AND low that form after the break before it is counted. Untouched pivots
+// stay pending forever and are not counted; the title shows the pending total.
+//
+// ── SIGNED DISTANCES ──────────────────────────────────────────────────────
+// Distances to the next swings are measured in the break's direction: a high
+// break points up, a low break points down. Swings with the break direction
+// are positive; swings against it are negative. So for a high break a next low
+// beneath the level is negative, and for a low break a next high above it is.
+//
+// ── TERMS ─────────────────────────────────────────────────────────────────
+//   With Trend      Leg matches outer structure direction.
+//   Counter Trend   Leg opposes outer structure direction.
+//   Broke Structure Leg endpoint exceeded the external level present at start.
+//   No Break        Leg stayed inside prevailing structure (internal).
+//   Session ATR     ATR computed only from bars inside the session.
+// Direction persists through Ranging / Unknown periods until the opposite
+// direction is confirmed, so every leg after the first trend has a direction.
+
+// #endregion Information
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
+
+// #region Input Enums ************************************
+
+enum AnalysisType
+    legAnalysis     = "Leg Analysis"
+    revisitAnalysis = "Revisit Analysis"
+
+enum LegDisplaySides
+    both        = "Bullish + Bearish"
+    bullishOnly = "Bullish Only"
+    bearishOnly = "Bearish Only"
+
+enum OutsideStartRule
+    countsOut = "Out of Session"
+    countsIn  = "In Session"
+
+enum TablePosition
+    topRight     = "Top Right"
+    topCenter    = "Top Center"
+    topLeft      = "Top Left"
+    middleRight  = "Middle Right"
+    middleCenter = "Middle Center"
+    middleLeft   = "Middle Left"
+    bottomRight  = "Bottom Right"
+    bottomCenter = "Bottom Center"
+    bottomLeft   = "Bottom Left"
+
+// #endregion Input Enums
+
+// #region Tooltips ***************************************
+
+string tt_analysis    = "Select which analysis to display in the table and log to CSV."
+string tt_legSides    = "Choose whether the leg table shows bullish rows, bearish rows, or both."
+string tt_timezone    = "Timezone for session boundaries, log timestamps, and display."
+string tt_session     = "Trading session window for ATR and session classification."
+string tt_outsideRule = "When a leg starts outside the session but finishes inside, choose"
+  + " whether it counts as In or Out. Starts inside are always In; fully outside are Out."
+  + " Applies to Leg Analysis only."
+string tt_atrCount    = "Completed sessions averaged for session ATR and smoothing length."
+string tt_lookbacks   = "Pivot detection lookback / lookahead."
+string tt_useATR      = "Require an ATR-scaled pullback before confirming new pivots."
+string tt_atrMult     = "Pullback must exceed this multiple of session ATR to confirm."
+string tt_tablePos    = "Position of the analysis table on the chart."
+string tt_textSize    = "Text size for table content."
+string tt_csvLog      = "Emit CSV rows per confirmed record to Pine Logs."
+string tt_debug       = "Draw diagnostic labels on confirmed legs or completed revisits."
+
+// #endregion Tooltips
+
+// #region Analysis ***************************************
+
+var string iGrpA = "Analysis"
+i_analysisType = input.enum(AnalysisType.legAnalysis, "Analysis Type", group=iGrpA, tooltip=tt_analysis)
+i_legSides = input.enum(LegDisplaySides.both, "Leg Rows", group=iGrpA, tooltip=tt_legSides,
+  active=(i_analysisType == AnalysisType.legAnalysis))
+
+// #endregion Analysis
+
+// #region Session & Timezone *****************************
+
+var string iGrpS = "Session & Timezone"
+i_timezone    = input.enum(iLib.Timezones.ny, "Timezone",        group=iGrpS, tooltip=tt_timezone)
+i_session     = input.session("0930-1600", "Session",            group=iGrpS, tooltip=tt_session)
+i_outsideRule = input.enum(OutsideStartRule.countsOut, "Starting Outside →", group=iGrpS, tooltip=tt_outsideRule,
+  active=(i_analysisType == AnalysisType.legAnalysis))
+
+// #endregion Session & Timezone
+
+// #region ATR Settings ***********************************
+
+var string iGrpATR = "ATR Settings"
+i_atrCount = input.int(14, "Session ATR Count", minval=1, maxval=100, group=iGrpATR, tooltip=tt_atrCount)
+
+// #endregion ATR Settings
+
+// #region Market Structure *******************************
+
+var string iGrpMS = "Market Structure"
+i_lookBack    = input.int(3, "Lookback / Lookahead", minval=1, maxval=50, inline="LB", group=iGrpMS, tooltip=tt_lookbacks)
+i_lookAhead   = input.int(3, "",                     minval=1, maxval=50, inline="LB", group=iGrpMS)
+i_useATR      = input.bool(true, "Use ATR Confirm",                                    group=iGrpMS, tooltip=tt_useATR)
+i_atrMultiple = input.float(0.5, "ATR Multiple", minval=0.1, step=0.1,                group=iGrpMS, tooltip=tt_atrMult, active=i_useATR)
+
+// #endregion Market Structure
+
+// #region Table / CSV / Debug ****************************
+
+var string iGrpT = "Table"
+i_tablePos  = input.enum(TablePosition.topRight, "Position", group=iGrpT, tooltip=tt_tablePos)
+i_textSize  = input.enum(iLib.TextSize.tiny, "Text Size",   group=iGrpT, tooltip=tt_textSize)
+var string iGrpC = "CSV Export"
+i_csvLog = input.bool(true, "Log To CSV", group=iGrpC, tooltip=tt_csvLog)
+var string iGrpD = "Debug"
+i_debug = input.bool(false, "Enable Debug", group=iGrpD, tooltip=tt_debug)
+
+// #endregion Table / CSV / Debug
+
+// #endregion Inputs
+//+-------------------------------------------------------+
+//                          UDT'S                         |
+//+-------------------------------------------------------+
+// #region UDT's
+
+type PivotSnapshot
+    float price = na
+    int bar = na
+    int timeUnix = na
+    bool isHigh = false
+
+type ZigzagPoint
+    float price = na
+    int bar = na
+    int timeUnix = na
+    bool isHigh = false
+    bool inSession = false
+    MS.DIR dirAtCreation = na
+    float extHighPrice = na
+    float extLowPrice = na
+type LegData
+    bool isBullish = false
+    float startPrice = na
+    float endPrice = na
+    int startBar = na
+    int endBar = na
+    int startTime = na
+    int endTime = na
+    float priceDistance = na
+    float atrMultiple = na
+    bool isWithTrend = false
+    bool isCounterTrend = false
+    bool brokeStructure = false
+    bool startInSession = false
+    bool endInSession = false
+    MS.DIR dirAtStart = na
+
+type LegCategoryStats
+    int count = 0
+    int atrCount = 0
+    float totalPrice = 0.0
+    float totalAtr = 0.0
+    float minPrice = na
+    float maxPrice = na
+    float minAtr = na
+    float maxAtr = na
+
+type RevisitData
+    bool pivotIsHigh = false
+    float pivotPrice = na
+    int pivotTime = na
+    int pivotBar = na
+    float breakPrice = na
+    int breakTime = na
+    int breakBar = na
+    bool breakInSession = false
+    int ageMs = na
+    bool firstNextIsHigh = false
+    bool hasNextHigh = false
+    float nextHighPrice = na
+    int nextHighTime = na
+    float nextHighPriceDist = na
+    int nextHighTimeDist = na
+    bool hasNextLow = false
+    float nextLowPrice = na
+    int nextLowTime = na
+    float nextLowPriceDist = na
+    int nextLowTimeDist = na
+    float atrAtCompletion = na
+
+type RevisitCategoryStats
+    int count = 0
+    float totalAgeMs = 0.0
+    float maxAgeMs = na
+    int nextHighCount = 0
+    int atrValidCount = 0
+    float totalPH = 0.0
+    float minPH = na
+    float maxPH = na
+    float totalAtrH = 0.0
+    float totalTH = 0.0
+    float minTH = na
+    float maxTH = na
+    float totalPL = 0.0
+    float minPL = na
+    float maxPL = na
+    float totalAtrL = 0.0
+    float totalTL = 0.0
+    float minTL = na
+    float maxTL = na
+
+// #endregion UDT's
+//+-------------------------------------------------------+
+//                      GLOBAL VARIABLES                  |
+//+-------------------------------------------------------+
+// #region Global Variables
+
+string tz              = i_timezone.getOfficialTimezone()
+bool IS_LEG_MODE       = (i_analysisType == AnalysisType.legAnalysis)
+bool SHOW_BULLISH_LEGS = (i_legSides != LegDisplaySides.bearishOnly)
+bool SHOW_BEARISH_LEGS = (i_legSides != LegDisplaySides.bullishOnly)
+int TOUCH_DETECT_BARS  = 0
+int LEG_SIDE_COUNT = (SHOW_BULLISH_LEGS ? 1 : 0) + (SHOW_BEARISH_LEGS ? 1 : 0)
+int LEG_ROWS = 4 + LEG_SIDE_COUNT * 19, int LEG_COLS = 5
+int REV_ROWS = 12,  int REV_COLS = 8
+int TBL_ROWS = (IS_LEG_MODE ? LEG_ROWS : REV_ROWS)
+int TBL_COLS = (IS_LEG_MODE ? LEG_COLS : REV_COLS)
+string LEG_CSV = "Leg#,StartTime,StartPrice,EndTime,EndPrice,Direction,Distance,"
+  + "ATRMult,TrendDir,TrendRel,BrokeStructure,StartInSess,EndInSess,Session"
+string LEG_CSV_LEGEND = "Legend: Leg#=confirmed leg sequence, StartTime=leg start pivot time, StartPrice=leg start pivot price, "
+  + "EndTime=leg end pivot time, EndPrice=leg end pivot price, Direction=Bull or Bear, Distance=absolute price move from start to end, "
+  + "ATRMult=Distance divided by session ATR, TrendDir=outer structure direction at leg start, TrendRel=With/Counter/None vs TrendDir, "
+  + "BrokeStructure=true if the leg exceeded the external level present at start, StartInSess=start pivot inside session, "
+  + "EndInSess=end pivot inside session, Session=final leg classification after outside-start rule."
+string REV_CSV = "Rev#,PivotType,PivotPrice,PivotTime,BreakTime,AgeMs,BreakInSess,"
+  + "FirstNextHigh,NHPrice,NHTime,SignedPriceTH,TimeTH,NLPrice,NLTime,SignedPriceTL,TimeTL"
+string REV_CSV_LEGEND = "Legend: Rev#=completed revisit sequence, PivotType=broken pivot side High or Low, PivotPrice=broken pivot price, "
+  + "PivotTime=broken pivot confirmation time, BreakTime=first touch/break time, AgeMs=milliseconds from pivot confirmation to break, "
+  + "BreakInSess=whether the break happened inside the session, FirstNextHigh=whether the first post-break confirmed swing was a high, "
+  + "NHPrice=next confirmed high price after break, NHTime=next confirmed high time, SignedPriceTH=signed price distance from break to next high, "
+  + "TimeTH=milliseconds from break to next high, NLPrice=next confirmed low price after break, NLTime=next confirmed low time, "
+  + "SignedPriceTL=signed price distance from break to next low, TimeTL=milliseconds from break to next low."
+var MS.Pivot[] pivots                 = array.new<MS.Pivot>()
+var MS.State msState                  = MS.State.new()
+var MS.DIR msDir                      = MS.DIR.Unknown
+var MS.DIR persistentDir              = MS.DIR.Unknown
+var array<ZigzagPoint> zigzag         = array.new<ZigzagPoint>()
+var array<LegData> legs               = array.new<LegData>()
+var array<PivotSnapshot> activePivots = array.new<PivotSnapshot>()
+var array<RevisitData> pendingRevs    = array.new<RevisitData>()
+var array<RevisitData> confirmedRevs  = array.new<RevisitData>()
+var bool csvHdrLogged                 = false
+string tblPos = switch i_tablePos
+    TablePosition.topRight     => position.top_right
+    TablePosition.topCenter    => position.top_center
+    TablePosition.topLeft      => position.top_left
+    TablePosition.middleRight  => position.middle_right
+    TablePosition.middleCenter => position.middle_center
+    TablePosition.middleLeft   => position.middle_left
+    TablePosition.bottomRight  => position.bottom_right
+    TablePosition.bottomCenter => position.bottom_center
+    TablePosition.bottomLeft   => position.bottom_left
+var table tbl = table.new(tblPos, TBL_COLS, TBL_ROWS,
+  bgcolor=color.new(#131722, 0), border_color=color.new(#2a2e39, 0),
+  border_width=1, frame_color=color.new(#363a45, 0), frame_width=2)
+
+// #endregion Global Variables
+//+-------------------------------------------------------+
+//                         FUNCTIONS                      |
+//+-------------------------------------------------------+
+// #region Functions
+
+// #region Shared Helper Functions ************************
+
+getExternalPivotPrice(MS.Pivot[] _pivots, int _pivotIndex) =>
+    float externalPrice = na
+    if _pivotIndex >= 0 and _pivotIndex < array.size(_pivots)
+        externalPrice := array.get(_pivots, _pivotIndex).price
+    externalPrice
+
+isLegInSession(bool _startInSession, bool _endInSession, bool _countsOutsideStartAsInSession) =>
+    bool isInSession = false
+    if _startInSession
+        isInSession := true
+    else if _endInSession
+        isInSession := _countsOutsideStartAsInSession
+    isInSession
+
+formatDuration(int _durationMs) =>
+    if na(_durationMs) or _durationMs == 0
+        "0m"
+    else
+        int totalMinutes = int(math.abs(float(_durationMs)) / 60000.0)
+        int days         = int(totalMinutes / 1440.0)
+        int hours        = int((totalMinutes - days * 1440) / 60.0)
+        int minutes      = totalMinutes - days * 1440 - hours * 60
+        string durationText = ""
+        if days > 0
+            durationText := str.tostring(days) + "d "
+        if hours > 0 or days > 0
+            durationText += str.tostring(hours) + "h "
+        durationText += str.tostring(minutes) + "m"
+        durationText
+
+formatPriceAndAtr(float _priceDistance, float _atrMultiple) =>
+    if na(_priceDistance)
+        "—"
+    else
+        str.tostring(_priceDistance, format.mintick) + (na(_atrMultiple) ? "" : " (" + str.tostring(_atrMultiple, "#.##") + "×)")
+
+shouldDisplayLegSide(bool _isBullishLeg, LegDisplaySides _legSides) =>
+    (_legSides == LegDisplaySides.both) or
+      (_legSides == LegDisplaySides.bullishOnly and _isBullishLeg) or
+      (_legSides == LegDisplaySides.bearishOnly and not _isBullishLeg)
+
+getLegSummaryLabel(LegDisplaySides _legSides) =>
+    switch _legSides
+        LegDisplaySides.bullishOnly => "Bullish Legs"
+        LegDisplaySides.bearishOnly => "Bearish Legs"
+        => "All Legs"
+
+// #endregion Shared Helper Functions
+
+// #region Leg Building Functions *************************
+
+// #region Leg Building Helpers //
+
+getTrendRelationship(bool _isBullish, MS.DIR _directionAtStart) =>
+    bool isWithTrend = false, bool isCounterTrend = false
+    if _directionAtStart == MS.DIR.Rising
+        isWithTrend := _isBullish
+        isCounterTrend := not _isBullish
+    else if _directionAtStart == MS.DIR.Falling
+        isWithTrend := not _isBullish
+        isCounterTrend := _isBullish
+    [isWithTrend, isCounterTrend]
+
+isStructureBreak(bool _isBullish, float _endPrice, float _externalHighPrice, float _externalLowPrice) =>
+    bool brokeStructure = false
+    if _isBullish and not na(_externalHighPrice)
+        brokeStructure := _endPrice > _externalHighPrice
+    else if not _isBullish and not na(_externalLowPrice)
+        brokeStructure := _endPrice < _externalLowPrice
+    brokeStructure
+
+// #endregion Leg Building Helpers
+
+// @function processConfirmedPivot                - Process one confirmed pivot through the zigzag leg builder.
+// @param    _zigzagPoints                       (array<ZigzagPoint>)      - Rolling two-point zigzag store.
+// @param    _legs                               (array<LegData>)          - Confirmed leg store to append into.
+// @param    _pivotPrice                         (float)                   - Confirmed pivot price.
+// @param    _pivotBar                           (int)                     - Confirmed pivot bar index.
+// @param    _pivotTime                          (int)                     - Confirmed pivot unix time.
+// @param    _isHighPivot                        (bool)                    - True when the confirmed pivot is a swing high.
+// @param    _pivotInSession                     (bool)                    - True when the confirmed pivot is inside the configured session.
+// @param    _directionAtPivot                   (MS.DIR)                  - Persistent outer direction at pivot confirmation.
+// @param    _externalHighPrice                  (float)                   - Current external high level snapshot.
+// @param    _externalLowPrice                   (float)                   - Current external low level snapshot.
+// @param    _sessionAtr                         (float)                   - Current session ATR used for leg normalization.
+// @returns                                      (int)                     - Number of newly confirmed legs produced from this pivot.
+processConfirmedPivot(array<ZigzagPoint> _zigzagPoints, array<LegData> _legs,
+    float _pivotPrice, int _pivotBar, int _pivotTime, bool _isHighPivot, bool _pivotInSession,
+    MS.DIR _directionAtPivot, float _externalHighPrice, float _externalLowPrice, float _sessionAtr) =>
+    int confirmedLegs = 0
+    int zigzagSize = array.size(_zigzagPoints)
+    if zigzagSize == 0
+        array.push(_zigzagPoints, ZigzagPoint.new(price=_pivotPrice, bar=_pivotBar, timeUnix=_pivotTime, isHigh=_isHighPivot,
+          inSession=_pivotInSession, dirAtCreation=_directionAtPivot, extHighPrice=_externalHighPrice, extLowPrice=_externalLowPrice))
+    else
+        ZigzagPoint lastPoint = array.get(_zigzagPoints, zigzagSize - 1)
+        if _isHighPivot == lastPoint.isHigh
+            if (_isHighPivot ? _pivotPrice > lastPoint.price : _pivotPrice < lastPoint.price)
+                lastPoint.price := _pivotPrice
+                lastPoint.bar := _pivotBar
+                lastPoint.timeUnix := _pivotTime
+                lastPoint.inSession := _pivotInSession
+                lastPoint.dirAtCreation := _directionAtPivot
+                lastPoint.extHighPrice := _externalHighPrice
+                lastPoint.extLowPrice := _externalLowPrice
+                array.set(_zigzagPoints, zigzagSize - 1, lastPoint)
+        else
+            if zigzagSize >= 2
+                ZigzagPoint startPoint = array.get(_zigzagPoints, zigzagSize - 2)
+                ZigzagPoint endPoint = lastPoint
+                bool isBullishLeg = not startPoint.isHigh
+                float priceDistance = math.abs(endPoint.price - startPoint.price)
+                float atrMultiple = (_sessionAtr > 0 ? priceDistance / _sessionAtr : float(na))
+                [isWithTrend, isCounterTrend] = getTrendRelationship(isBullishLeg, startPoint.dirAtCreation)
+                bool brokeStructure = isStructureBreak(isBullishLeg, endPoint.price, startPoint.extHighPrice, startPoint.extLowPrice)
+                array.push(_legs, LegData.new(
+                    isBullish=isBullishLeg, startPrice=startPoint.price, endPrice=endPoint.price,
+                    startBar=startPoint.bar, endBar=endPoint.bar, startTime=startPoint.timeUnix, endTime=endPoint.timeUnix,
+                    priceDistance=priceDistance, atrMultiple=atrMultiple, isWithTrend=isWithTrend, isCounterTrend=isCounterTrend,
+                    brokeStructure=brokeStructure, startInSession=startPoint.inSession, endInSession=endPoint.inSession,
+                    dirAtStart=startPoint.dirAtCreation))
+                confirmedLegs := 1
+            array.push(_zigzagPoints, ZigzagPoint.new(price=_pivotPrice, bar=_pivotBar, timeUnix=_pivotTime, isHigh=_isHighPivot,
+              inSession=_pivotInSession, dirAtCreation=_directionAtPivot, extHighPrice=_externalHighPrice, extLowPrice=_externalLowPrice))
+            while array.size(_zigzagPoints) > 2
+                array.shift(_zigzagPoints)
+    confirmedLegs
+
+// #endregion Leg Building Functions
+
+// #region Revisit Functions ******************************
+
+// @function updatePendingRevisits              - Advance pending revisit records with one newly confirmed pivot.
+// @param    _pendingRevisits                   (array<RevisitData>)      - Open revisit records still waiting on next swings.
+// @param    _completedRevisits                 (array<RevisitData>)      - Completed revisit records to append into.
+// @param    _pivotPrice                        (float)                   - Confirmed pivot price.
+// @param    _pivotBar                          (int)                     - Confirmed pivot bar index.
+// @param    _pivotTime                         (int)                     - Confirmed pivot unix time.
+// @param    _isHighPivot                       (bool)                    - True when the confirmed pivot is a swing high.
+// @param    _sessionAtr                        (float)                   - Session ATR snapshot stored on completed revisits.
+// @returns                                     (int)                     - Number of revisit records completed by this pivot.
+updatePendingRevisits(array<RevisitData> _pendingRevisits, array<RevisitData> _completedRevisits,
+    float _pivotPrice, int _pivotBar, int _pivotTime, bool _isHighPivot, float _sessionAtr) =>
+    int completedCount = 0
+    array<int> completedIndexes = array.new<int>()
+    for [revisitIndex, revisitRecord] in _pendingRevisits
+        if _pivotBar > revisitRecord.breakBar
+            float signedDirection = (revisitRecord.pivotIsHigh ? 1.0 : -1.0)
+            if _isHighPivot and not revisitRecord.hasNextHigh
+                revisitRecord.hasNextHigh := true
+                revisitRecord.nextHighPrice := _pivotPrice
+                revisitRecord.nextHighTime := _pivotTime
+                revisitRecord.nextHighPriceDist := signedDirection * (_pivotPrice - revisitRecord.breakPrice)
+                revisitRecord.nextHighTimeDist := _pivotTime - revisitRecord.breakTime
+                if not revisitRecord.hasNextLow
+                    revisitRecord.firstNextIsHigh := true
+            if not _isHighPivot and not revisitRecord.hasNextLow
+                revisitRecord.hasNextLow := true
+                revisitRecord.nextLowPrice := _pivotPrice
+                revisitRecord.nextLowTime := _pivotTime
+                revisitRecord.nextLowPriceDist := signedDirection * (_pivotPrice - revisitRecord.breakPrice)
+                revisitRecord.nextLowTimeDist := _pivotTime - revisitRecord.breakTime
+                if not revisitRecord.hasNextHigh
+                    revisitRecord.firstNextIsHigh := false
+            if revisitRecord.hasNextHigh and revisitRecord.hasNextLow
+                revisitRecord.atrAtCompletion := _sessionAtr
+                array.push(_completedRevisits, revisitRecord)
+                array.push(completedIndexes, revisitIndex)
+                completedCount += 1
+            else
+                array.set(_pendingRevisits, revisitIndex, revisitRecord)
+    if array.size(completedIndexes) > 0
+        for completedIndex = array.size(completedIndexes) - 1 to 0
+            array.remove(_pendingRevisits, array.get(completedIndexes, completedIndex))
+    completedCount
+
+// #endregion Revisit Functions
+
+// #region Statistics Functions ***************************
+
+// #region Statistics Helpers //
+
+addLegStats(map<string, LegCategoryStats> _statsMap, string _categoryKey, LegData _leg) =>
+    LegCategoryStats stats = (map.contains(_statsMap, _categoryKey) ? map.get(_statsMap, _categoryKey) : LegCategoryStats.new())
+    stats.count += 1
+    stats.totalPrice += _leg.priceDistance
+    stats.minPrice := (na(stats.minPrice) ? _leg.priceDistance : math.min(stats.minPrice, _leg.priceDistance))
+    stats.maxPrice := (na(stats.maxPrice) ? _leg.priceDistance : math.max(stats.maxPrice, _leg.priceDistance))
+    if not na(_leg.atrMultiple)
+        stats.atrCount += 1
+        stats.totalAtr += _leg.atrMultiple
+        stats.minAtr := (na(stats.minAtr) ? _leg.atrMultiple : math.min(stats.minAtr, _leg.atrMultiple))
+        stats.maxAtr := (na(stats.maxAtr) ? _leg.atrMultiple : math.max(stats.maxAtr, _leg.atrMultiple))
+    map.put(_statsMap, _categoryKey, stats)
+    int(na)
+
+addRevisitStats(map<string, RevisitCategoryStats> _statsMap, string _categoryKey, RevisitData _revisit) =>
+    RevisitCategoryStats stats = (map.contains(_statsMap, _categoryKey) ? map.get(_statsMap, _categoryKey) : RevisitCategoryStats.new())
+    stats.count += 1
+    float ageMs = float(nz(_revisit.ageMs, 0))
+    stats.totalAgeMs += ageMs
+    stats.maxAgeMs := (na(stats.maxAgeMs) ? ageMs : math.max(stats.maxAgeMs, ageMs))
+    if _revisit.firstNextIsHigh
+        stats.nextHighCount += 1
+    float nextHighPriceDistance = nz(_revisit.nextHighPriceDist, 0.0), float nextLowPriceDistance = nz(_revisit.nextLowPriceDist, 0.0)
+    float nextHighTimeDistance  = float(nz(_revisit.nextHighTimeDist, 0)), float nextLowTimeDistance = float(nz(_revisit.nextLowTimeDist, 0))
+    stats.totalPH += nextHighPriceDistance
+    stats.minPH := (na(stats.minPH) ? nextHighPriceDistance : math.min(stats.minPH, nextHighPriceDistance))
+    stats.maxPH := (na(stats.maxPH) ? nextHighPriceDistance : math.max(stats.maxPH, nextHighPriceDistance))
+    stats.totalTH += nextHighTimeDistance
+    stats.minTH := (na(stats.minTH) ? nextHighTimeDistance : math.min(stats.minTH, nextHighTimeDistance))
+    stats.maxTH := (na(stats.maxTH) ? nextHighTimeDistance : math.max(stats.maxTH, nextHighTimeDistance))
+    stats.totalPL += nextLowPriceDistance
+    stats.minPL := (na(stats.minPL) ? nextLowPriceDistance : math.min(stats.minPL, nextLowPriceDistance))
+    stats.maxPL := (na(stats.maxPL) ? nextLowPriceDistance : math.max(stats.maxPL, nextLowPriceDistance))
+    stats.totalTL += nextLowTimeDistance
+    stats.minTL := (na(stats.minTL) ? nextLowTimeDistance : math.min(stats.minTL, nextLowTimeDistance))
+    stats.maxTL := (na(stats.maxTL) ? nextLowTimeDistance : math.max(stats.maxTL, nextLowTimeDistance))
+    if not na(_revisit.atrAtCompletion) and _revisit.atrAtCompletion > 0
+        stats.atrValidCount += 1
+        stats.totalAtrH += nextHighPriceDistance / _revisit.atrAtCompletion
+        stats.totalAtrL += nextLowPriceDistance / _revisit.atrAtCompletion
+    map.put(_statsMap, _categoryKey, stats)
+    int(na)
+
+// #endregion Statistics Helpers
+
+// @function computeLegStats                     - Aggregate displayed confirmed legs into category statistics.
+// @param    _legs                               (array<LegData>)          - Confirmed leg records.
+// @param    _countsOutsideStartAsInSession      (bool)                    - Session classification rule for outside-start legs.
+// @param    _legSides                           (LegDisplaySides)         - Side filter applied to the leg table.
+// @returns                                      (map<string, LegCategoryStats>) - Aggregated leg stats keyed by display category.
+computeLegStats(array<LegData> _legs, bool _countsOutsideStartAsInSession, LegDisplaySides _legSides) =>
+    map<string, LegCategoryStats> statsMap = map.new<string, LegCategoryStats>()
+    for leg in _legs
+        if shouldDisplayLegSide(leg.isBullish, _legSides)
+            string sideKey = (leg.isBullish ? "Bull" : "Bear")
+            bool isInSession = isLegInSession(leg.startInSession, leg.endInSession, _countsOutsideStartAsInSession)
+            string sessionKey = (isInSession ? "InSession" : "OutSession")
+            string trendKey = (leg.isWithTrend ? "WithTrend" : "CounterTrend")
+            string structureKey = (leg.brokeStructure ? "Broke" : "NoBreak")
+            bool hasTrendRelationship = (leg.isWithTrend or leg.isCounterTrend)
+            string baseKey = sideKey + "|" + sessionKey
+            addLegStats(statsMap, "All", leg)
+            addLegStats(statsMap, sideKey, leg)
+            addLegStats(statsMap, baseKey, leg)
+            addLegStats(statsMap, baseKey + "|" + structureKey, leg)
+            if hasTrendRelationship
+                addLegStats(statsMap, baseKey + "|" + trendKey, leg)
+                addLegStats(statsMap, baseKey + "|" + trendKey + "|" + structureKey, leg)
+    statsMap
+
+// @function computeRevisitStats                 - Aggregate completed revisit records into category statistics.
+// @param    _revisits                           (array<RevisitData>)      - Completed revisit records.
+// @returns                                      (map<string, RevisitCategoryStats>) - Aggregated revisit stats keyed by display category.
+computeRevisitStats(array<RevisitData> _revisits) =>
+    map<string, RevisitCategoryStats> statsMap = map.new<string, RevisitCategoryStats>()
+    for revisit in _revisits
+        string sideKey = (revisit.pivotIsHigh ? "HiBrk" : "LoBrk")
+        string sessionKey = (revisit.breakInSession ? "In" : "Out")
+        addRevisitStats(statsMap, "All", revisit)
+        addRevisitStats(statsMap, sideKey, revisit)
+        addRevisitStats(statsMap, sideKey + "|" + sessionKey, revisit)
+    statsMap
+
+// #endregion Statistics Functions
+
+// #region CSV Helpers ************************************
+
+// @function buildLegCsvRow                      - Build one CSV row for a confirmed leg record.
+// @param    _leg                                (LegData)                 - Confirmed leg record to serialize.
+// @param    _rowNumber                          (int)                     - One-based CSV row number for the record.
+// @param    _timezone                           (string)                  - Display timezone for timestamp formatting.
+// @param    _countsOutsideStartAsInSession      (bool)                    - Session classification rule for outside-start legs.
+// @returns                                      (string)                  - CSV row string for the supplied leg.
+buildLegCsvRow(LegData _leg, int _rowNumber, string _timezone, bool _countsOutsideStartAsInSession) =>
+    bool isInSession = isLegInSession(_leg.startInSession, _leg.endInSession, _countsOutsideStartAsInSession)
+    str.tostring(_rowNumber) + "," +
+      str.format_time(_leg.startTime, "yyyy-MM-dd HH:mm", _timezone) + "," +
+      str.tostring(_leg.startPrice, format.mintick) + "," +
+      str.format_time(_leg.endTime, "yyyy-MM-dd HH:mm", _timezone) + "," +
+      str.tostring(_leg.endPrice, format.mintick) + "," +
+      (_leg.isBullish ? "Bull" : "Bear") + "," +
+      str.tostring(_leg.priceDistance, format.mintick) + "," +
+      (na(_leg.atrMultiple) ? "" : str.tostring(_leg.atrMultiple, "#.####")) + "," +
+      _leg.dirAtStart.toStr() + "," +
+      (_leg.isWithTrend ? "With" : (_leg.isCounterTrend ? "Counter" : "None")) + "," +
+      (_leg.brokeStructure ? "true" : "false") + "," +
+      str.tostring(_leg.startInSession) + "," + str.tostring(_leg.endInSession) + "," +
+      (isInSession ? "In" : "Out")
+
+// @function buildRevisitCsvRow                  - Build one CSV row for a completed revisit record.
+// @param    _revisit                            (RevisitData)             - Completed revisit record to serialize.
+// @param    _rowNumber                          (int)                     - One-based CSV row number for the record.
+// @param    _timezone                           (string)                  - Display timezone for timestamp formatting.
+// @returns                                      (string)                  - CSV row string for the supplied revisit.
+buildRevisitCsvRow(RevisitData _revisit, int _rowNumber, string _timezone) =>
+    str.tostring(_rowNumber) + "," +
+      (_revisit.pivotIsHigh ? "High" : "Low") + "," +
+      str.tostring(_revisit.pivotPrice, format.mintick) + "," +
+      str.format_time(_revisit.pivotTime, "yyyy-MM-dd HH:mm", _timezone) + "," +
+      str.format_time(_revisit.breakTime, "yyyy-MM-dd HH:mm", _timezone) + "," +
+      str.tostring(nz(_revisit.ageMs, 0)) + "," +
+      str.tostring(_revisit.breakInSession) + "," +
+      str.tostring(_revisit.firstNextIsHigh) + "," +
+      str.tostring(_revisit.nextHighPrice, format.mintick) + "," +
+      str.format_time(_revisit.nextHighTime, "yyyy-MM-dd HH:mm", _timezone) + "," +
+      str.tostring(_revisit.nextHighPriceDist, format.mintick) + "," +
+      str.tostring(nz(_revisit.nextHighTimeDist, 0)) + "," +
+      str.tostring(_revisit.nextLowPrice, format.mintick) + "," +
+      str.format_time(_revisit.nextLowTime, "yyyy-MM-dd HH:mm", _timezone) + "," +
+      str.tostring(_revisit.nextLowPriceDist, format.mintick) + "," +
+      str.tostring(nz(_revisit.nextLowTimeDist, 0))
+
+// #endregion CSV Helpers
+
+// #region Table Display Functions ************************
+
+// #region Table Display Helpers //
+
+getLegSubcategoryLabels() =>
+    array.from("With Trend", "Counter Trend", "Broke Structure", "No Break",
+      "WT + Broke", "WT + No Break", "CT + Broke", "CT + No Break")
+
+getLegSubcategorySuffixes() =>
+    array.from("|WithTrend", "|CounterTrend", "|Broke", "|NoBreak",
+      "|WithTrend|Broke", "|WithTrend|NoBreak", "|CounterTrend|Broke", "|CounterTrend|NoBreak")
+
+formatLegStats(LegCategoryStats _stats) =>
+    if na(_stats)
+        ["0", "—", "—", "—"]
+    else
+        float averagePrice = (_stats.count > 0 ? _stats.totalPrice / _stats.count : float(na))
+        float averageAtr = (_stats.atrCount > 0 ? _stats.totalAtr / _stats.atrCount : float(na))
+        [str.tostring(_stats.count), formatPriceAndAtr(averagePrice, averageAtr), formatPriceAndAtr(_stats.minPrice, _stats.minAtr), formatPriceAndAtr(_stats.maxPrice, _stats.maxAtr)]
+
+formatRevisitDistance(float _averageDistance, float _averageAtr, float _minDistance, float _maxDistance) =>
+    if na(_averageDistance)
+        "—"
+    else
+        string topLine = str.tostring(_averageDistance, format.mintick) + (na(_averageAtr) ? "" : " (" + str.tostring(_averageAtr, "#.##") + "×)")
+        string bottomLine = "↓" + str.tostring(nz(_minDistance, _averageDistance), format.mintick) + " ↑" + str.tostring(nz(_maxDistance, _averageDistance), format.mintick)
+        topLine + "\n" + bottomLine
+
+formatRevisitTime(float _averageDuration, float _minDuration, float _maxDuration) =>
+    if na(_averageDuration)
+        "—"
+    else
+        formatDuration(int(_averageDuration)) + "\n↓" + formatDuration(int(nz(_minDuration, _averageDuration))) + " ↑" + formatDuration(int(nz(_maxDuration, _averageDuration)))
+
+formatRevisitStats(RevisitCategoryStats _stats) =>
+    if na(_stats)
+        ["0", "—", "—", "—", "—", "—", "—"]
+    else
+        int revisitCount = _stats.count
+        string ageText = (revisitCount > 0 ? formatDuration(int(_stats.totalAgeMs / revisitCount)) + "\n↑ " + formatDuration(int(nz(_stats.maxAgeMs, 0))) : "—")
+        string nextHighText = (revisitCount > 0 ? str.tostring(int(_stats.nextHighCount * 100.0 / revisitCount)) + "%" : "—")
+        float averagePriceToHigh = (revisitCount > 0 ? _stats.totalPH / revisitCount : float(na))
+        float averageAtrToHigh = (_stats.atrValidCount > 0 ? _stats.totalAtrH / _stats.atrValidCount : float(na))
+        float averageTimeToHigh = (revisitCount > 0 ? _stats.totalTH / revisitCount : float(na))
+        float averagePriceToLow = (revisitCount > 0 ? _stats.totalPL / revisitCount : float(na))
+        float averageAtrToLow = (_stats.atrValidCount > 0 ? _stats.totalAtrL / _stats.atrValidCount : float(na))
+        float averageTimeToLow = (revisitCount > 0 ? _stats.totalTL / revisitCount : float(na))
+        [str.tostring(revisitCount), ageText, nextHighText,
+          formatRevisitDistance(averagePriceToHigh, averageAtrToHigh, _stats.minPH, _stats.maxPH), formatRevisitTime(averageTimeToHigh, _stats.minTH, _stats.maxTH),
+          formatRevisitDistance(averagePriceToLow, averageAtrToLow, _stats.minPL, _stats.maxPL), formatRevisitTime(averageTimeToLow, _stats.minTL, _stats.maxTL)]
+
+setTableTitleRows(table _table, int _maxColumn, string _titleLine, string _subtitleLine, string _textSize, color _background, color _titleColor, color _subtitleColor) =>
+    table.cell(_table, 0, 0, _titleLine, text_color=_titleColor, bgcolor=_background, text_size=_textSize, text_halign=text.align_center)
+    table.cell(_table, 0, 1, _subtitleLine, text_color=_subtitleColor, bgcolor=_background, text_size=_textSize, text_halign=text.align_center)
+    for columnIndex = 1 to _maxColumn
+        table.cell(_table, columnIndex, 0, "", bgcolor=_background)
+        table.cell(_table, columnIndex, 1, "", bgcolor=_background)
+    table.merge_cells(_table, 0, 0, _maxColumn, 0)
+    table.merge_cells(_table, 0, 1, _maxColumn, 1)
+    int(na)
+
+// #endregion Table Display Helpers
+
+// @function renderLegTable                      - Populate the on-chart leg analysis table.
+// @param    _table                              (table)                   - Table instance to render into.
+// @param    _stats                              (map<string, LegCategoryStats>) - Pre-aggregated leg stats keyed by category.
+// @param    _textSizeEnum                       (iLib.TextSize)           - Selected display text size.
+// @param    _sessionName                        (string)                  - Session label shown in the title row.
+// @param    _sessionAtr                         (float)                   - Current session ATR shown in the title row.
+// @param    _legSides                           (LegDisplaySides)         - Side filter applied to the leg table.
+// @returns                                      (int)                     - Typed fallback for Pine branch inference.
+renderLegTable(table _table, map<string, LegCategoryStats> _stats, iLib.TextSize _textSizeEnum,
+    string _sessionName, float _sessionAtr, LegDisplaySides _legSides) =>
+    string textSize = _textSizeEnum.textSize()
+    color TB = color.new(#16213e, 0),  color TC = color.new(#e94560, 0)
+    color HB = color.new(#1a1a2e, 0),  color HC = color.new(color.silver, 0)
+    color OB = color.new(#0f3460, 0)
+    color DE = color.new(#131722, 0),   color DO = color.new(#1a1a2e, 0)
+    color TX = color.new(color.white, 0)
+    int maxColumn = LEG_COLS - 1
+    string atrText = (na(_sessionAtr) ? "—" : str.tostring(_sessionAtr, format.mintick))
+    string[] headers = array.from("Category", "Count", "Average", "Min", "Max")
+    for [columnIndex, headerText] in headers
+        table.cell(_table, columnIndex, 2, headerText, text_color=HC, bgcolor=HB, text_size=textSize, text_halign=(columnIndex == 0 ? text.align_left : text.align_right))
+    LegCategoryStats allStats = map.get(_stats, "All")
+    int displayedLegCount = (na(allStats) ? 0 : allStats.count)
+    setTableTitleRows(_table, maxColumn, "Leg Analysis  •  " + _sessionName, "ATR " + atrText + "  •  Legs " + str.tostring(displayedLegCount), textSize, TB, TC, HC)
+    [allCount, allAverage, allMin, allMax] = formatLegStats(allStats)
+    table.cell(_table, 0, 3, getLegSummaryLabel(_legSides), text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_left)
+    table.cell(_table, 1, 3, allCount, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 2, 3, allAverage, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 3, 3, allMin, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 4, 3, allMax, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    string[] subcategoryLabels = getLegSubcategoryLabels(), string[] subcategorySuffixes = getLegSubcategorySuffixes()
+    string[] sidePrefixes = array.new_string(), string[] sideHeaders = array.new_string()
+    if _legSides != LegDisplaySides.bearishOnly
+        array.push(sidePrefixes, "Bull")
+        array.push(sideHeaders, "BULLISH")
+    if _legSides != LegDisplaySides.bullishOnly
+        array.push(sidePrefixes, "Bear")
+        array.push(sideHeaders, "BEARISH")
+    string[] sessionKeys = array.from("InSession", "OutSession")
+    string[] sessionHeaders = array.from("In Session", "Out of Session")
+    for [sideIndex, sidePrefix] in sidePrefixes
+        int sideRow = 4 + sideIndex * 19
+        color sideBackground = (sideIndex == 0 ? color.new(#0b3d2e, 0) : color.new(#3d0b1a, 0))
+        color sideColor = (sideIndex == 0 ? color.new(#26a69a, 0) : color.new(#ef5350, 0))
+        LegCategoryStats sideStats = map.get(_stats, sidePrefix)
+        [sideCount, sideAverage, sideMin, sideMax] = formatLegStats(sideStats)
+        table.cell(_table, 0, sideRow, array.get(sideHeaders, sideIndex), text_color=sideColor, bgcolor=sideBackground, text_size=textSize, text_halign=text.align_left)
+        table.cell(_table, 1, sideRow, sideCount, text_color=sideColor, bgcolor=sideBackground, text_size=textSize, text_halign=text.align_right)
+        table.cell(_table, 2, sideRow, sideAverage, text_color=sideColor, bgcolor=sideBackground, text_size=textSize, text_halign=text.align_right)
+        table.cell(_table, 3, sideRow, sideMin, text_color=sideColor, bgcolor=sideBackground, text_size=textSize, text_halign=text.align_right)
+        table.cell(_table, 4, sideRow, sideMax, text_color=sideColor, bgcolor=sideBackground, text_size=textSize, text_halign=text.align_right)
+        for [sessionIndex, sessionKey] in sessionKeys
+            int sessionRow = sideRow + 1 + sessionIndex * 9
+            color sessionBackground = (sideIndex == 0 ? color.new(#0b3d2e, 45) : color.new(#3d0b1a, 45))
+            string baseKey = sidePrefix + "|" + sessionKey
+            LegCategoryStats sessionStats = map.get(_stats, baseKey)
+            [sessionCount, sessionAverage, sessionMin, sessionMax] = formatLegStats(sessionStats)
+            table.cell(_table, 0, sessionRow, "  " + array.get(sessionHeaders, sessionIndex), text_color=sideColor, bgcolor=sessionBackground, text_size=textSize, text_halign=text.align_left)
+            table.cell(_table, 1, sessionRow, sessionCount, text_color=sideColor, bgcolor=sessionBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 2, sessionRow, sessionAverage, text_color=sideColor, bgcolor=sessionBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 3, sessionRow, sessionMin, text_color=sideColor, bgcolor=sessionBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 4, sessionRow, sessionMax, text_color=sideColor, bgcolor=sessionBackground, text_size=textSize, text_halign=text.align_right)
+            for [subcategoryIndex, subcategoryLabel] in subcategoryLabels
+                int detailRow = sessionRow + 1 + subcategoryIndex
+                string detailKey = baseKey + array.get(subcategorySuffixes, subcategoryIndex)
+                LegCategoryStats detailStats = map.get(_stats, detailKey)
+                [detailCount, detailAverage, detailMin, detailMax] = formatLegStats(detailStats)
+                color detailBackground = (subcategoryIndex % 2 == 0 ? DE : DO)
+                table.cell(_table, 0, detailRow, "    " + subcategoryLabel, text_color=TX, bgcolor=detailBackground, text_size=textSize, text_halign=text.align_left)
+                table.cell(_table, 1, detailRow, detailCount, text_color=TX, bgcolor=detailBackground, text_size=textSize, text_halign=text.align_right)
+                table.cell(_table, 2, detailRow, detailAverage, text_color=TX, bgcolor=detailBackground, text_size=textSize, text_halign=text.align_right)
+                table.cell(_table, 3, detailRow, detailMin, text_color=TX, bgcolor=detailBackground, text_size=textSize, text_halign=text.align_right)
+                table.cell(_table, 4, detailRow, detailMax, text_color=TX, bgcolor=detailBackground, text_size=textSize, text_halign=text.align_right)
+    int(na)
+
+// @function renderRevisitTable                  - Populate the on-chart revisit analysis table.
+// @param    _table                              (table)                   - Table instance to render into.
+// @param    _stats                              (map<string, RevisitCategoryStats>) - Pre-aggregated revisit stats keyed by category.
+// @param    _textSizeEnum                       (iLib.TextSize)           - Selected display text size.
+// @param    _sessionName                        (string)                  - Session label shown in the title row.
+// @param    _sessionAtr                         (float)                   - Current session ATR shown in the title row.
+// @param    _completedCount                     (int)                     - Completed revisit count shown in the title row.
+// @param    _pendingCount                       (int)                     - Pending revisit count shown in the title row.
+// @returns                                      (int)                     - Typed fallback for Pine branch inference.
+renderRevisitTable(table _table, map<string, RevisitCategoryStats> _stats, iLib.TextSize _textSizeEnum,
+    string _sessionName, float _sessionAtr, int _completedCount, int _pendingCount) =>
+    string textSize = _textSizeEnum.textSize()
+    color TB = color.new(#16213e, 0),  color TC = color.new(#e94560, 0)
+    color HB = color.new(#1a1a2e, 0),  color HC = color.new(color.silver, 0)
+    color OB = color.new(#0f3460, 0)
+    color DE = color.new(#131722, 0),   color DO = color.new(#1a1a2e, 0)
+    color TX = color.new(color.white, 0)
+    int maxColumn = REV_COLS - 1
+    string atrText = (na(_sessionAtr) ? "—" : str.tostring(_sessionAtr, format.mintick))
+    setTableTitleRows(_table, maxColumn, "Revisit Analysis  •  " + _sessionName,
+      "ATR " + atrText + "  •  Done " + str.tostring(_completedCount) + "  •  Pending " + str.tostring(_pendingCount), textSize, TB, TC, HC)
+    string[] headers = array.from("Category", "Count", "Age\navg / oldest", "Next\nHigh %",
+      "Dist→High\navg ↓min ↑max", "Time→High\navg ↓min ↑max",
+      "Dist→Low\navg ↓min ↑max", "Time→Low\navg ↓min ↑max")
+    for [columnIndex, headerText] in headers
+        table.cell(_table, columnIndex, 2, headerText, text_color=HC, bgcolor=HB, text_size=textSize, text_halign=(columnIndex == 0 ? text.align_left : text.align_right))
+    RevisitCategoryStats allStats = map.get(_stats, "All")
+    [allCount, allAge, allNextHigh, allDistanceToHigh, allTimeToHigh, allDistanceToLow, allTimeToLow] = formatRevisitStats(allStats)
+    table.cell(_table, 0, 3, "All Breaks", text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_left)
+    table.cell(_table, 1, 3, allCount, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 2, 3, allAge, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 3, 3, allNextHigh, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 4, 3, allDistanceToHigh, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 5, 3, allTimeToHigh, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 6, 3, allDistanceToLow, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    table.cell(_table, 7, 3, allTimeToLow, text_color=TX, bgcolor=OB, text_size=textSize, text_halign=text.align_right)
+    string[] sidePrefixes = array.from("HiBrk", "LoBrk")
+    string[] sideHeaders = array.from("HIGH BROKEN  (up = +)", "LOW BROKEN  (down = +)")
+    string[] subgroupHeaders = array.from("All", "In Session", "Out of Session")
+    string[] subgroupKeys = array.from("", "|In", "|Out")
+    for [sideIndex, sidePrefix] in sidePrefixes
+        int headerRow = 4 + sideIndex * 4
+        color sideBackground = (sideIndex == 0 ? color.new(#0b3d2e, 0) : color.new(#3d0b1a, 0))
+        color sideColor = (sideIndex == 0 ? color.new(#26a69a, 0) : color.new(#ef5350, 0))
+        table.cell(_table, 0, headerRow, array.get(sideHeaders, sideIndex), text_color=sideColor, bgcolor=sideBackground, text_size=textSize, text_halign=text.align_left)
+        for columnIndex = 1 to maxColumn
+            table.cell(_table, columnIndex, headerRow, "", bgcolor=sideBackground)
+        for [subgroupIndex, subgroupHeader] in subgroupHeaders
+            int subgroupRow = headerRow + 1 + subgroupIndex
+            string subgroupKey = sidePrefix + array.get(subgroupKeys, subgroupIndex)
+            RevisitCategoryStats subgroupStats = map.get(_stats, subgroupKey)
+            [subgroupCount, subgroupAge, subgroupNextHigh, subgroupDistanceToHigh, subgroupTimeToHigh, subgroupDistanceToLow, subgroupTimeToLow] = formatRevisitStats(subgroupStats)
+            color subgroupBackground = (subgroupIndex % 2 == 0 ? DE : DO)
+            table.cell(_table, 0, subgroupRow, "  " + subgroupHeader, text_color=TX, bgcolor=subgroupBackground, text_size=textSize, text_halign=text.align_left)
+            table.cell(_table, 1, subgroupRow, subgroupCount, text_color=TX, bgcolor=subgroupBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 2, subgroupRow, subgroupAge, text_color=TX, bgcolor=subgroupBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 3, subgroupRow, subgroupNextHigh, text_color=TX, bgcolor=subgroupBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 4, subgroupRow, subgroupDistanceToHigh, text_color=TX, bgcolor=subgroupBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 5, subgroupRow, subgroupTimeToHigh, text_color=TX, bgcolor=subgroupBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 6, subgroupRow, subgroupDistanceToLow, text_color=TX, bgcolor=subgroupBackground, text_size=textSize, text_halign=text.align_right)
+            table.cell(_table, 7, subgroupRow, subgroupTimeToLow, text_color=TX, bgcolor=subgroupBackground, text_size=textSize, text_halign=text.align_right)
+    int(na)
+
+// #endregion Table Display Functions
+
+// #endregion Functions
+//+-------------------------------------------------------+
+//                        EXECUTION                       |
+//+-------------------------------------------------------+
+// #region Execution
+
+// #region Shared Runtime Context *************************
+bool barInSess = not na(time(timeframe.period, i_session, tz))
+float sessATR  = ATRxS.getSessionAtr(tz, i_session, i_atrCount)
+bool outsideIn = (i_outsideRule == OutsideStartRule.countsIn)
+bool revMode   = not IS_LEG_MODE
+
+// #endregion Shared Runtime Context
+
+// #region Market Structure Engine ************************
+
+MS.initState(msState)
+MS.Event[] events = MS.tick(
+    pivots, msState, true,
+    i_lookBack, i_lookAhead, TOUCH_DETECT_BARS,
+    i_useATR, sessATR, i_atrMultiple, float(na))
+msDir := MS.updateExternalDirection(pivots, msState, events, msDir)
+if msDir == MS.DIR.Rising or msDir == MS.DIR.Falling
+    persistentDir := msDir
+int ehi    = MS.getExtHighIdxFromState(msState)
+int eli    = MS.getExtLowIdxFromState(msState)
+float extH = getExternalPivotPrice(pivots, ehi)
+float extL = getExternalPivotPrice(pivots, eli)
+
+// #endregion Market Structure Engine
+
+// #region Break Detection ********************************
+
+int newRevs = 0
+if revMode and array.size(activePivots) > 0
+    array<int> brokeIdx = array.new<int>()
+    for [i, ap] in activePivots
+        bool touched = (ap.isHigh ? high >= ap.price : low <= ap.price)
+        if touched
+            array.push(pendingRevs, RevisitData.new(
+                pivotIsHigh=ap.isHigh, pivotPrice=ap.price, pivotTime=ap.timeUnix, pivotBar=ap.bar,
+                breakPrice=ap.price, breakTime=time, breakBar=bar_index,
+                breakInSession=barInSess, ageMs=(time - ap.timeUnix)))
+            array.push(brokeIdx, i)
+    if array.size(brokeIdx) > 0
+        for i = array.size(brokeIdx) - 1 to 0
+            array.remove(activePivots, array.get(brokeIdx, i))
+
+// #endregion Break Detection
+
+// #region Confirmed Pivot Processing *********************
+
+int newLegs = 0
+if MS.hasNewConfirmed(events)
+    for evt in events
+        if evt.code == MS.EventCode.AddConfirmed or evt.code == MS.EventCode.AddATRConfirm
+            if evt.pivotIndex >= 0 and evt.pivotIndex < array.size(pivots)
+                MS.Pivot pv = array.get(pivots, evt.pivotIndex)
+                int pOff    = bar_index - pv.bar
+                bool pInS   = (pOff >= 0 ? (barInSess[pOff] == true) : false)
+                newLegs += processConfirmedPivot(zigzag, legs,
+                    pv.price, pv.bar, pv.timeUnix, pv.isHigh,
+                    pInS, persistentDir, extH, extL, sessATR)
+                if revMode
+                    array.push(activePivots, PivotSnapshot.new(price=pv.price, bar=pv.bar, timeUnix=pv.timeUnix, isHigh=pv.isHigh))
+                    newRevs += updatePendingRevisits(pendingRevs, confirmedRevs, pv.price, pv.bar, pv.timeUnix, pv.isHigh, sessATR)
+
+// #endregion Confirmed Pivot Processing
+
+// #region CSV Export *************************************
+
+if i_csvLog and barstate.isconfirmed
+    if IS_LEG_MODE and newLegs > 0
+        if not csvHdrLogged
+            log.info(LEG_CSV_LEGEND)
+            log.info(LEG_CSV)
+            csvHdrLogged := true
+        int tot = array.size(legs)
+        int fst = math.max(0, tot - newLegs)
+        if fst < tot
+            for i = fst to tot - 1
+                log.info(buildLegCsvRow(array.get(legs, i), i + 1, tz, outsideIn))
+    if revMode and newRevs > 0
+        if not csvHdrLogged
+            log.info(REV_CSV_LEGEND)
+            log.info(REV_CSV)
+            csvHdrLogged := true
+        int tot = array.size(confirmedRevs)
+        int fst = math.max(0, tot - newRevs)
+        if fst < tot
+            for i = fst to tot - 1
+                log.info(buildRevisitCsvRow(array.get(confirmedRevs, i), i + 1, tz))
+
+// #endregion CSV Export
+
+// #region Table Display **********************************
+
+if barstate.islast
+    if IS_LEG_MODE
+        map<string, LegCategoryStats> legStats = computeLegStats(legs, outsideIn, i_legSides)
+        renderLegTable(tbl, legStats, i_textSize, i_session, sessATR, i_legSides)
+    else
+        map<string, RevisitCategoryStats> revisitStats = computeRevisitStats(confirmedRevs)
+        renderRevisitTable(tbl, revisitStats, i_textSize, i_session, sessATR, array.size(confirmedRevs), array.size(pendingRevs))
+
+// #endregion Table Display
+
+// #endregion Execution
+//+-------------------------------------------------------+
+//                          DEBUG                         |
+//+-------------------------------------------------------+
+// #region Debug
+
+if i_debug and barstate.isconfirmed
+    if IS_LEG_MODE and newLegs > 0
+        int tot = array.size(legs)
+        int fst = math.max(0, tot - newLegs)
+        if fst < tot
+            for i = fst to tot - 1
+                LegData l = array.get(legs, i)
+                string da = (l.isBullish ? "▲" : "▼")
+                string ai = (na(l.atrMultiple) ? "" : " " + str.tostring(l.atrMultiple, "#.##") + "×")
+                string tt = (l.isWithTrend ? " WT" : (l.isCounterTrend ? " CT" : ""))
+                string bt = (l.brokeStructure ? " BRK" : "")
+                bool li   = isLegInSession(l.startInSession, l.endInSession, outsideIn)
+                label.new(l.endBar, l.endPrice,
+                  da + " " + str.tostring(l.priceDistance, format.mintick) + ai + tt + bt + (li ? " [In]" : " [Out]"),
+                  xloc=xloc.bar_index, size=size.tiny,
+                  style=(l.isBullish ? label.style_label_down : label.style_label_up),
+                  color=(l.isBullish ? color.new(color.teal, 30) : color.new(color.red, 30)), textcolor=color.white)
+    if revMode and newRevs > 0
+        int tot = array.size(confirmedRevs)
+        int fst = math.max(0, tot - newRevs)
+        if fst < tot
+            for i = fst to tot - 1
+                RevisitData r = array.get(confirmedRevs, i)
+                string info = "⚡ " + (r.pivotIsHigh ? "H" : "L") + " Age:" + formatDuration(nz(r.ageMs, 0)) +
+                  " Next:" + (r.firstNextIsHigh ? "H" : "L") +
+                  "\n→H:" + str.tostring(r.nextHighPriceDist, format.mintick) + " " + formatDuration(nz(r.nextHighTimeDist, 0)) +
+                  "\n→L:" + str.tostring(r.nextLowPriceDist, format.mintick) + " " + formatDuration(nz(r.nextLowTimeDist, 0))
+                label.new(r.breakBar, r.breakPrice, info,
+                  xloc=xloc.bar_index, size=size.tiny, style=label.style_label_center,
+                  color=(r.pivotIsHigh ? color.new(color.teal, 30) : color.new(color.red, 30)), textcolor=color.white)
+
+// #endregion Debug

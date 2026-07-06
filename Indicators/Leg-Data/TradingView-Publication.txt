@@ -1,0 +1,71 @@
+[b]Market Structure Analysis[/b]
+
+Market Structure Analysis is a dual-mode indicator for studying confirmed swing
+behavior after private market-structure pivots are formed. It can either measure
+completed swing-to-swing legs or track what happens after a confirmed swing
+level is touched or broken.
+
+[b]Modes[/b]
+[list]
+[*][b]Leg Analysis[/b] measures completed low-to-high and high-to-low legs.
+[*][b]Revisit Analysis[/b] studies what forms after a confirmed swing level is revisited or broken.
+[/list]
+
+[b]Leg Analysis[/b]
+[list]
+[*]Measures absolute distance from the start pivot to the end pivot.
+[*]Normalizes distance by session ATR when available.
+[*]Classifies each leg as bullish or bearish.
+[*]Labels each leg as with trend, counter trend, broke structure, or no break.
+[*]Separates in-session and out-of-session legs using the configured outside-start rule.
+[/list]
+
+[b]Revisit Analysis[/b]
+[list]
+[*]Stores each confirmed pivot as an active level.
+[*]Opens a revisit record when price first touches or breaks that level.
+[*]Waits for the next confirmed high and the next confirmed low after the break.
+[*]Measures signed price distance and time distance from the break to both next swings.
+[*]Shows how often the first post-break confirmed swing is a high.
+[/list]
+
+[b]Inputs[/b]
+[list]
+[*][b]Analysis Type[/b] switches between Leg Analysis and Revisit Analysis.
+[*][b]Session / Timezone[/b] controls session membership and ATR scope.
+[*][b]ATR Settings[/b] control the session ATR averaging window.
+[*][b]Market Structure[/b] controls pivot lookback/lookahead and optional ATR-based confirmation.
+[*][b]Table[/b] controls position and text size.
+[*][b]CSV Export[/b] logs completed records to Pine Logs.
+[*][b]Debug[/b] adds compact diagnostic labels for newly completed records.
+[/list]
+
+[b]CSV Output[/b]
+[list]
+[*]The first log line is a legend that explains each CSV column.
+[*]The second log line is the raw CSV header.
+[*]After that, each newly completed record is logged as one CSV row.
+[*]The legend and header change automatically with the selected analysis mode.
+[/list]
+
+[b]How To Use[/b]
+[list=1]
+[*]Select the analysis mode you want to study.
+[*]Set the session and timezone so ATR and in-session classification match your market.
+[*]Adjust pivot lookback / lookahead and optional ATR confirmation.
+[*]Watch the table on the last bar for aggregated results.
+[*]Enable CSV Export if you want completed records in Pine Logs.
+[/list]
+
+[b]Notes[/b]
+[list]
+[*]Leg statistics are based on confirmed swings only, not live unconfirmed pivots.
+[*]Revisit statistics complete only after both the next confirmed high and next confirmed low are known.
+[*]Signed revisit distances are direction-aware: high breaks treat upward continuation as positive, low breaks treat downward continuation as positive.
+[*]Session classification is asymmetric by design: starts inside are always in session, while outside starts follow the selected outside-start rule.
+[/list]
+
+[quote]
+This script is intended for structural study and review. It does not place
+trades, send alerts, or provide broker automation by itself.
+[/quote]
