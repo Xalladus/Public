@@ -67,3 +67,81 @@ P^2 and P^3 in this script are powers of the one-step probability. They are not 
 [*]Test whether a market spends more time trending or mean-reverting at a chosen timeframe.
 [*]Check whether a recent state has historically led to bullish continuation, neutral drift, or bearish follow-through.
 [/list]
+
+
+--- Update 1 ---
+
+[b]Markov Transition Matrix - Session Update[/b]
+
+This update adds a more flexible transition model, a continuation-move panel, and live candle-state coloring.
+
+[b]Changes In This Update[/b]
+[list]
+[*][b]Candle Diff[/b] was added so transitions can be measured across more than one analysis candle. A value of 1 keeps the original next-state behavior, while larger values measure state changes across a wider gap.
+[*]The table title now reflects the selected analysis timeframe and candle difference, for example Daily 1 Candle Diff or 4h 2 Candle Diff.
+[*][b]Average Move[/b] was added as a new panel beneath the matrix. It reports Bull -> Bull, Neutral -> Neutral, and Bear -> Bear continuation behavior.
+[*]For each same-state continuation, the study now measures:
+[list]
+[*]average ending close from the origin close
+[*]average high excursion
+[*]average low excursion
+[*]how often the ending close finishes up or down
+[/list]
+[*]Those continuation values are shown in both percentage terms and absolute price terms.
+[*][b]Display[/b] was added so users can choose to show the Transition Matrix, the Average Move panel, or Both.
+[*]Live candle coloring was added for lower timeframes. Candles can now be colored Bullish, Neutral, or Bearish based on where the chart candle closes relative to the active higher-timeframe threshold lines.
+[*][b]Color Candles[/b] was added as an on/off option.
+[*]Custom Bull, Neutral, and Bear candle colors were added in the appearance settings.
+[*]The input order was adjusted so [b]Lookback Window[/b] now appears above [b]Timeframe[/b].
+[/list]
+
+[b]Behavior Notes[/b]
+[list]
+[*]The live candle coloring does not wait for the higher-timeframe candle to close. It uses the current threshold boundaries derived from the selected higher-timeframe reference close.
+[*]A lower-timeframe candle only turns Bullish if it closes above the bullish threshold line.
+[*]A lower-timeframe candle only turns Bearish if it closes below the bearish threshold line.
+[*]If price closes between those lines, the candle remains Neutral.
+[/list]
+
+--- Update 2 ---
+
+[b]v2.0 — Window Modes: Rolling, Isolated, and Non-Overlapping[/b]
+
+The core problem with the original version was that every measurement window shared almost all of its candles with the one before it. With a 20-day lookback, consecutive windows overlap by 19 days, so a single real move gets counted roughly 20 times. The matrix still showed useful tendencies, but the sample counts were inflated and the observations were not independent.
+
+This update adds a [b]Window Mode[/b] setting that lets you control how the measurement windows are spaced. It also updates the chart visualization so directional observations clearly show both the confirmed signal period and the candles used to produce it.
+
+[b]The three modes[/b]
+
+[list]
+[*][b]Rolling[/b] (original behavior) — A measurement is taken on every candle. Windows overlap by N-1 candles. This gives the highest sample count but the observations are autocorrelated. Nothing has changed if you leave this selected.
+[*][b]Isolated[/b] — When a window classifies as Bullish or Bearish, the count restarts and no new measurement is taken until N fresh candles have printed. The next window shares zero candles with the signal window. Neutral windows keep rolling one candle at a time so the indicator stays responsive between directional events. This is the recommended mode for most users.
+[*][b]Non-Overlapping[/b] — Every classification restarts the count, regardless of whether the result was Bullish, Neutral, or Bearish. This produces fully independent samples but the fewest observations.
+[/list]
+
+[b]Why Isolated is the default recommendation[/b]
+
+If every window were forced to be non-overlapping, whether you detect a directional regime at all depends entirely on where the counting happens to start. By letting Neutral windows keep rolling, the grid aligns itself to the market rather than to an arbitrary starting bar. Directional signals anchor the reset, so the next N candles are always a clean, non-overlapping answer to "what happened after that signal."
+
+[b]Other changes[/b]
+
+[list]
+[*]The Average Move panel relabels to [b]Forward Move[/b] in Isolated and Non-Overlapping modes. Instead of showing only same-state continuations (e.g. Bull to Bull), it shows the average move following any transition out of that state — which is the question you are actually asking when directional samples are scarce.
+[*]A two-line footer at the bottom of the table now shows the active mode, lookback, step, observation count, transition count, average gap between observations, and how many candles remain before the next evaluation window opens.
+[*]Candle coloring now marks confirmed directional observations only. Bullish signals use the selected Bull color and Bearish signals use the selected Bear color. Neutral observations and collection periods retain the chart's normal candle colors.
+[*]When the chart timeframe is lower than the analysis timeframe, every chart candle contained within the confirmed directional analysis candle receives the signal color. For example, a confirmed daily signal colors all three candles on an 8-hour chart.
+[*]Each confirmed directional observation draws a horizontal collection line across the candles used to calculate it. The line is positioned at the midpoint between the high and low of the signal candle.
+[*]Collection lines automatically use the matching Bull or Bear color. Their size and Solid, Dashed, or Dotted style can be configured in the Appearance settings.
+[*]The prediction row shows a "[held, N to go]" tag when the current state is being held during a cooldown period.
+[/list]
+
+[b]Settings quick reference[/b]
+
+[list]
+[*][b]Window Mode[/b] — Isolated / Non-Overlapping / Rolling (see above). Isolated is the default.
+[*][b]Lookback Window[/b] — Number of candles in each measurement window (unchanged).
+[*][b]Candle Diff[/b] — In Rolling mode this is the number of candles between the from-state and the to-state. In Isolated and Non-Overlapping modes this is the number of observations between them. Default 1 compares each window to the next.
+[*][b]Color Candles[/b] — Enables or disables Bull/Bear coloring on confirmed directional signal candles.
+[*][b]Bull / Bear[/b] — Sets the colors shared by directional signal candles and their collection lines.
+[*][b]Collection Line Size / Style[/b] — Controls the width and pattern of the collection-period lines. Dotted is the default style.
+[/list]

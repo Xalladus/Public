@@ -1,249 +1,462 @@
 //@version=6
-indicator("Markov Transition Matrix", "MarkovMTX", overlay = true)
+indicator("Markov Transition Matrix", "MarkovMTX", overlay = true,
+  behind_chart = false, max_bars_back = 5000,
+  max_lines_count = 500)
+
 
 //+-------------------------------------------------------+
 //                        INFORMATION                     |
 //+-------------------------------------------------------+
 // #region Information
 
+
 // 3x3 transition-probability matrix.
 //
-// For each period we compute the return over the last N candles
+// For each measurement we compute the return over the last N candles
 // (N = "Lookback Window") and classify it as:
 //   Bullish  if return > +threshold %
 //   Bearish  if return < -threshold %
 //   Neutral  otherwise
 //
-// We then tally every N-candle state-to-state transition across
-// all available history. Each cell shows probability, P^2, P^3,
-// and raw count. A directional prediction (P(Bull) - P(Bear))
-// from the most recent confirmed state is shown with a color
-// gradient bar.
+// WINDOW MODE
+//   Rolling         - A measurement is taken on every candle. Consecutive
+//                     windows share N-1 candles. Highest sample count but
+//                     autocorrelated.
+//
+//   Isolated        - When a window classifies Bullish or Bearish, the
+//                     counter restarts and no new measurement is taken
+//                     until N fresh candles have printed. Neutral windows
+//                     keep rolling one candle at a time. Balances
+//                     independence with sensitivity.
+//
+//   Non-Overlapping - Every classification restarts the counter, regardless
+//                     of result. Fully independent samples but fewest
+//                     observations.
+//
+// Transitions are tallied between consecutive measurements. Each cell shows
+// probability, P^2, P^3, and raw count. A directional prediction
+// (P(Bull) - P(Bear)) from the most recent confirmed state is shown with a
+// color gradient bar.
+
 
 // #endregion Information
+
 
 //+-------------------------------------------------------+
 //                          INPUTS                        |
 //+-------------------------------------------------------+
 // #region Inputs
 
+
 // #region Tooltips ***************************************
 
-string tt_threshold = "Return threshold (%). Example: 5 -> above +5% = Bullish,"
+
+string tt_threshold    = "Return threshold (%). Example: 5 -> above +5% = Bullish,"
   + " below -5% = Bearish, between = Neutral."
-string tt_timeframe = "Analysis timeframe. Must be >= the chart timeframe."
-string tt_lookback = "Lookback window (candles) used to measure each period's return."
+string tt_timeframe    = "Analysis timeframe. Must be >= the chart timeframe."
+string tt_lookback     = "Lookback window (candles) used to measure each period's return."
   + " Example: 20 on the daily timeframe = 20-day return."
-string tt_candleDiff = "Number of analysis candles between the 'from' state and the 'to' state."
-  + " Example: 2 compares the current state to the state 2 candles earlier."
-string tt_display = "Choose whether to show the transition matrix, the average-move panel, or both."
-string tt_colorCandles = "Color chart candles by the live bullish, neutral, or bearish state."
-string tt_tablePos = "Where to anchor the table on the chart."
+string tt_windowMode   = "How measurement windows are spaced."
+  + "\n\nRolling: every candle produces a measurement. Windows overlap by N-1 candles."
+  + " Highest sample count but autocorrelated."
+  + "\n\nIsolated: after a Bullish or Bearish window, counting restarts and no new"
+  + " measurement is taken until N fresh candles have printed. Neutral windows keep"
+  + " rolling. Balances independence with sensitivity."
+  + "\n\nNon-Overlapping: every classification restarts counting, regardless of result."
+  + " Fully independent samples but fewest observations."
+string tt_candleDiff   = "Spacing between the 'from' state and the 'to' state."
+  + "\n\nRolling: analysis candles between the two states."
+  + "\n\nIsolated / Non-Overlapping: observations between the two states."
+  + " Leave at 1 to compare each window to the next one."
+string tt_display      = "Choose whether to show the transition matrix, the average-move panel, or both."
+string tt_colorCandles = "Color only candles where a confirmed observation is Bullish"
+  + " or Bearish. On lower chart timeframes, every chart candle inside the confirmed"
+  + " analysis candle receives that color. Neutral observations and collection periods"
+  + " retain the chart's normal candle colors."
+string tt_lineApp      = "Width and style of the collection-period line."
+  + " Its color automatically matches the confirmed Bull or Bear color."
+string tt_tablePos     = "Where to anchor the table on the chart."
+
 
 // #endregion Tooltips
 
+
 // #region Settings ***************************************
 
+
 var string iGroupSettings = "Settings"
-float i_threshold = input.float(5.0, "Threshold (%)", minval = 0.1, step = 0.5, group = iGroupSettings, tooltip = tt_threshold)
-int i_lookback = input.int(20, "Lookback Window", minval = 1, maxval = 5000, group = iGroupSettings, tooltip = tt_lookback)
-string i_timeframe = input.string("1 Day", "Timeframe", options = ["1 Day", "12 Hour", "8 Hour", "6 Hour", "4 Hour", "1 Hour"], group = iGroupSettings, tooltip = tt_timeframe)
-int i_candleDiff = input.int(1, "Candle Diff", minval = 1, maxval = 500, group = iGroupSettings, tooltip = tt_candleDiff)
-string i_display = input.string("Both", "Display", options = ["Both", "Transition Matrix", "Average Move"], group = iGroupSettings, tooltip = tt_display)
+float  i_threshold  = input.float(5.0, "Threshold (%)", minval = 0.1, step = 0.5, group = iGroupSettings, tooltip = tt_threshold)
+int    i_lookback   = input.int(20, "Lookback Window", minval = 1, maxval = 5000, group = iGroupSettings, tooltip = tt_lookback)
+string i_windowMode = input.string("Isolated", "Window Mode", options = ["Isolated", "Non-Overlapping", "Rolling"], group = iGroupSettings, tooltip = tt_windowMode)
+string i_timeframe  = input.string("1 Day", "Timeframe", options = ["1 Day", "12 Hour", "8 Hour", "6 Hour", "4 Hour", "1 Hour"], group = iGroupSettings, tooltip = tt_timeframe)
+int    i_candleDiff = input.int(1, "Candle Diff", minval = 1, maxval = 500, group = iGroupSettings, tooltip = tt_candleDiff)
+string i_display    = input.string("Both", "Display", options = ["Both", "Transition Matrix", "Average Move"], group = iGroupSettings, tooltip = tt_display)
+
 
 // #endregion Settings
 
+
 // #region Appearance *************************************
 
+
 var string iGroupApp = "Appearance"
-bool i_colorCandles = input.bool(true, "Color Candles", group = iGroupApp, tooltip = tt_colorCandles)
-color i_bullColor = input.color(#00c853, "Bull", group = iGroupApp, inline = "candle_colors")
-color i_neutColor = input.color(#9e9e9e, "Neut", group = iGroupApp, inline = "candle_colors")
-color i_bearColor = input.color(#ff1744, "Bear", group = iGroupApp, inline = "candle_colors")
-string i_tablePos = input.string("Top Right", "Table Position", options = ["Top Right", "Top Left", "Middle Right", "Middle Left", "Bottom Right", "Bottom Left"], group = iGroupApp, tooltip = tt_tablePos)
+bool   i_colorCandles = input.bool(true, "Color Candles", group = iGroupApp, tooltip = tt_colorCandles)
+color  i_bullColor    = input.color(#00c853, "Bull", group = iGroupApp, inline = "candle_colors")
+color  i_bearColor    = input.color(#ff1744, "Bear", group = iGroupApp, inline = "candle_colors")
+int    i_lineWidth    = input.int(2, "Collection Line Size", minval = 1, maxval = 4, group = iGroupApp, inline = "line_app")
+string i_lineStyle    = input.string("Dotted", "Style", options = ["Solid", "Dashed", "Dotted"], group = iGroupApp, inline = "line_app", tooltip = tt_lineApp)
+string i_tablePos     = input.string("Top Right", "Table Position", options = ["Top Right", "Top Left", "Middle Right", "Middle Left", "Bottom Right", "Bottom Left"], group = iGroupApp, tooltip = tt_tablePos)
+
 
 // #endregion Appearance
 
+
 // #endregion Inputs
+
+
+//+-------------------------------------------------------+
+//                           UDT'S                        |
+//+-------------------------------------------------------+
+// #region UDT's
+
+
+// Pending observation awaiting its destination state. `hi` / `lo` accumulate
+// across every candle after the origin bar so the span is correct even when
+// Isolated or Non-Overlapping mode stretches it to a variable number of candles.
+type Obs
+    int   cls = na
+    float px  = na
+    int   bar = na
+    float hi  = na
+    float lo  = na
+
+
+// #endregion UDT's
+
 
 //+-------------------------------------------------------+
 //                         FUNCTIONS                      |
 //+-------------------------------------------------------+
 // #region Functions
 
+
 // #region Helpers ****************************************
+
 
 tfString(_label) =>
     switch _label
-        "1 Day" => "D"
+        "1 Day"   => "D"
         "12 Hour" => "720"
-        "8 Hour" => "480"
-        "6 Hour" => "360"
-        "4 Hour" => "240"
-        "1 Hour" => "60"
-        => "D"
+        "8 Hour"  => "480"
+        "6 Hour"  => "360"
+        "4 Hour"  => "240"
+        "1 Hour"  => "60"
+        =>           "D"
+
 
 tfTitle(_label) =>
     switch _label
-        "1 Day" => "Daily"
+        "1 Day"   => "Daily"
         "12 Hour" => "12h"
-        "8 Hour" => "8h"
-        "6 Hour" => "6h"
-        "4 Hour" => "4h"
-        "1 Hour" => "1h"
-        => "Daily"
+        "8 Hour"  => "8h"
+        "6 Hour"  => "6h"
+        "4 Hour"  => "4h"
+        "1 Hour"  => "1h"
+        =>           "Daily"
+
 
 classify(_pct, _thr) =>
-    _pct > _thr ? 2 : (_pct < -_thr ? 0 : 1)
+    (_pct > _thr ? 2 : (_pct < -_thr ? 0 : 1))
+
 
 tblPos(_label) =>
     switch _label
-        "Top Right" => position.top_right
-        "Top Left" => position.top_left
+        "Top Right"    => position.top_right
+        "Top Left"     => position.top_left
         "Middle Right" => position.middle_right
-        "Middle Left" => position.middle_left
+        "Middle Left"  => position.middle_left
         "Bottom Right" => position.bottom_right
-        "Bottom Left" => position.bottom_left
-        => position.top_right
+        "Bottom Left"  => position.bottom_left
+        =>                position.top_right
+
+
+lineStyle(_label) =>
+    switch _label
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        =>          line.style_solid
+
 
 clsName(_c) =>
     switch _c
         2 => "Bullish"
         1 => "Neutral"
         0 => "Bearish"
-        => "N/A"
+        =>   "N/A"
+
 
 fPct(_v) =>
     str.tostring(math.round(_v, 1), "0.0") + "%"
 
+
 fSignedPct(_v) =>
-    string sgn = _v > 0 ? "+" : ""
+    string sgn = (_v > 0 ? "+" : "")
     sgn + str.tostring(math.round(_v, 1), "0.0") + "%"
 
+
 fSignedAbs(_v) =>
-    string sgn = _v > 0 ? "+" : ""
+    string sgn = (_v > 0 ? "+" : "")
     sgn + str.tostring(_v, format.mintick)
+
 
 fStatMain(_pct, _abs) =>
     "Close\n" + fSignedPct(_pct) + " | " + fSignedAbs(_abs)
 
+
 fStatDetail(_label, _pct, _abs) =>
     _label + " " + fSignedPct(_pct) + "\n" + fSignedAbs(_abs)
+
 
 fUpDnText(_upPct, _dnPct) =>
     "Up " + fPct(_upPct) + "\nDn " + fPct(_dnPct)
 
+
 // #endregion Helpers
+
+
+// #region Label Builders *********************************
+
+
+// mode: 0 = Rolling, 1 = Isolated, 2 = Non-Overlapping
+modeName(_mode) =>
+    switch _mode
+        0 => "Rolling"
+        1 => "Isolated"
+        2 => "Non-Overlapping"
+        => "Rolling"
+
+
+stepLabel(_mode, _step) =>
+    (_mode > 0 ? "State Step " : "Candle Diff ") + str.tostring(_step)
+
+
+avgColHeader(_mode, _cls) =>
+    (_mode > 0
+      ? (_cls == 2 ? "After Bullish" : (_cls == 1 ? "After Neutral" : "After Bearish"))
+      : (_cls == 2 ? "Bull -> Bull"  : (_cls == 1 ? "Neut -> Neut"  : "Bear -> Bear"))
+      )
+
+
+// #endregion Label Builders
+
 
 // #region Core Computation *******************************
 
-// @function computeTally  - Cumulative N-candle transition tally over all history.
-// @param    _lookback     - Return-window (candles) used to classify each period.
-// @param    _step         - Number of candles between the from-state and to-state.
+
+// @function computeTally  - Cumulative transition tally over all available history.
+// @param    _lookback     - Return-window (candles) used to classify each measurement.
+// @param    _step         - Spacing between the from-state and the to-state.
 // @param    _thr          - Bullish / Bearish return threshold (%).
-// @returns  float[37]     - [0..8] transition tally; [9] last class; [10..36] same-state stats.
-computeTally(_lookback, _step, _thr) =>
-    var float[] tally = array.new<float>(9, 0.0)
-    var float[] stats = array.new<float>(27, 0.0)
-    var int lastCls = -1
-    var int prevT = 0
-    var int barsSeen = 0
-    var int[] clsWindow = array.new<int>()
+// @param    _mode         - 0 = Rolling, 1 = Isolated, 2 = Non-Overlapping.
+// @returns  float[45]     - [0..8] tally; [9] last class; [10..36] forward stats;
+//                           [37] obs count; [38] transition count; [39] gap sum;
+//                           [40] cooldown; [41] last sample start; [42..43] signal
+//                           start/end; [44] signal candle midpoint.
+computeTally(_lookback, _step, _thr, _mode) =>
+    var float[] tally   = array.new<float>(9, 0.0)
+    var float[] stats   = array.new<float>(27, 0.0)
+    var Obs[]   pending = array.new<Obs>()
+    var int     lastCls    = -1
+    var int     prevT      = 0
+    var int     barsSeen   = 0
+    var int     obsCount   = 0
+    var int     transCount = 0
+    var float   gapSum     = 0.0
+    var int     cooldown   = 0
+    var int     lastSampleStart = na
+    var int     lastSignalStart = na
+    var int     lastSignalEnd   = na
+    var float   lastSignalMid   = na
 
     if time != prevT
-        prevT := time
+        prevT    := time
         barsSeen += 1
 
-        if barsSeen > _lookback
+        // Extend the running span of every pending observation with this candle.
+        for o in pending
+            o.hi := (na(o.hi) ? high : math.max(o.hi, high))
+            o.lo := (na(o.lo) ? low  : math.min(o.lo, low))
+
+        if cooldown > 0
+            cooldown -= 1
+
+        bool canEval = barsSeen > _lookback and (_mode == 0 or cooldown == 0)
+        if canEval
             float refClose = close[_lookback]
             if not na(refClose) and refClose != 0.0
                 float ret = (close - refClose) / refClose * 100.0
-                int cls = classify(ret, _thr)
+                int   cls = classify(ret, _thr)
 
-                if array.size(clsWindow) == _step
-                    int fromCls = array.get(clsWindow, 0)
-                    int idx = fromCls * 3 + cls
+                // Record transition when the pending queue has enough observations.
+                if array.size(pending) == _step
+                    Obs fromObs = array.shift(pending)
+                    int idx     = fromObs.cls * 3 + cls
                     array.set(tally, idx, array.get(tally, idx) + 1.0)
+                    transCount += 1
+                    gapSum     += float(barsSeen - fromObs.bar)
 
-                    if fromCls == cls
-                        float fromClose = close[_step]
-                        if not na(fromClose) and fromClose != 0.0
-                            float winHigh = high
-                            float winLow = low
-                            if _step > 1
-                                for j = 1 to _step - 1
-                                    winHigh := math.max(winHigh, high[j])
-                                    winLow := math.min(winLow, low[j])
+                    // Rolling: same-state stats only. Isolated / Non-Overlapping:
+                    // all transitions out of the from-state (directional samples
+                    // are scarce so we keep everything).
+                    bool takeStats = (_mode > 0 or fromObs.cls == cls)
+                      and not na(fromObs.px) and fromObs.px != 0.0
+                    if takeStats
+                        float winHigh = (na(fromObs.hi) ? high : fromObs.hi)
+                        float winLow  = (na(fromObs.lo) ? low  : fromObs.lo)
+                        float hiAbs   = winHigh - fromObs.px
+                        float loAbs   = winLow  - fromObs.px
+                        float clAbs   = close   - fromObs.px
+                        float hiPct   = hiAbs / fromObs.px * 100.0
+                        float loPct   = loAbs / fromObs.px * 100.0
+                        float clPct   = clAbs / fromObs.px * 100.0
+                        int   statBase = fromObs.cls * 9
 
-                            float hiAbs = winHigh - fromClose
-                            float loAbs = winLow - fromClose
-                            float clAbs = close - fromClose
-                            float hiPct = hiAbs / fromClose * 100.0
-                            float loPct = loAbs / fromClose * 100.0
-                            float clPct = clAbs / fromClose * 100.0
-                            int statBase = fromCls * 9
+                        array.set(stats, statBase,     array.get(stats, statBase)     + 1.0)
+                        array.set(stats, statBase + 1, array.get(stats, statBase + 1) + hiPct)
+                        array.set(stats, statBase + 2, array.get(stats, statBase + 2) + hiAbs)
+                        array.set(stats, statBase + 3, array.get(stats, statBase + 3) + loPct)
+                        array.set(stats, statBase + 4, array.get(stats, statBase + 4) + loAbs)
+                        array.set(stats, statBase + 5, array.get(stats, statBase + 5) + clPct)
+                        array.set(stats, statBase + 6, array.get(stats, statBase + 6) + clAbs)
+                        array.set(stats, statBase + 7, array.get(stats, statBase + 7) + (clAbs > 0 ? 1.0 : 0.0))
+                        array.set(stats, statBase + 8, array.get(stats, statBase + 8) + (clAbs < 0 ? 1.0 : 0.0))
 
-                            array.set(stats, statBase, array.get(stats, statBase) + 1.0)
-                            array.set(stats, statBase + 1, array.get(stats, statBase + 1) + hiPct)
-                            array.set(stats, statBase + 2, array.get(stats, statBase + 2) + hiAbs)
-                            array.set(stats, statBase + 3, array.get(stats, statBase + 3) + loPct)
-                            array.set(stats, statBase + 4, array.get(stats, statBase + 4) + loAbs)
-                            array.set(stats, statBase + 5, array.get(stats, statBase + 5) + clPct)
-                            array.set(stats, statBase + 6, array.get(stats, statBase + 6) + clAbs)
-                            array.set(stats, statBase + 7, array.get(stats, statBase + 7) + (clAbs > 0 ? 1.0 : 0.0))
-                            array.set(stats, statBase + 8, array.get(stats, statBase + 8) + (clAbs < 0 ? 1.0 : 0.0))
+                array.push(pending, Obs.new(cls = cls, px = close, bar = barsSeen))
+                obsCount += 1
+                lastCls  := cls
+                lastSampleStart := time[_lookback - 1]
+                lastSignalStart := time
+                lastSignalEnd   := time_close
+                lastSignalMid   := (high + low) / 2.0
 
-                array.push(clsWindow, cls)
-                if array.size(clsWindow) > _step
-                    array.shift(clsWindow)
-                lastCls := cls
+                // Isolated: cooldown after directional only. Non-Overlapping: always.
+                if _mode == 2 or (_mode == 1 and cls != 1)
+                    cooldown := _lookback
 
-    float[] res = array.new<float>(37, 0.0)
+    float[] res = array.new<float>(45, 0.0)
     for i = 0 to 8
         array.set(res, i, array.get(tally, i))
     array.set(res, 9, float(lastCls))
     for i = 0 to 26
         array.set(res, 10 + i, array.get(stats, i))
+    array.set(res, 37, float(obsCount))
+    array.set(res, 38, float(transCount))
+    array.set(res, 39, gapSum)
+    array.set(res, 40, float(cooldown))
+    array.set(res, 41, float(lastSampleStart))
+    array.set(res, 42, float(lastSignalStart))
+    array.set(res, 43, float(lastSignalEnd))
+    array.set(res, 44, lastSignalMid)
     res
+
 
 // #endregion Core Computation
 
+
 // #endregion Functions
+
 
 //+-------------------------------------------------------+
 //                         EXECUTION                      |
 //+-------------------------------------------------------+
 // #region Execution
 
+
 // #region HTF Data ***************************************
 
-string tfSel = tfString(i_timeframe)
-bool tfOk = timeframe.in_seconds(timeframe.period) <= timeframe.in_seconds(tfSel)
-bool showMatrix = i_display != "Average Move"
-bool showAvgMove = i_display != "Transition Matrix"
-int matrixRows = showMatrix ? 10 : 0
-int avgStartRow = matrixRows
-int tableRows = matrixRows + (showAvgMove ? 4 : 0)
-float[] data = request.security(syminfo.tickerid, tfSel, computeTally(i_lookback, i_candleDiff, i_threshold), lookahead = barmerge.lookahead_off)
-float colorRefClose = request.security(syminfo.tickerid, tfSel, close[i_lookback], lookahead = barmerge.lookahead_off)
-float upperStateLine = not na(colorRefClose) ? colorRefClose * (1.0 + i_threshold / 100.0) : na
-float lowerStateLine = not na(colorRefClose) ? colorRefClose * (1.0 - i_threshold / 100.0) : na
+
+string tfSel      = tfString(i_timeframe)
+int    windowMode = (i_windowMode == "Rolling" ? 0 : (i_windowMode == "Isolated" ? 1 : 2))
+bool   tfOk       = timeframe.in_seconds(timeframe.period) <= timeframe.in_seconds(tfSel)
+bool   showMatrix = i_display != "Average Move"
+bool   showAvgMove = i_display != "Transition Matrix"
+int    matrixRows  = (showMatrix ? 10 : 0)
+int    avgStartRow = matrixRows
+int    avgRows     = (showAvgMove ? 4 : 0)
+int    tableRows   = matrixRows + avgRows + 2
+int    footerRow1  = tableRows - 2
+int    footerRow2  = tableRows - 1
+
+float[] data = request.security(syminfo.tickerid, tfSel, computeTally(i_lookback, i_candleDiff, i_threshold, windowMode), lookahead = barmerge.lookahead_off)
+// Display-only mapping: after an analysis candle confirms, map its final
+// directional classification across every chart candle inside that period.
+float[] colorData = request.security(syminfo.tickerid, tfSel, computeTally(i_lookback, i_candleDiff, i_threshold, windowMode), lookahead = barmerge.lookahead_on)
 
 bool dataOk = false
 if not na(data)
-    dataOk := array.size(data) == 37
+    dataOk := array.size(data) == 45
 
-int liveCls = na(colorRefClose) ? -1 : (close > upperStateLine ? 2 : (close < lowerStateLine ? 0 : 1))
-color candleStateColor = i_colorCandles and tfOk and liveCls >= 0
-  ? (liveCls == 2 ? i_bullColor : (liveCls == 0 ? i_bearColor : i_neutColor))
+bool colorDataOk = false
+if not na(colorData)
+    colorDataOk := array.size(colorData) == 45
+
+int heldCls      = (dataOk ? int(array.get(data, 9))  : -1)
+int coolRem      = (dataOk ? int(array.get(data, 40)) : 0)
+int liveObsCount = (dataOk ? int(array.get(data, 37)) : 0)
+bool newObservation = dataOk and liveObsCount > nz(liveObsCount[1], 0)
+bool directionalObservation = heldCls == 2 or heldCls == 0
+
+int colorCls = (colorDataOk ? int(array.get(colorData, 9)) : -1)
+float colorSignalStartRaw = (colorDataOk ? array.get(colorData, 42) : na)
+float colorSignalEndRaw   = (colorDataOk ? array.get(colorData, 43) : na)
+int colorSignalStartTime  = (not na(colorSignalStartRaw) ? int(colorSignalStartRaw) : na)
+int colorSignalEndTime    = (not na(colorSignalEndRaw)   ? int(colorSignalEndRaw)   : na)
+bool inDirectionalSignalPeriod = (colorCls == 2 or colorCls == 0)
+  and not na(colorSignalStartTime) and not na(colorSignalEndTime)
+  and time >= colorSignalStartTime and time < colorSignalEndTime
+bool showHistoricalSignal = barstate.ishistory and inDirectionalSignalPeriod
+bool showLiveSignal = not barstate.ishistory and newObservation and directionalObservation
+int candleColorCls = (showHistoricalSignal ? colorCls : heldCls)
+
+color candleStateColor = (i_colorCandles and tfOk
+  and (showHistoricalSignal or showLiveSignal)
+  ? (candleColorCls == 2 ? i_bullColor : i_bearColor)
   : na
+  )
 barcolor(candleStateColor)
+
+// A confirmed directional observation receives one horizontal line across the
+// candles used to classify it. Its price is the signal candle's high/low midpoint.
+const int MAX_COLLECTION_LINES = 500
+var line[] collectionLines = array.new<line>()
+
+float sampleStartRaw = (dataOk ? array.get(data, 41) : na)
+float signalEndRaw   = (dataOk ? array.get(data, 43) : na)
+float signalMid      = (dataOk ? array.get(data, 44) : na)
+int sampleStartTime  = (not na(sampleStartRaw) ? int(sampleStartRaw) : na)
+int signalEndTime    = (not na(signalEndRaw)   ? int(signalEndRaw)   : na)
+
+if tfOk and newObservation and directionalObservation
+  and not na(sampleStartTime) and not na(signalEndTime) and not na(signalMid)
+    color directionColor = (heldCls == 2 ? i_bullColor : i_bearColor)
+    line collectionLine = line.new(
+      x1 = sampleStartTime, y1 = signalMid,
+      x2 = signalEndTime, y2 = signalMid,
+      xloc = xloc.bar_time, extend = extend.none,
+      color = directionColor, style = lineStyle(i_lineStyle), width = i_lineWidth)
+    array.push(collectionLines, collectionLine)
+
+    if array.size(collectionLines) > MAX_COLLECTION_LINES
+        line.delete(array.shift(collectionLines))
+
 
 // #endregion HTF Data
 
+
 // #region Table Render ***********************************
 
-var table tbl = table.new(tblPos(i_tablePos), 10, 14,
+
+var table tbl = table.new(tblPos(i_tablePos), 10, 16,
   border_width = 1, border_color = #444444)
 
 if barstate.islast
@@ -251,15 +464,15 @@ if barstate.islast
     tbl := table.new(tblPos(i_tablePos), 10, tableRows,
       border_width = 1, border_color = #444444)
 
-    color HBG = #1a237e
-    color HTX = #e0e0e0
-    color CBG = #1e2a3a
-    color CTX = #ffffff
-    color DBG = #15202b
-    color DTX = #90a4ae
+    color HBG    = #1a237e
+    color HTX    = #e0e0e0
+    color CBG    = #1e2a3a
+    color CTX    = #ffffff
+    color DBG    = #15202b
+    color DTX    = #90a4ae
     color CBG_HI = #29405c
     color DBG_HI = #233545
-    color EBG = #2a2a2a
+    color EBG    = #2a2a2a
 
     if not tfOk
         string warn = "Chart timeframe (" + timeframe.period + ") is higher than "
@@ -276,11 +489,13 @@ if barstate.islast
         table.merge_cells(tbl, 0, 0, 9, 0)
 
     else
-        int lastCls = int(array.get(data, 9))
+        int   lastCls    = int(array.get(data, 9))
+        int   obsCount   = int(array.get(data, 37))
+        int   transCount = int(array.get(data, 38))
+        float gapSum     = array.get(data, 39)
+        float avgGap     = (transCount > 0 ? gapSum / transCount : 0.0)
 
-        float pBull = 0.0
-        float pNeut = 0.0
-        float pBear = 0.0
+        float pBull = 0.0, pNeut = 0.0, pBear = 0.0
         if lastCls >= 0 and lastCls <= 2
             float tot = 0.0
             for c = 0 to 2
@@ -290,15 +505,21 @@ if barstate.islast
                 pNeut := array.get(data, lastCls * 3 + 1) / tot * 100.0
                 pBear := array.get(data, lastCls * 3 + 0) / tot * 100.0
 
-        float pred = pBull - pBear
+        float  pred       = pBull - pBear
         string predPctTxt = (pred > 0 ? "+" : "") + str.tostring(math.round(pred, 1), "0.0") + "%"
-        color predBg = pred >= 0
+        color  predBg     = (pred >= 0
           ? color.from_gradient(pred, 0, 100, #424242, #1b5e20)
           : color.from_gradient(pred, -100, 0, #b71c1c, #424242)
+          )
+
+        // ----- Transition Matrix Panel ----------------------------------
 
         if showMatrix
-            string ttl = "Transition Matrix | " + tfTitle(i_timeframe) + " " + str.tostring(i_candleDiff) + " Candle Diff"
-              + "\nCells: P% | P^2 | P^3 | total"
+            string ttl = "Transition Matrix  |  " + tfTitle(i_timeframe)
+              + "  |  " + modeName(windowMode)
+              + "  |  Lookback " + str.tostring(i_lookback)
+              + "  |  " + stepLabel(windowMode, i_candleDiff)
+              + "\nCells: P%  |  P^2  |  P^3  |  count"
             table.cell(tbl, 0, 0, ttl, text_color = HTX, bgcolor = HBG, text_size = size.small)
             for c = 1 to 9
                 table.cell(tbl, c, 0, "", bgcolor = HBG)
@@ -314,7 +535,7 @@ if barstate.islast
                 table.merge_cells(tbl, s, 1, s + 2, 1)
 
             int[] fromMap = array.from(2, 1, 0)
-            int[] toMap = array.from(2, 1, 0)
+            int[] toMap   = array.from(2, 1, 0)
             for r = 0 to 2
                 int fCls = array.get(fromMap, r)
                 int pRow = 2 + r * 2
@@ -332,39 +553,43 @@ if barstate.islast
                   text_size = size.tiny, text_halign = text.align_right)
 
                 for c = 0 to 2
-                    int tCls = array.get(toMap, c)
-                    float cnt = array.get(data, fCls * 3 + tCls)
-                    float pct = rTot > 0 ? cnt / rTot * 100.0 : 0.0
-                    float p = pct / 100.0
-                    float sq = p * p * 100.0
-                    float cb = p * p * p * 100.0
-                    int cs = 1 + c * 3
-                    bool isMatch = fCls == tCls
-                    color pctBg = isMatch ? CBG_HI : CBG
-                    color detBg = isMatch ? DBG_HI : DBG
+                    int   tCls    = array.get(toMap, c)
+                    float cnt     = array.get(data, fCls * 3 + tCls)
+                    float pct     = (rTot > 0 ? cnt / rTot * 100.0 : 0.0)
+                    float p       = pct / 100.0
+                    float sq      = p * p * 100.0
+                    float cb      = p * p * p * 100.0
+                    int   cs      = 1 + c * 3
+                    bool  isMatch = fCls == tCls
+                    color pctBg   = (isMatch ? CBG_HI : CBG)
+                    color detBg   = (isMatch ? DBG_HI : DBG)
 
                     table.cell(tbl, cs,     pRow, fPct(pct), text_color = CTX, bgcolor = pctBg, text_size = size.normal)
                     table.cell(tbl, cs + 1, pRow, "",        bgcolor = pctBg)
                     table.cell(tbl, cs + 2, pRow, "",        bgcolor = pctBg)
                     table.merge_cells(tbl, cs, pRow, cs + 2, pRow)
 
-                    table.cell(tbl, cs,     dRow, fPct(sq),              text_color = DTX, bgcolor = detBg, text_size = size.tiny, tooltip = "P^2")
-                    table.cell(tbl, cs + 1, dRow, fPct(cb),              text_color = DTX, bgcolor = detBg, text_size = size.tiny, tooltip = "P^3")
+                    table.cell(tbl, cs,     dRow, fPct(sq),               text_color = DTX, bgcolor = detBg, text_size = size.tiny, tooltip = "P^2")
+                    table.cell(tbl, cs + 1, dRow, fPct(cb),               text_color = DTX, bgcolor = detBg, text_size = size.tiny, tooltip = "P^3")
                     table.cell(tbl, cs + 2, dRow, str.tostring(int(cnt)), text_color = DTX, bgcolor = detBg, text_size = size.tiny, tooltip = "Transition count")
 
             string predTxt = "Last: " + clsName(lastCls)
-              + " | P(Bull) " + fPct(pBull)
+              + "  |  P(Bull) " + fPct(pBull)
               + "   P(Neut) " + fPct(pNeut)
               + "   P(Bear) " + fPct(pBear)
+              + (windowMode > 0 and coolRem > 0
+                  ? "   [held, " + str.tostring(coolRem) + " to go]"
+                  : ""
+                  )
             table.cell(tbl, 0, 8, predTxt, text_color = #ffffff, bgcolor = predBg, text_size = size.tiny)
             for c = 1 to 9
                 table.cell(tbl, c, 8, "", bgcolor = predBg)
             table.merge_cells(tbl, 0, 8, 9, 8)
 
-            float SEG_W = 200.0 / 9.0
-            float bLo = math.min(0.0, pred)
-            float bHi = math.max(0.0, pred)
-            bool isPos = pred >= 0
+            float SEG_W   = 200.0 / 9.0
+            float bLo     = math.min(0.0, pred)
+            float bHi     = math.max(0.0, pred)
+            bool  isPos   = pred >= 0
             color BAR_POS = #00c853
             color BAR_NEG = #ff1744
 
@@ -373,64 +598,79 @@ if barstate.islast
               tooltip = "Prediction: P(Bull) - P(Bear)")
 
             for i = 0 to 8
-                float sL = -100.0 + i * SEG_W
-                float sH = sL + SEG_W
+                float sL   = -100.0 + i * SEG_W
+                float sH   = sL + SEG_W
                 float fill = math.max(0.0, math.min(sH, bHi) - math.max(sL, bLo)) / SEG_W
-                color segClr = isPos
+                color segClr = (isPos
                   ? color.from_gradient(fill, 0.0, 1.0, EBG, BAR_POS)
                   : color.from_gradient(fill, 0.0, 1.0, EBG, BAR_NEG)
+                  )
                 string mk = switch i
                     0 => "-"
                     4 => "0"
                     8 => "+"
-                    => ""
+                    =>   ""
                 table.cell(tbl, i + 1, 9, mk,
                   text_color = color.new(#ffffff, 60), bgcolor = segClr, text_size = size.tiny)
 
+        // ----- Average Move Panel ---------------------------------------
+
         if showAvgMove
             int avgTitleRow = avgStartRow
-            int avgHdrRow = avgStartRow + 1
-            int avgMainRow = avgStartRow + 2
-            int avgDetRow = avgStartRow + 3
+            int avgHdrRow   = avgStartRow + 1
+            int avgMainRow  = avgStartRow + 2
+            int avgDetRow   = avgStartRow + 3
 
-            table.cell(tbl, 0, avgTitleRow, "Average Move | " + tfTitle(i_timeframe) + " " + str.tostring(i_candleDiff) + " Candle Diff (% | Abs)", text_color = HTX, bgcolor = HBG, text_size = size.small)
+            string avgTtl = (windowMode > 0 ? "Forward Move" : "Average Move")
+              + "  |  " + tfTitle(i_timeframe)
+              + "  |  " + modeName(windowMode)
+              + "  |  " + stepLabel(windowMode, i_candleDiff)
+              + "  (% | Abs)"
+            table.cell(tbl, 0, avgTitleRow, avgTtl, text_color = HTX, bgcolor = HBG, text_size = size.small)
             for c = 1 to 9
                 table.cell(tbl, c, avgTitleRow, "", bgcolor = HBG)
             table.merge_cells(tbl, 0, avgTitleRow, 9, avgTitleRow)
 
-            string[] sameHdr = array.from("Bull -> Bull", "Neutral -> Neutral", "Bear -> Bear")
             int[] sameMap = array.from(2, 1, 0)
             for c = 0 to 2
                 int cs = 1 + c * 3
-                table.cell(tbl, cs,     avgHdrRow, array.get(sameHdr, c), text_color = HTX, bgcolor = HBG, text_size = size.small)
-                table.cell(tbl, cs + 1, avgHdrRow, "",                    bgcolor = HBG)
-                table.cell(tbl, cs + 2, avgHdrRow, "",                    bgcolor = HBG)
+                table.cell(tbl, cs,     avgHdrRow, avgColHeader(windowMode, array.get(sameMap, c)), text_color = HTX, bgcolor = HBG, text_size = size.small)
+                table.cell(tbl, cs + 1, avgHdrRow, "",                                              bgcolor = HBG)
+                table.cell(tbl, cs + 2, avgHdrRow, "",                                              bgcolor = HBG)
                 table.merge_cells(tbl, cs, avgHdrRow, cs + 2, avgHdrRow)
 
-            table.cell(tbl, 0, avgMainRow, "Avg Close", text_color = HTX, bgcolor = HBG, text_size = size.small, text_halign = text.align_right)
-            table.cell(tbl, 0, avgDetRow, "High / Low / UpDn", text_color = DTX, bgcolor = HBG, text_size = size.tiny, text_halign = text.align_right)
+            table.cell(tbl, 0, avgMainRow, "Avg Close",         text_color = HTX, bgcolor = HBG, text_size = size.small, text_halign = text.align_right)
+            table.cell(tbl, 0, avgDetRow,  "High / Low / UpDn", text_color = DTX, bgcolor = HBG, text_size = size.tiny,  text_halign = text.align_right)
 
             for c = 0 to 2
-                int cls = array.get(sameMap, c)
-                int cs = 1 + c * 3
-                int statBase = 10 + cls * 9
+                int   cls         = array.get(sameMap, c)
+                int   cs          = 1 + c * 3
+                int   statBase    = 10 + cls * 9
                 float sampleCount = array.get(data, statBase)
-                bool hasStats = sampleCount > 0
-                color mainBg = cls == 1 ? CBG : CBG_HI
-                color detBg = cls == 1 ? DBG : DBG_HI
+                bool  hasStats    = sampleCount > 0
+                color mainBg      = (cls == 1 ? CBG : CBG_HI)
+                color detBg       = (cls == 1 ? DBG : DBG_HI)
 
-                string closeTxt = hasStats
+                string closeTxt = (hasStats
                   ? fStatMain(array.get(data, statBase + 5) / sampleCount, array.get(data, statBase + 6) / sampleCount)
                   : "Close\nn/a"
-                string highTxt = hasStats
+                  )
+                string highTxt = (hasStats
                   ? fStatDetail("High", array.get(data, statBase + 1) / sampleCount, array.get(data, statBase + 2) / sampleCount)
                   : "High n/a"
-                string lowTxt = hasStats
+                  )
+                string lowTxt = (hasStats
                   ? fStatDetail("Low", array.get(data, statBase + 3) / sampleCount, array.get(data, statBase + 4) / sampleCount)
                   : "Low n/a"
-                string upDnTxt = hasStats
+                  )
+                string upDnTxt = (hasStats
                   ? fUpDnText(array.get(data, statBase + 7) / sampleCount * 100.0, array.get(data, statBase + 8) / sampleCount * 100.0)
                   : "Up n/a"
+                  )
+                string upDnTip = (windowMode > 0
+                  ? "Percent of forward windows out of this state closing above or below the origin close. n=" + str.tostring(int(sampleCount))
+                  : "Percent of same-state samples closing above or below the origin close. n=" + str.tostring(int(sampleCount))
+                  )
 
                 table.cell(tbl, cs,     avgMainRow, closeTxt, text_color = CTX, bgcolor = mainBg, text_size = size.normal)
                 table.cell(tbl, cs + 1, avgMainRow, "",       bgcolor = mainBg)
@@ -439,8 +679,41 @@ if barstate.islast
 
                 table.cell(tbl, cs,     avgDetRow, highTxt, text_color = DTX, bgcolor = detBg, text_size = size.tiny)
                 table.cell(tbl, cs + 1, avgDetRow, lowTxt,  text_color = DTX, bgcolor = detBg, text_size = size.tiny)
-                table.cell(tbl, cs + 2, avgDetRow, upDnTxt, text_color = DTX, bgcolor = detBg, text_size = size.tiny, tooltip = "Percent of same-state samples closing above or below the origin close. n=" + str.tostring(int(sampleCount)))
+                table.cell(tbl, cs + 2, avgDetRow, upDnTxt, text_color = DTX, bgcolor = detBg, text_size = size.tiny, tooltip = upDnTip)
+
+        // ----- Footer (two short rows) ----------------------------------
+
+        string footerLine1 = modeName(windowMode)
+          + "  |  Lookback " + str.tostring(i_lookback)
+          + "  |  " + stepLabel(windowMode, i_candleDiff)
+        string footerLine2 = (windowMode > 0
+          ? "Obs " + str.tostring(obsCount)
+              + "  |  Trans " + str.tostring(transCount)
+              + "  |  Avg Gap " + str.tostring(math.round(avgGap, 1), "0.0")
+              + "  |  Next: " + (coolRem > 0 ? str.tostring(coolRem) + " candles" : "window clear")
+          : "Transitions " + str.tostring(transCount)
+              + "  |  Windows overlap by " + str.tostring(i_lookback - 1) + " candles"
+          )
+        string footerTip = (windowMode == 0
+          ? "Rolling: every candle produces a measurement. Windows share " + str.tostring(i_lookback - 1) + " candles."
+          : (windowMode == 1
+              ? "Isolated: Bullish / Bearish windows lock out the next " + str.tostring(i_lookback) + " candles. Neutral keeps rolling."
+              : "Non-Overlapping: every classification locks out the next " + str.tostring(i_lookback) + " candles. Fully independent samples."
+              )
+          )
+
+        table.cell(tbl, 0, footerRow1, footerLine1, text_color = DTX, bgcolor = HBG, text_size = size.tiny, tooltip = footerTip)
+        for c = 1 to 9
+            table.cell(tbl, c, footerRow1, "", bgcolor = HBG)
+        table.merge_cells(tbl, 0, footerRow1, 9, footerRow1)
+
+        table.cell(tbl, 0, footerRow2, footerLine2, text_color = DTX, bgcolor = HBG, text_size = size.tiny, tooltip = footerTip)
+        for c = 1 to 9
+            table.cell(tbl, c, footerRow2, "", bgcolor = HBG)
+        table.merge_cells(tbl, 0, footerRow2, 9, footerRow2)
+
 
 // #endregion Table Render
+
 
 // #endregion Execution
