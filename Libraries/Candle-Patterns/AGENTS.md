@@ -19,13 +19,13 @@ Dependency note: this library has no imported-library dependencies.
 
 ```pine
 CPL.CandleAnalysisConfig.new(
-    float sizeThresholdPct,
-    float equivTolerance,
-    float bodyTolerance,
-    int positionThreshold,
-    float fvgMinGap,
-    float atrMultiplier,
-    float wickWeight) -> CPL.CandleAnalysisConfig
+    float sizeThresholdPct = 50.0,
+    float equivTolerance = na,
+    float bodyTolerance = na,
+    int positionThreshold = 85,
+    float fvgMinGap = na,
+    float atrMultiplier = 50.0,
+    float wickWeight = 0.0) -> CPL.CandleAnalysisConfig
 
 CPL.analyzeCandle(
     float _open,
@@ -77,17 +77,17 @@ CPL.getDirectionName(CPL.CandleDirection _direction) -> string
 
 | Value | Meaning |
 |-------|---------|
-| `Short` | Wick range is below the short threshold derived from `_avgSize` and `_sizeThresholdPct`. |
+| `Short` | Wick range is below the short threshold derived from `_avgSize` and `config.sizeThresholdPct`. |
 | `Normal` | Wick range is between the short and long thresholds. |
-| `Long` | Wick range is above the long threshold derived from `_avgSize` and `_sizeThresholdPct`. |
+| `Long` | Wick range is above the long threshold derived from `_avgSize` and `config.sizeThresholdPct`. |
 
 ### `CandleDirection`
 
 | Value | Meaning |
 |-------|---------|
-| `Bearish` | `_close < _open - _equivTolerance`. |
-| `Neutral` | `_close` is within `_equivTolerance` of `_open`. |
-| `Bullish` | `_close > _open + _equivTolerance`. |
+| `Bearish` | `_close < _open - config.equivTolerance`. |
+| `Neutral` | `_close` is within `config.equivTolerance` of `_open`. |
+| `Bullish` | `_close > _open + config.equivTolerance`. |
 
 ### `CandlePattern`
 
@@ -140,8 +140,8 @@ CPL.getDirectionName(CPL.CandleDirection _direction) -> string
 | `BullishAbandonedBaby` | Morning Star with the middle Doji fully gapped below both neighbors. |
 | `BearishAbandonedBaby` | Evening Star with the middle Doji fully gapped above both neighbors. |
 | `EngulfingSandwich` | Candle 2 range engulfs candle 1 range and candle 3 range sits inside candle 2 range. |
-| `BullishFairValueGap` | Candle 3 low minus candle 1 high is at least `_minGap`. |
-| `BearishFairValueGap` | Candle 1 low minus candle 3 high is at least `_minGap`. |
+| `BullishFairValueGap` | Candle 3 low minus candle 1 high is at least `config.fvgMinGap`. |
+| `BearishFairValueGap` | Candle 1 low minus candle 3 high is at least `config.fvgMinGap`. |
 
 Doji-family patterns used by star and abandoned-baby helpers are:
 `Doji`, `LongLeggedDoji`, `CrossDoji`, `DragonflyDoji`,
@@ -150,6 +150,26 @@ Doji-family patterns used by star and abandoned-baby helpers are:
 ---
 
 ## Exported Types
+
+### `CandleAnalysisConfig`
+
+Shared configuration passed to every main analyzer and the two exported FVG
+predicates. Construct it once in the consumer and reuse the same values across
+the candles in a sequence.
+
+| Field | Type | Source default | Meaning |
+|-------|------|----------------|---------|
+| `sizeThresholdPct` | `float` | `50.0` | Percent above/below `_avgSize` used for long/short classification. |
+| `equivTolerance` | `float` | `na` | Absolute price tolerance for equality, direction, Doji, Marubozu, and tweezer checks. |
+| `bodyTolerance` | `float` | `na` | Absolute price tolerance for small-body classification. |
+| `positionThreshold` | `int` | `85` | Body-placement threshold used by hammer, shooting-star, and tweezer wick tests. |
+| `fvgMinGap` | `float` | `na` | Minimum absolute price gap used by FVG predicates and three-candle analysis. |
+| `atrMultiplier` | `float` | `50.0` | Range/ATR multiple required for full sentiment power. |
+| `wickWeight` | `float` | `0.0` | Wick contribution to sentiment shape. |
+
+The source defaults are constructor defaults, not recommended trading
+settings. In particular, `na` tolerances/gaps suppress dependent comparisons,
+and the integration pattern below intentionally supplies all seven fields.
 
 ### `CandleData`
 
@@ -213,10 +233,7 @@ CPL.analyzeCandle(
     float _low,
     float _close,
     float _avgSize,
-    float _sizeThresholdPct,
-    float _equivTolerance,
-    float _bodyTolerance,
-    int _positionThreshold) -> CPL.CandleData
+    CPL.CandleAnalysisConfig _config) -> CPL.CandleData
 ```
 
 | Argument | Type | Required | Meaning |
@@ -226,10 +243,7 @@ CPL.analyzeCandle(
 | `_low` | `float` | yes | Candle low price. |
 | `_close` | `float` | yes | Candle close price. |
 | `_avgSize` | `float` | yes | Baseline wick range used for `CandleSize` thresholds. |
-| `_sizeThresholdPct` | `float` | yes | Percent above and below `_avgSize` used for long/short cutoffs. |
-| `_equivTolerance` | `float` | yes | Absolute tolerance for equal-price checks and neutral direction. |
-| `_bodyTolerance` | `float` | yes | Absolute tolerance for small-body classification. |
-| `_positionThreshold` | `int` | yes | Percent used to split wick space into upper/middle/lower sections. |
+| `_config` | `CandleAnalysisConfig` | yes | Reads `sizeThresholdPct`, `equivTolerance`, `bodyTolerance`, and `positionThreshold`. |
 
 Returns a fully populated `CandleData`.
 
@@ -237,8 +251,8 @@ Behavior notes:
 
 - Computes `wickRange`, `bodyRange`, `bodyHigh`, and `bodyLow`.
 - Uses `_avgSize * 0.001` as a safe fallback when `wickRange <= 0`.
-- Uses `_equivTolerance` for Doji/Marubozu/equality logic and
-  `_bodyTolerance` for small-body logic.
+- Uses `_config.equivTolerance` for Doji/Marubozu/equality logic and
+  `_config.bodyTolerance` for small-body logic.
 - Applies this priority order:
 
 ```text
@@ -266,8 +280,7 @@ CPL.scoreCandleSentiment(
     float _low,
     float _close,
     float _atr,
-    float _atrMult,
-    float _wickWeight) -> [float, float, float, float, float]
+    CPL.CandleAnalysisConfig _config) -> [float, float, float, float, float]
 ```
 
 | Argument | Type | Required | Meaning |
@@ -277,15 +290,14 @@ CPL.scoreCandleSentiment(
 | `_low` | `float` | yes | Candle low price. |
 | `_close` | `float` | yes | Candle close price. |
 | `_atr` | `float` | yes | ATR yardstick for range normalization. |
-| `_atrMult` | `float` | yes | Range/ATR multiple required for full power. |
-| `_wickWeight` | `float` | yes | Wick contribution added to body-driven shape. |
+| `_config` | `CandleAnalysisConfig` | yes | Reads `atrMultiplier` and `wickWeight`. |
 
 Returns a five-float tuple in this exact order:
 
 | Position | Name | Meaning |
 |----------|------|---------|
 | `1` | `score` | `shape * power * 100.0`. |
-| `2` | `shape` | `bodyRatio + _wickWeight * wickBias`. |
+| `2` | `shape` | `bodyRatio + _config.wickWeight * wickBias`. |
 | `3` | `power` | Range strength capped at `1.0` when ATR and range are valid. |
 | `4` | `bodyRatio` | Signed body share of total range. |
 | `5` | `wickBias` | Lower wick minus upper wick, normalized by total range. |
@@ -299,16 +311,14 @@ or `<= 0`, `power` and `score` return `0.0`.
 CPL.analyzeTwoCandlePattern(
     CPL.CandleData _candle1,
     CPL.CandleData _candle2,
-    float _equivTolerance,
-    int _positionThreshold) -> CPL.TwoCandleData
+    CPL.CandleAnalysisConfig _config) -> CPL.TwoCandleData
 ```
 
 | Argument | Type | Required | Meaning |
 |----------|------|----------|---------|
 | `_candle1` | `CandleData` | yes | Older candle. |
 | `_candle2` | `CandleData` | yes | Newer candle. |
-| `_equivTolerance` | `float` | yes | Absolute tolerance for equal highs, lows, and close/open joins. |
-| `_positionThreshold` | `int` | yes | Used to derive the minimum wick percentage for tweezer checks. |
+| `_config` | `CandleAnalysisConfig` | yes | Reads `equivTolerance` for equality checks and `positionThreshold` for tweezer wick requirements. |
 
 Returns `TwoCandleData.new(pattern, _candle1, _candle2)`.
 
@@ -335,7 +345,7 @@ CPL.analyzeThreeCandlePattern(
     CPL.CandleData _candle1,
     CPL.CandleData _candle2,
     CPL.CandleData _candle3,
-    float _minGap) -> CPL.ThreeCandleData
+    CPL.CandleAnalysisConfig _config) -> CPL.ThreeCandleData
 ```
 
 | Argument | Type | Required | Meaning |
@@ -343,7 +353,7 @@ CPL.analyzeThreeCandlePattern(
 | `_candle1` | `CandleData` | yes | Oldest candle. |
 | `_candle2` | `CandleData` | yes | Middle candle. |
 | `_candle3` | `CandleData` | yes | Newest candle. |
-| `_minGap` | `float` | yes | Minimum absolute gap required for fair value gap checks. |
+| `_config` | `CandleAnalysisConfig` | yes | Reads `fvgMinGap` for fair value gap checks. |
 
 Returns `ThreeCandleData.new(pattern, _candle1, _candle2, _candle3)`.
 
@@ -389,8 +399,8 @@ fallback None
 | `isBullishAbandonedBabyPattern` | `_c1Size`, `_c1Dir`, `_c1Low`, `_c2Pattern`, `_c2High`, `_c3Size`, `_c3Dir`, `_c3Low` | `bool` | True when the Morning Star shape includes a fully isolated middle Doji below both neighbors. |
 | `isBearishAbandonedBabyPattern` | `_c1Size`, `_c1Dir`, `_c1High`, `_c2Pattern`, `_c2Low`, `_c3Size`, `_c3Dir`, `_c3High` | `bool` | True when the Evening Star shape includes a fully isolated middle Doji above both neighbors. |
 | `isEngulfingSandwichPattern` | `_c1High`, `_c1Low`, `_c2High`, `_c2Low`, `_c3High`, `_c3Low` | `bool` | True when candle 2 engulfs candle 1 and candle 3 sits inside candle 2. |
-| `isBullishFairValueGapPattern` | `_c1High`, `_c3Low`, `_minGap` | `bool` | True when the candle 3 low is at least `_minGap` above candle 1 high. |
-| `isBearishFairValueGapPattern` | `_c1Low`, `_c3High`, `_minGap` | `bool` | True when the candle 1 low is at least `_minGap` above candle 3 high. |
+| `isBullishFairValueGapPattern` | `_c1High`, `_c3Low`, `_config` | `bool` | True when the candle 3 low is at least `_config.fvgMinGap` above candle 1 high. |
+| `isBearishFairValueGapPattern` | `_c1Low`, `_c3High`, `_config` | `bool` | True when the candle 1 low is at least `_config.fvgMinGap` above candle 3 high. |
 
 These helpers are predicate primitives. They do not apply the full analyzer
 priority stacks or weak/strong engulfing classification on their own.
@@ -530,11 +540,14 @@ not manage persistent runtime containers.
 |------|--------|
 | Analyze single candles first | `analyzeTwoCandlePattern()` and `analyzeThreeCandlePattern()` assume valid `CandleData` inputs with correct `size`, `direction`, `pattern`, and OHLC fields already populated. |
 | Preserve chronological order | Reversing candle order changes engulfing, star, railroad, and fair-value-gap semantics. |
-| Keep thresholds consistent across a sequence | Mixed `_avgSize`, `_equivTolerance`, `_bodyTolerance`, or `_positionThreshold` settings can make multi-candle results inconsistent. |
-| Tolerances are absolute price units | `_equivTolerance`, `_bodyTolerance`, and `_minGap` are not ticks unless the consumer converts ticks to price first. |
+| Reuse one config across a sequence | Mixed `_avgSize` values or different `CandleAnalysisConfig` values can make multi-candle results inconsistent. |
+| Tolerances are absolute price units | `config.equivTolerance`, `config.bodyTolerance`, and `config.fvgMinGap` are not ticks unless the consumer converts ticks to price first. |
+| Do not rely blindly on constructor defaults | Several source defaults are `na`; construct an explicit config so equality, small-body, and FVG behavior is intentional. |
 | Name helpers are cosmetic | Use enums in logic and helper strings only for display. |
-| FVG helpers take raw floats, not `CandleData` | `isBullishFairValueGapPattern()` and `isBearishFairValueGapPattern()` expect strict float argument order. |
-| `scoreCandleSentiment()` is not fully clamped | `power` is capped at `1.0`, but `shape` can exceed the usual range if `_wickWeight` is pushed beyond normal bounds. |
+| FVG helpers take raw floats, not `CandleData` | `isBullishFairValueGapPattern()` and `isBearishFairValueGapPattern()` expect strict float argument order followed by the shared config. |
+| `scoreCandleSentiment()` is not fully clamped | `power` is capped at `1.0`, but `shape` can exceed the usual range if `config.wickWeight` is pushed beyond normal bounds. |
 | `CandleData` constructor order is strict | If manually constructing test objects, field order must match the exported type declaration exactly. |
 | Helper predicates are lower-level than analyzers | Calling helpers directly bypasses analyzer-level priority ordering and weak/strong engulfing classification. |
 | Zero-range candles use a safe wick-range fallback | `analyzeCandle()` substitutes `_avgSize * 0.001` for section placement math when `wickRange <= 0`. |
+| `AGENTS.md` is the documentation source of truth | Keep API signatures, type fields, behavior, hierarchy, and runtime rules here aligned with the Pine source. The publication file is consumer-facing copy, not a second API reference. |
+| Keep one publication file | Maintain `1CG-Candle-Pattern-Library-Publication.txt`; place release updates in its lower `Release History` section instead of creating another docs or release-notes file. |
