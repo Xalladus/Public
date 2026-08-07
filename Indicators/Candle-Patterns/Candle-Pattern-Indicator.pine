@@ -1,8 +1,7 @@
 //@version=6
 indicator("Candlestick Pattern Detector", shorttitle="CandlePats", overlay=true)
 
-// Import library - UPDATE WITH YOUR USERNAME AFTER PUBLISHING
-import OneCleverGuy/CandlePatternLibrary/3 as CPL
+import OneCleverGuy/CandlePatternLibrary/6 as CPL
 
 //+-------------------------------------------------------+
 //                        INFORMATION                     |
@@ -132,6 +131,13 @@ positionThresholdValue = switch i_positionThreshold
     "75:25" => 75
     => 75
 
+CPL.CandleAnalysisConfig candleConfig = CPL.CandleAnalysisConfig.new(
+    sizeThresholdPct  = i_sizeThreshold,
+    equivTolerance    = i_equivTolerance,
+    bodyTolerance     = i_bodyTolerance,
+    positionThreshold = positionThresholdValue,
+    fvgMinGap         = i_minFvgGap)
+
 // #endregion Global Variables
 
 
@@ -160,10 +166,7 @@ if barstate.isconfirmed
       low,
       close,
       avgSize,
-      i_sizeThreshold,
-      i_equivTolerance,
-      i_bodyTolerance,
-      positionThresholdValue
+      candleConfig
       )
     
     // Analyze the second most recently closed candle (previous bar [1])
@@ -173,11 +176,8 @@ if barstate.isconfirmed
       high[1],
       low[1],
       close[1],
-      avgSize,
-      i_sizeThreshold,
-      i_equivTolerance,
-      i_bodyTolerance,
-      positionThresholdValue
+      avgSize[1],
+      candleConfig
       )
     
     // Analyze the third most recently closed candle (bar [2])
@@ -187,11 +187,8 @@ if barstate.isconfirmed
       high[2],
       low[2],
       close[2],
-      avgSize,
-      i_sizeThreshold,
-      i_equivTolerance,
-      i_bodyTolerance,
-      positionThresholdValue
+      avgSize[2],
+      candleConfig
       )
     
     // Analyze two-candle pattern using the two most recently closed candles
@@ -199,8 +196,7 @@ if barstate.isconfirmed
     twoCandleAnalysis := CPL.analyzeTwoCandlePattern(
       secondMostRecentClosedCandle,
       mostRecentClosedCandle,
-      i_equivTolerance,
-      positionThresholdValue
+      candleConfig
       )
     
     // Analyze three-candle pattern using the three most recently closed candles
@@ -209,7 +205,7 @@ if barstate.isconfirmed
       thirdMostRecentClosedCandle,
       secondMostRecentClosedCandle,
       mostRecentClosedCandle,
-      i_minFvgGap
+      candleConfig
       )
 
 // #endregion Execution

@@ -10,7 +10,7 @@ library("CandlePatternLibrary")
 // and analyze candles in chronological order for the multi-candle calls.
 //
 // Quick start:
-// import OneCleverGuy/CandlePatternLibrary/5 as CPL
+// import OneCleverGuy/CandlePatternLibrary/6 as CPL
 // float avgSize = ta.atr(14)
 // CPL.CandleAnalysisConfig config = CPL.CandleAnalysisConfig.new(
 //   50.0,  // sizeThresholdPct
@@ -181,6 +181,9 @@ determineCandleDirection(float _open, float _close, float _tolerance) =>
         result := CandleDirection.Bearish
     result
 
+isNormalOrLongSize(CandleSize _size) =>
+    _size == CandleSize.Normal or _size == CandleSize.Long
+
 // #region Pattern Detection Helpers **********************
 is4PriceDoji(bool _highEquivLow, bool _hasEquivBody) =>
     _highEquivLow and _hasEquivBody
@@ -210,8 +213,7 @@ isBearishMarubozu(bool _openEquivHigh, bool _closeEquivLow) =>
     _openEquivHigh and _closeEquivLow
 
 isSmallBodyPattern(CandleSize _size, bool _hasSmallBody, bool _hasEquivBody) =>
-    (_size == CandleSize.Normal or _size == CandleSize.Long) and
-      _hasSmallBody and not _hasEquivBody
+    isNormalOrLongSize(_size) and _hasSmallBody and not _hasEquivBody
 
 getSmallBodyPatternType(bool _bodyInUpperSection, bool _bodyInLowerSection) =>
     CandlePattern result = CandlePattern.SpinningTop
@@ -220,11 +222,72 @@ getSmallBodyPatternType(bool _bodyInUpperSection, bool _bodyInLowerSection) =>
     else if _bodyInLowerSection
         result := CandlePattern.ShootingStar
     result
+
 // #endregion Pattern Detection Helpers
 
 //+-------------------------------------------------------+
 //                         FUNCTIONS                      |
 //+-------------------------------------------------------+
+// #region Pattern Family Functions **********************
+
+// @function isReversalSinglePattern              - Tests whether a single-candle result belongs to the reversal family.
+// @param    _pattern          (CandlePattern)     - Completed single-candle pattern result.
+// @returns                    (bool)              - True for Hammer or Shooting Star.
+export isReversalSinglePattern(CandlePattern _pattern) =>
+    _pattern == CandlePattern.Hammer or _pattern == CandlePattern.ShootingStar
+
+// @function isDojiPattern                        - Tests whether a single-candle result belongs to the Doji family.
+// @param    _pattern          (CandlePattern)     - Completed single-candle pattern result.
+// @returns                    (bool)              - True for any Doji variant.
+export isDojiPattern(CandlePattern _pattern) =>
+    switch _pattern
+        CandlePattern.Doji              => true
+        CandlePattern.LongLeggedDoji    => true
+        CandlePattern.CrossDoji         => true
+        CandlePattern.InvertedCrossDoji => true
+        CandlePattern.DragonflyDoji     => true
+        CandlePattern.GravestoneDoji    => true
+        CandlePattern.FourPriceDoji     => true
+        => false
+
+// @function isMarubozuPattern                    - Tests whether a single-candle result belongs to the Marubozu family.
+// @param    _pattern          (CandlePattern)     - Completed single-candle pattern result.
+// @returns                    (bool)              - True for bullish or bearish Marubozu.
+export isMarubozuPattern(CandlePattern _pattern) =>
+    _pattern == CandlePattern.BullishMarubozu or _pattern == CandlePattern.BearishMarubozu
+
+// @function isEngulfingTwoPattern                - Tests whether a two-candle result belongs to the engulfing family.
+// @param    _pattern          (TwoCandlePattern)  - Completed two-candle pattern result.
+// @returns                    (bool)              - True for any strong or weak engulfing result.
+export isEngulfingTwoPattern(TwoCandlePattern _pattern) =>
+    switch _pattern
+        TwoCandlePattern.BullishEngulfingWeak   => true
+        TwoCandlePattern.BullishEngulfingStrong => true
+        TwoCandlePattern.BearishEngulfingWeak   => true
+        TwoCandlePattern.BearishEngulfingStrong => true
+        => false
+
+// @function isTweezerTwoPattern                  - Tests whether a two-candle result belongs to the tweezer family.
+// @param    _pattern          (TwoCandlePattern)  - Completed two-candle pattern result.
+// @returns                    (bool)              - True for Tweezer Top or Tweezer Bottom.
+export isTweezerTwoPattern(TwoCandlePattern _pattern) =>
+    _pattern == TwoCandlePattern.TweezerTop or _pattern == TwoCandlePattern.TweezerBottom
+
+// @function isRailRoadTwoPattern                 - Tests whether a two-candle result belongs to the rail-road family.
+// @param    _pattern          (TwoCandlePattern)  - Completed two-candle pattern result.
+// @returns                    (bool)              - True for bullish or bearish Rail Road.
+export isRailRoadTwoPattern(TwoCandlePattern _pattern) =>
+    _pattern == TwoCandlePattern.BullishRailRoad or _pattern == TwoCandlePattern.BearishRailRoad
+
+// @function isStandaloneFairValueGapThreePattern - Tests for a standalone three-candle fair-value-gap result.
+// @param    _pattern          (ThreeCandlePattern) - Completed three-candle pattern result.
+// @returns                    (bool)               - True only for standalone bullish or bearish FVG.
+export isStandaloneFairValueGapThreePattern(ThreeCandlePattern _pattern) =>
+    _pattern == ThreeCandlePattern.BullishFairValueGap or
+      _pattern == ThreeCandlePattern.BearishFairValueGap
+
+// #endregion Pattern Family Functions
+
 // @function scoreCandleSentiment                 - Scores one candle on [-100 .. +100] via Shape * Power.
 // @param    _open            (float)             - Candle open.
 // @param    _high            (float)             - Candle high.
@@ -245,7 +308,10 @@ export scoreCandleSentiment(
     float wickBias  = (rngOk ? (lowerWick - upperWick) / rng : 0.0)
     float shape     = bodyRatio + _config.wickWeight * wickBias
     bool  atrOk     = not na(_atr) and _atr > 0.0
-    float power     = (atrOk and rngOk ? math.min(rng / (_config.atrMultiplier * _atr), 1.0) : 0.0)
+    bool  multiplierOk = not na(_config.atrMultiplier) and _config.atrMultiplier > 0.0
+    float power     = (atrOk and rngOk and multiplierOk
+      ? math.min(rng / (_config.atrMultiplier * _atr), 1.0)
+      : 0.0)
     float score     = shape * power * 100.0
     [score, shape, power, bodyRatio, wickBias]
 
@@ -283,7 +349,7 @@ export analyzeCandle(
     bool bodyInUpperSection = bodyLow >= upperThreshold
     bool bodyInLowerSection = bodyHigh <= lowerThreshold
     bool bodyInMiddle       = not bodyInUpperSection and not bodyInLowerSection
-    bool isNormalOrLong = candleSize == CandleSize.Normal or candleSize == CandleSize.Long
+    bool isNormalOrLong = isNormalOrLongSize(candleSize)
     // Priority order matters: stricter Doji variants resolve before the generic fallbacks.
     if is4PriceDoji(highEquivLow, hasEquivBody)
         pattern := CandlePattern.FourPriceDoji
@@ -410,9 +476,9 @@ export isThreeWhiteSoldiersPattern(
   CandleSize _c1Size, CandleSize _c2Size, CandleSize _c3Size,
   CandleDirection _c1Dir, CandleDirection _c2Dir, CandleDirection _c3Dir) =>
     (
-      (_c1Size == CandleSize.Normal or _c1Size == CandleSize.Long) and
-      (_c2Size == CandleSize.Normal or _c2Size == CandleSize.Long) and
-      (_c3Size == CandleSize.Normal or _c3Size == CandleSize.Long) and
+      isNormalOrLongSize(_c1Size) and
+      isNormalOrLongSize(_c2Size) and
+      isNormalOrLongSize(_c3Size) and
       _c1Dir == CandleDirection.Bullish and
       _c2Dir == CandleDirection.Bullish and
       _c3Dir == CandleDirection.Bullish
@@ -430,9 +496,9 @@ export isThreeBlackCrowsPattern(
   CandleSize _c1Size, CandleSize _c2Size, CandleSize _c3Size,
   CandleDirection _c1Dir, CandleDirection _c2Dir, CandleDirection _c3Dir) =>
     (
-      (_c1Size == CandleSize.Normal or _c1Size == CandleSize.Long) and
-      (_c2Size == CandleSize.Normal or _c2Size == CandleSize.Long) and
-      (_c3Size == CandleSize.Normal or _c3Size == CandleSize.Long) and
+      isNormalOrLongSize(_c1Size) and
+      isNormalOrLongSize(_c2Size) and
+      isNormalOrLongSize(_c3Size) and
       _c1Dir == CandleDirection.Bearish and
       _c2Dir == CandleDirection.Bearish and
       _c3Dir == CandleDirection.Bearish
@@ -449,18 +515,10 @@ export isMorningStarPattern(
   CandleSize _c1Size, CandleDirection _c1Dir, CandlePattern _c2Pattern,
   CandleSize _c3Size, CandleDirection _c3Dir) =>
     (
-      (_c1Size == CandleSize.Normal or _c1Size == CandleSize.Long) and
+      isNormalOrLongSize(_c1Size) and
       _c1Dir == CandleDirection.Bearish and
-      (
-        _c2Pattern == CandlePattern.Doji or
-        _c2Pattern == CandlePattern.LongLeggedDoji or
-        _c2Pattern == CandlePattern.CrossDoji or
-        _c2Pattern == CandlePattern.DragonflyDoji or
-        _c2Pattern == CandlePattern.InvertedCrossDoji or
-        _c2Pattern == CandlePattern.GravestoneDoji or
-        _c2Pattern == CandlePattern.FourPriceDoji
-        ) and
-      (_c3Size == CandleSize.Normal or _c3Size == CandleSize.Long) and
+      isDojiPattern(_c2Pattern) and
+      isNormalOrLongSize(_c3Size) and
       _c3Dir == CandleDirection.Bullish
       )
 
@@ -475,18 +533,10 @@ export isEveningStarPattern(
   CandleSize _c1Size, CandleDirection _c1Dir, CandlePattern _c2Pattern,
   CandleSize _c3Size, CandleDirection _c3Dir) =>
     (
-      (_c1Size == CandleSize.Normal or _c1Size == CandleSize.Long) and
+      isNormalOrLongSize(_c1Size) and
       _c1Dir == CandleDirection.Bullish and
-      (
-        _c2Pattern == CandlePattern.Doji or
-        _c2Pattern == CandlePattern.LongLeggedDoji or
-        _c2Pattern == CandlePattern.CrossDoji or
-        _c2Pattern == CandlePattern.DragonflyDoji or
-        _c2Pattern == CandlePattern.InvertedCrossDoji or
-        _c2Pattern == CandlePattern.GravestoneDoji or
-        _c2Pattern == CandlePattern.FourPriceDoji
-        ) and
-      (_c3Size == CandleSize.Normal or _c3Size == CandleSize.Long) and
+      isDojiPattern(_c2Pattern) and
+      isNormalOrLongSize(_c3Size) and
       _c3Dir == CandleDirection.Bearish
       )
 
@@ -505,20 +555,12 @@ export isBullishAbandonedBabyPattern(
   CandlePattern _c2Pattern, float _c2High,
   CandleSize _c3Size, CandleDirection _c3Dir, float _c3Low) =>
     (
-      (_c1Size == CandleSize.Normal or _c1Size == CandleSize.Long) and
+      isNormalOrLongSize(_c1Size) and
       _c1Dir == CandleDirection.Bearish and
-      (
-        _c2Pattern == CandlePattern.Doji or
-        _c2Pattern == CandlePattern.LongLeggedDoji or
-        _c2Pattern == CandlePattern.CrossDoji or
-        _c2Pattern == CandlePattern.DragonflyDoji or
-        _c2Pattern == CandlePattern.InvertedCrossDoji or
-        _c2Pattern == CandlePattern.GravestoneDoji or
-        _c2Pattern == CandlePattern.FourPriceDoji
-        ) and
+      isDojiPattern(_c2Pattern) and
       _c2High < _c1Low and
       _c2High < _c3Low and
-      (_c3Size == CandleSize.Normal or _c3Size == CandleSize.Long) and
+      isNormalOrLongSize(_c3Size) and
       _c3Dir == CandleDirection.Bullish
       )
 
@@ -537,20 +579,12 @@ export isBearishAbandonedBabyPattern(
   CandlePattern _c2Pattern, float _c2Low,
   CandleSize _c3Size, CandleDirection _c3Dir, float _c3High) =>
     (
-      (_c1Size == CandleSize.Normal or _c1Size == CandleSize.Long) and
+      isNormalOrLongSize(_c1Size) and
       _c1Dir == CandleDirection.Bullish and
-      (
-        _c2Pattern == CandlePattern.Doji or
-        _c2Pattern == CandlePattern.LongLeggedDoji or
-        _c2Pattern == CandlePattern.CrossDoji or
-        _c2Pattern == CandlePattern.DragonflyDoji or
-        _c2Pattern == CandlePattern.InvertedCrossDoji or
-        _c2Pattern == CandlePattern.GravestoneDoji or
-        _c2Pattern == CandlePattern.FourPriceDoji
-        ) and
+      isDojiPattern(_c2Pattern) and
       _c2Low > _c1High and
       _c2Low > _c3High and
-      (_c3Size == CandleSize.Normal or _c3Size == CandleSize.Long) and
+      isNormalOrLongSize(_c3Size) and
       _c3Dir == CandleDirection.Bearish
       )
 

@@ -112,3 +112,43 @@ reusable configuration object instead of separate positional settings.
 [*]Reuse that config for single-candle, two-candle, three-candle, fair value gap, and sentiment calls.
 [*]Replace pre-v5 positional threshold and sentiment arguments with the config object.
 [/list]
+
+[b]v6 Update[/b]
+
+Version 6 adds reusable result-family classification and centralizes shared
+pattern-family knowledge inside CandlePatternLibrary. This update is appended
+because previously published TradingView release text cannot be edited.
+
+[b]Version 6 Import[/b]
+
+[pine]
+import OneCleverGuy/CandlePatternLibrary/6 as CPL
+[/pine]
+
+[b]Added[/b]
+
+[list]
+[*]Added isReversalSinglePattern(), isDojiPattern(), and isMarubozuPattern() for completed single-candle results.
+[*]Added isEngulfingTwoPattern(), isTweezerTwoPattern(), and isRailRoadTwoPattern() for completed two-candle results.
+[*]Added isStandaloneFairValueGapThreePattern() for pure BullishFairValueGap and BearishFairValueGap results. Combined soldier/crow plus FVG results remain distinct patterns.
+[*]These helpers classify already-detected enum results; they do not rerun pattern detection or apply consumer-specific trading policy.
+[/list]
+
+[b]Improved[/b]
+
+[list]
+[*]Morning Star, Evening Star, and both Abandoned Baby predicates now use the same authoritative Doji-family classification.
+[*]Repeated Normal-or-Long size checks now use one internal helper.
+[*]Sentiment power returns 0.0 when atrMultiplier is na, zero, or negative instead of dividing by an invalid multiplier.
+[*]The reference indicator now uses the shared CandleAnalysisConfig API and supplies avgSize[1] and avgSize[2] when analyzing historical candles.
+[*]Candle Pattern indicator source files now use the .pine extension.
+[/list]
+
+[b]Migration[/b]
+
+[list]
+[*]Update imports to CandlePatternLibrary/6.
+[*]Replace consumer-owned enum member lists with the new result-family helpers where appropriate.
+[*]When analyzing historical candles, pass each candle the average-size series value from the same bar.
+[*]Keep consumer-specific filters, such as requiring a Long engulfing candle or suppressing duplicate journal events, in the consumer.
+[/list]

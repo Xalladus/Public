@@ -1,6 +1,11 @@
 //@version=6
 indicator("Candlestick Analysis Library [Dev]", shorttitle="CandleLib", overlay=true)
 
+// LEGACY COMBINED HARNESS:
+// The canonical publishable implementation is
+// Libraries/Candle-Patterns/1CG-Candle-Pattern-Library.pine. This file is
+// retained only as historical development reference and is not kept API-synced.
+
 //+-------------------------------------------------------+
 //                        INFORMATION                     |
 //+-------------------------------------------------------+

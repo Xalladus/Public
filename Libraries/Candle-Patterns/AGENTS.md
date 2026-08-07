@@ -2,13 +2,14 @@
 
 Pine Script v6 candle-analysis library for classifying single candles and
 detecting two-candle and three-candle patterns. The library owns candle
-classification, pattern detection, enum naming helpers, and sentiment scoring.
+classification, pattern detection, result-family classification, enum naming
+helpers, and sentiment scoring.
 The consumer owns input declarations, average-size/ATR sourcing, bar ordering,
 rendering, alerts, and any strategy logic built on top of the returned data.
 Published as:
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/5 as CPL
+import OneCleverGuy/CandlePatternLibrary/6 as CPL
 ```
 
 Dependency note: this library has no imported-library dependencies.
@@ -42,6 +43,16 @@ CPL.scoreCandleSentiment(
     float _close,
     float _atr,
     CPL.CandleAnalysisConfig _config) -> [float, float, float, float, float]
+
+CPL.isReversalSinglePattern(CPL.CandlePattern _pattern) -> bool
+CPL.isDojiPattern(CPL.CandlePattern _pattern) -> bool
+CPL.isMarubozuPattern(CPL.CandlePattern _pattern) -> bool
+
+CPL.isEngulfingTwoPattern(CPL.TwoCandlePattern _pattern) -> bool
+CPL.isTweezerTwoPattern(CPL.TwoCandlePattern _pattern) -> bool
+CPL.isRailRoadTwoPattern(CPL.TwoCandlePattern _pattern) -> bool
+
+CPL.isStandaloneFairValueGapThreePattern(CPL.ThreeCandlePattern _pattern) -> bool
 
 CPL.isEngulfingPattern(bool _bodyEngulfs, CPL.CandleDirection _c2Dir, CPL.CandleDirection _targetDir) -> bool
 CPL.isInsideBarPattern(float _c2High, float _c1High, float _c2Low, float _c1Low) -> bool
@@ -303,7 +314,8 @@ Returns a five-float tuple in this exact order:
 | `5` | `wickBias` | Lower wick minus upper wick, normalized by total range. |
 
 If range is invalid, `bodyRatio` and `wickBias` return `0.0`. If ATR is `na`
-or `<= 0`, `power` and `score` return `0.0`.
+or `<= 0`, or `config.atrMultiplier` is `na` or `<= 0`, `power` and `score`
+return `0.0`.
 
 #### `analyzeTwoCandlePattern`
 
@@ -376,6 +388,26 @@ BearishFairValueGap
 fallback None
 ```
 
+### Result-family helpers
+
+These functions classify an already-detected enum result. They do not inspect
+OHLC data, rerun an analyzer, or apply consumer display/trading policy.
+
+| Function | Argument | Returns true for |
+|----------|----------|------------------|
+| `isReversalSinglePattern` | `_pattern: CandlePattern` | `Hammer`, `ShootingStar` |
+| `isDojiPattern` | `_pattern: CandlePattern` | Every Doji variant |
+| `isMarubozuPattern` | `_pattern: CandlePattern` | Bullish or bearish Marubozu |
+| `isEngulfingTwoPattern` | `_pattern: TwoCandlePattern` | Every strong/weak bullish/bearish engulfing result |
+| `isTweezerTwoPattern` | `_pattern: TwoCandlePattern` | `TweezerTop`, `TweezerBottom` |
+| `isRailRoadTwoPattern` | `_pattern: TwoCandlePattern` | Bullish or bearish Rail Road |
+| `isStandaloneFairValueGapThreePattern` | `_pattern: ThreeCandlePattern` | Pure bullish or bearish FVG only |
+
+`isStandaloneFairValueGapThreePattern()` deliberately excludes the combined
+soldier/crow plus FVG enum values. Consumers that suppress a duplicate zoned
+FVG event can exclude the standalone results without hiding the combined
+patterns.
+
 ### Exported helper predicates
 
 #### Two-candle helpers
@@ -438,9 +470,19 @@ CPL
 |   |   +-- isRegularDoji(...) [private]
 |   |   +-- isBullishMarubozu(...) [private]
 |   |   +-- isBearishMarubozu(...) [private]
+|   |   +-- isNormalOrLongSize(...) [private]
 |   |   +-- isSmallBodyPattern(...) [private]
 |   |   +-- getSmallBodyPatternType(...) [private]
 |   +-- scoreCandleSentiment(...) -> [score, shape, power, bodyRatio, wickBias]
+|
++-- Result-family classification
+|   +-- isReversalSinglePattern(...) -> bool
+|   +-- isDojiPattern(...) -> bool
+|   +-- isMarubozuPattern(...) -> bool
+|   +-- isEngulfingTwoPattern(...) -> bool
+|   +-- isTweezerTwoPattern(...) -> bool
+|   +-- isRailRoadTwoPattern(...) -> bool
+|   `-- isStandaloneFairValueGapThreePattern(...) -> bool
 |
 +-- Two-candle primitives
 |   +-- isEngulfingPattern(...) -> bool
@@ -475,7 +517,7 @@ CPL
 ## Standard Integration Pattern
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/5 as CPL
+import OneCleverGuy/CandlePatternLibrary/6 as CPL
 
 float avgSize = ta.atr(14)
 CPL.CandleAnalysisConfig config = CPL.CandleAnalysisConfig.new(
@@ -493,11 +535,11 @@ CPL.CandleData newest = CPL.analyzeCandle(
 
 CPL.CandleData middle = CPL.analyzeCandle(
     open[1], high[1], low[1], close[1],
-    avgSize, config)
+    avgSize[1], config)
 
 CPL.CandleData oldest = CPL.analyzeCandle(
     open[2], high[2], low[2], close[2],
-    avgSize, config)
+    avgSize[2], config)
 
 CPL.TwoCandleData two = CPL.analyzeTwoCandlePattern(
     middle, newest, config)
@@ -507,6 +549,8 @@ CPL.ThreeCandleData three = CPL.analyzeThreeCandlePattern(
 
 bool hammer = newest.pattern == CPL.CandlePattern.Hammer
 bool morningStar = three.pattern == CPL.ThreeCandlePattern.MorningStar
+bool dojiFamily = CPL.isDojiPattern(newest.pattern)
+bool engulfingFamily = CPL.isEngulfingTwoPattern(two.pattern)
 
 [score, shape, power, bodyRatio, wickBias] =
     CPL.scoreCandleSentiment(open, high, low, close, ta.atr(14), config)
@@ -525,6 +569,7 @@ Chronological order is strict:
 |----------------|--------------|---------------|
 | Candle classification | Size, direction, Doji/Marubozu/small-body rules | Choosing thresholds and sourcing inputs |
 | Pattern detection | Two-candle and three-candle predicate logic plus analyzer priority | Deciding which patterns matter for entries, exits, or rendering |
+| Result families | Stable membership for reversal, Doji, Marubozu, engulfing, tweezer, rail-road, and standalone-FVG results | Combining families into UI toggles, journal rules, alerts, or strategy policy |
 | State | Stateless calculations from current inputs | Any persistent arrays, labels, tables, alerts, or strategy state |
 | Naming | Enum-to-string conversion helpers | UI wording beyond the provided helper labels |
 | Sentiment | Candle score computation | How the score is filtered, plotted, or traded |
@@ -540,14 +585,16 @@ not manage persistent runtime containers.
 |------|--------|
 | Analyze single candles first | `analyzeTwoCandlePattern()` and `analyzeThreeCandlePattern()` assume valid `CandleData` inputs with correct `size`, `direction`, `pattern`, and OHLC fields already populated. |
 | Preserve chronological order | Reversing candle order changes engulfing, star, railroad, and fair-value-gap semantics. |
-| Reuse one config across a sequence | Mixed `_avgSize` values or different `CandleAnalysisConfig` values can make multi-candle results inconsistent. |
+| Reuse one config across a sequence | Use the same `CandleAnalysisConfig` for all candles, but pass each candle its own same-bar `_avgSize` series value. |
 | Tolerances are absolute price units | `config.equivTolerance`, `config.bodyTolerance`, and `config.fvgMinGap` are not ticks unless the consumer converts ticks to price first. |
 | Do not rely blindly on constructor defaults | Several source defaults are `na`; construct an explicit config so equality, small-body, and FVG behavior is intentional. |
 | Name helpers are cosmetic | Use enums in logic and helper strings only for display. |
+| Family helpers classify results | They inspect enum identity only; they do not rerun OHLC detection or apply consumer policy. |
+| Standalone FVG is deliberately narrow | `isStandaloneFairValueGapThreePattern()` excludes soldier/crow plus FVG combination results. |
 | FVG helpers take raw floats, not `CandleData` | `isBullishFairValueGapPattern()` and `isBearishFairValueGapPattern()` expect strict float argument order followed by the shared config. |
-| `scoreCandleSentiment()` is not fully clamped | `power` is capped at `1.0`, but `shape` can exceed the usual range if `config.wickWeight` is pushed beyond normal bounds. |
+| `scoreCandleSentiment()` guards its divisor | Invalid ATR or `atrMultiplier <= 0` returns zero power; `shape` can still exceed the usual range if `wickWeight` is pushed beyond normal bounds. |
 | `CandleData` constructor order is strict | If manually constructing test objects, field order must match the exported type declaration exactly. |
 | Helper predicates are lower-level than analyzers | Calling helpers directly bypasses analyzer-level priority ordering and weak/strong engulfing classification. |
 | Zero-range candles use a safe wick-range fallback | `analyzeCandle()` substitutes `_avgSize * 0.001` for section placement math when `wickRange <= 0`. |
 | `AGENTS.md` is the documentation source of truth | Keep API signatures, type fields, behavior, hierarchy, and runtime rules here aligned with the Pine source. The publication file is consumer-facing copy, not a second API reference. |
-| Keep one publication file | Maintain `1CG-Candle-Pattern-Library-Publication.txt`; place release updates in its lower `Release History` section instead of creating another docs or release-notes file. |
+| Keep one append-only publication file | Maintain `1CG-Candle-Pattern-Library-Publication.txt`; never revise text from an already published TradingView version. Append each new version section at the end of the file, even if an older section describes a different ordering convention. The appended section must explain the new import version, additions, behavioral changes, and migration requirements without relying on edits to earlier text. |
