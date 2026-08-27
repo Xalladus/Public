@@ -1,0 +1,46 @@
+[b]Volume Profile Library[/b]
+
+A high-performance fixed range volume profile engine bundled with an embedded renderer. This library handles volume accumulation, core analytics (Point of Control and Value Area), and complex visual rendering natively. It features robust box and polyline display modes, handles absolute and recurring time ranges, and accepts lower-timeframe intrabar arrays to construct highly accurate volume profiles.
+
+[b]Supported Configurations (As Seen in Example)[/b]
+By wrapping the engine in your own script, you can expose a wide array of configurations to the user. The library natively supports processing all of the following parameters:
+[list]
+[*] [b]Timezone & Range Modes[/b]: Support for 'From Time' (single anchored profile), 'Between Times', 'Daily Anchor' (recurring at a specific time), and 'Daily Session' (recurring inside a specific session).
+[*] [b]Profile Fidelity[/b]: Configure the number of price rows (up to 49), define the Value Area percentage, and optionally split each row into estimated buy/sell volumes based on intrabar close locations.
+[*] [b]Visual Modes[/b]: Choose between traditional 'Boxes' (stacked volume rows), 'Polylines' (straight connective bands), and 'Curved Polylines', or disable all drawings while calculations continue.
+[*] [b]Appearance & Gradients[/b]: Natively handles coloring for bull/bear/total volume, fading volume out outside the Value Area, rendering gradient color bands within polylines, and highlighting the Range Box and Point of Control (POC) line/label.
+[*] [b]History Retention[/b]: Retain multiple historical recurring profiles on the chart at once without constantly recalculating them.
+[/list]
+
+[b]How to Use Correctly[/b]
+To use this library effectively, the consuming indicator or strategy must handle three critical tasks:
+[list=1]
+[*] [b]Declare Engine State[/b]: Create a persistent state instance using `var profileState = VP.createState()`. The engine requires this state to manage arrays, recycle drawings, and persist historical sessions across bars.
+[*] [b]Allocate Limits[/b]: Because the library manages drawing native Pine boxes, lines, and polylines, your main script must provide it with a large enough budget. You must add these limits to your `indicator()` or `strategy()` declaration (e.g., `max_boxes_count = 500`, `max_polylines_count = 100`).
+[*] [b]Fetch Intrabar Data[/b]: Pine Script restricts `request.security_lower_tf()` inside loops and libraries. You must fetch these arrays (High, Low, Close, Volume) at the global scope of your consumer script and pass them directly into `VP.update()`.
+[/list]
+
+[b]Example Integration[/b]
+[pine]
+import OneCleverGuy/VolumeProfileLibraryTESTA/8 as VP
+
+// 1. Declare persistent state and assemble config
+var VP.ProfileState profileState = VP.createState()
+var VP.ProfileConfig profileConfig = VP.ProfileConfig.new()
+
+// 2. Fetch lower-timeframe data for volume accuracy
+string ltf = timeframe.in_seconds() > 60 ? "1" : timeframe.period
+[ltfHighs, ltfLows, ltfCloses, ltfVolumes] = request.security_lower_tf(syminfo.tickerid, ltf, [high, low, close, volume])
+
+// 3. Update the engine on every bar
+profileState := VP.update(profileState, profileConfig, true, ltfHighs, ltfLows, ltfCloses, ltfVolumes)
+
+// 4. Retrieve statistics for your own logic
+[poc, vaHigh, vaLow] = VP.getMostRecentLevels(profileState)
+[/pine]
+
+[b]Important Notes[/b]
+[list]
+[*] Bars without lower-timeframe coverage will automatically fall back to the chart bar's data during accumulation.
+[*] Ensure you guard against missing volume in your main script (e.g., `if not na(volume)`), as the engine strictly requires volume data to function.
+[/list]

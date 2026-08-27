@@ -1,0 +1,36 @@
+[b]Fixed Range Volume Profile (Open Source)[/b]
+This open-source indicator serves a dual purpose: it is a highly customizable, high-performance volume profile tool for traders, and it acts as the official implementation guide for developers looking to integrate the [url=https://www.tradingview.com/script/A2ob3yE0-Volume-Profile-Library-1CG/]Volume Profile Library[/url] into their own indicators and strategies. 
+Leveraging intrabar arrays for unmatched volume accuracy, this tool provides precise Point of Control (POC) and Value Area calculations alongside beautiful box and polyline visuals.
+[b]Why This Indicator Is Necessary[/b]
+The volume profile in Pine Script is not accessible programmatically. By reviewing the source code of this indicator, developers can see exactly how to integrate the library engine into their own projets:
+[list]
+[*] Setup the `VolumeProfileLibrary` engine state using `var`.
+[*] Fetch 1-minute intrabar data efficiently using `request.security_lower_tf()`.
+[*] Safely pass data into the engine for accurate volume distribution.
+[*] Extract the calculated POC and Value Area levels for external logic.
+[/list]
+[b]Traditional vs. Polyline Rendering[/b]
+[image]https://www.tradingview.com/x/uGWZgWru/[/image]
+This indicator breaks away from the limitations of standard histograms by offering multiple rendering modes:
+[list]
+[*] [b]Traditional (Boxes)[/b]: The classic stacked volume row display, with options to split each row into estimated buy/sell volumes and dim areas outside the Value Area.
+[*] [b]Modern (Polylines)[/b]: Render the profile as Polylines or Curved Polylines. This modern aesthetic connects row endpoints with sleek lines and fills the internal regions with stunning spatial color gradients.
+[/list]
+[b]Use As An External Input Source[/b]
+[image]https://www.tradingview.com/x/z43KyRkG/[/image]
+You do not need to fork this code to use its data! This indicator plots the most recent POC, Value Area High, and Value Area Low [i]invisibly[/i] to the chart. 
+Because these plots are exposed to the Data Window, you can use this script as a direct "Source" input for other indicators and strategies in your workflow. This allows you to trigger alerts or build strategies based on exact Volume Profile levels without writing a single line of code.
+[b]Additional Features[/b]
+[list]
+[*] [b]Flexible Range Anchoring[/b]: Select between absolute ranges ('From Time', 'Between Times') or recurring windows ('Daily Anchor', 'Daily Session') that automatically reset every day.
+[*] [b]Intrabar Accuracy[/b]: Dives into 1-minute intrabar data to distribute volume accurately within the chart's bars.
+[*] [b]Session History[/b]: Keep historical sessions alive on the chart, allowing you to instantly visually backtest how the volume profile evolved day over day.
+[/list]
+
+[b]How to Use[/b]
+[list=1]
+[*] Add the indicator to your chart.
+[*] Open the settings menu and configure your preferred [b]Timezone[/b]. All fixed time pickers and session windows respect this timezone automatically.
+[*] Select your [b]Range Mode[/b] (e.g. 'Daily Session' for the RTH open).
+[*] Customize your resolution (`Rows`), rendering styles, and gradients.
+[/list]
