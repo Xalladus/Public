@@ -40,7 +40,7 @@
 // #endregion Information
 
 // @description Fixed range volume profile engine with box and polyline renderers, absolute and recurring ranges, and optional intrabar volume accuracy.
-library("VolumeProfileLibraryTESTA", overlay = true)
+library("VolumeProfileLibrary", overlay = true)
 
 //+-------------------------------------------------------+
 //                           UDT'S                        |
@@ -328,7 +328,6 @@ ensureSessionCache(ProfileState _state, ProfileConfig _cfg) =>
         [sessionStart, sessionEnd] = parseSessionBounds(_cfg.sessionString)
         _state.sessionStartMinute := sessionStart
         _state.sessionEndMinute   := sessionEnd
-    int(na)
 
 isMinuteInsideSession(int _minute, int _sessionStart, int _sessionEnd) =>
     bool isFullDay   = _sessionStart == _sessionEnd
@@ -400,7 +399,6 @@ distributeEntryIntoRows(Profile _profile, float _entryHigh, float _entryLow, flo
         float share     = (entryRange > 0 ? overlap / entryRange : flatShare)
         array.set(_profile.rowVolumes,    rowIndex, array.get(_profile.rowVolumes, rowIndex)    + _entryVolume * share)
         array.set(_profile.rowBuyVolumes, rowIndex, array.get(_profile.rowBuyVolumes, rowIndex) + _entryBuyVolume * share)
-    int(na)
 
 rebuildRows(Profile _profile) =>
     array.fill(_profile.rowVolumes, 0.0)
@@ -408,7 +406,6 @@ rebuildRows(Profile _profile) =>
     for [entryIndex, entryHigh] in _profile.entryHighs
         distributeEntryIntoRows(_profile, entryHigh, array.get(_profile.entryLows, entryIndex),
             array.get(_profile.entryVolumes, entryIndex), array.get(_profile.entryBuyVolumes, entryIndex))
-    int(na)
 
 // Row boundaries depend on the profile high/low, so any batch that expands the
 // range forces a rebuild from the stored entries. Batches inside the existing
@@ -441,7 +438,6 @@ appendBarsToProfile(Profile _profile, array<float> _srcHighs, array<float> _srcL
             distributeEntryIntoRows(_profile, array.get(_profile.entryHighs, entryIndex),
                 array.get(_profile.entryLows, entryIndex), array.get(_profile.entryVolumes, entryIndex),
                 array.get(_profile.entryBuyVolumes, entryIndex))
-    int(na)
 
 // #endregion Volume Accumulation Helpers
 
@@ -477,7 +473,6 @@ computeStatistics(Profile _profile, float _valueAreaPercent) =>
         _profile.pocPrice         := rowBottomPrice(_profile, pocRow, rowHeight) + rowHeight / 2.0
         _profile.valueAreaLow     := rowBottomPrice(_profile, lowRow, rowHeight)
         _profile.valueAreaHigh    := rowBottomPrice(_profile, highRow, rowHeight) + rowHeight
-    int(na)
 
 // #endregion Profile Statistics Helpers
 
@@ -492,7 +487,6 @@ syncBoxCount(array<box> _boxes, int _count) =>
         array.push(_boxes, box.new(0, 0.0, 0, 0.0, xloc = xloc.bar_time, border_width = NO_BORDER_WIDTH))
     while array.size(_boxes) > _count
         box.delete(array.pop(_boxes))
-    int(na)
 
 rowFillColor(ProfileStyle _style, color _baseColor, bool _isInsideValueArea) =>
     (_isInsideValueArea ? _baseColor : color.new(_baseColor, _style.outsideValueAreaTransparency))
@@ -507,7 +501,6 @@ placeBox(box _box, int _leftTime, float _top, int _rightTime, float _bottom, col
     box.set_lefttop(_box, _leftTime, _top)
     box.set_rightbottom(_box, _rightTime, _bottom)
     box.set_bgcolor(_box, _fillColor)
-    int(na)
 
 renderRangeBox(Profile _profile, ProfileConfig _cfg) =>
     ProfileStyle style = _cfg.style
@@ -521,6 +514,7 @@ renderRangeBox(Profile _profile, ProfileConfig _cfg) =>
     else
         box.delete(_profile.rangeBox)
         _profile.rangeBox := na
+    // The create/update/delete branches return different types.
     int(na)
 
 pocLabelLatestBarX(Profile _profile) =>
@@ -530,7 +524,6 @@ placePocLabelAtLatestBar(label _label, Profile _profile) =>
     label.set_xloc(_label, pocLabelLatestBarX(_profile), xloc.bar_index)
     label.set_y(_label, _profile.pocPrice)
     label.set_style(_label, label.style_label_lower_left)
-    int(na)
 
 renderPocLabel(Profile _profile, ProfileConfig _cfg) =>
     ProfileStyle style = _cfg.style
@@ -548,6 +541,7 @@ renderPocLabel(Profile _profile, ProfileConfig _cfg) =>
     else
         label.delete(_profile.pocLabel)
         _profile.pocLabel := na
+    // The create/update/delete branches return different types.
     int(na)
 
 renderPocLine(Profile _profile, ProfileConfig _cfg) =>
@@ -569,6 +563,7 @@ renderPocLine(Profile _profile, ProfileConfig _cfg) =>
         label.delete(_profile.pocLabel)
         _profile.pocLine  := na
         _profile.pocLabel := na
+    // The render and delete branches return different types.
     int(na)
 
 deleteRowBoxes(Profile _profile) =>
@@ -578,7 +573,6 @@ deleteRowBoxes(Profile _profile) =>
         box.delete(rowBox)
     array.clear(_profile.primaryBoxes)
     array.clear(_profile.secondaryBoxes)
-    int(na)
 
 deleteProfilePolylines(Profile _profile) =>
     polyline.delete(_profile.primaryPolyline)
@@ -588,7 +582,6 @@ deleteProfilePolylines(Profile _profile) =>
     array.clear(_profile.gradientPolylines)
     _profile.primaryPolyline   := na
     _profile.secondaryPolyline := na
-    int(na)
 
 renderRowBoxes(Profile _profile, ProfileConfig _cfg) =>
     ProfileStyle style = _cfg.style
@@ -620,7 +613,6 @@ renderRowBoxes(Profile _profile, ProfileConfig _cfg) =>
             [rowLeft, rowRight] = segmentEdges(anchorTime, 0.0, rowWidth)
             placeBox(primaryBox, rowLeft, rowTop, rowRight, rowBottom,
                 rowFillColor(style, style.totalColor, isInsideValueArea))
-    int(na)
 
 interpolateTime(int _innerTime, int _outerTime, float _ratio) =>
     _innerTime + int(math.round((_outerTime - _innerTime) * _ratio))
@@ -650,7 +642,6 @@ renderGradientBands(array<polyline> _drawings, array<int> _innerTimes, array<int
         polyline band = polyline.new(bandPoints, curved = _curved, closed = true, xloc = xloc.bar_time,
             line_color = na, fill_color = bandColor)
         array.push(_drawings, band)
-    int(na)
 
 // Each contour point sits at a price row's midpoint, with extra points at the
 // profile low and high. In split mode the primary line follows the end of each
@@ -718,7 +709,6 @@ renderProfilePolylines(Profile _profile, ProfileConfig _cfg) =>
     if _cfg.splitBuySell
         _profile.secondaryPolyline := polyline.new(secondaryPoints, curved = curvedPolylines, closed = false,
             xloc = xloc.bar_time, line_color = style.sellColor, line_width = PROFILE_POLYLINE_WIDTH)
-    int(na)
 
 renderVolumeProfile(Profile _profile, ProfileConfig _cfg) =>
     bool showBoxes     = _cfg.profileDisplay == ProfileDisplay.Boxes
@@ -731,7 +721,6 @@ renderVolumeProfile(Profile _profile, ProfileConfig _cfg) =>
         renderProfilePolylines(_profile, _cfg)
     else
         deleteProfilePolylines(_profile)
-    int(na)
 
 deleteProfileVisuals(Profile _profile) =>
     box.delete(_profile.rangeBox)
@@ -742,7 +731,6 @@ deleteProfileVisuals(Profile _profile) =>
     _profile.pocLabel := na
     deleteRowBoxes(_profile)
     deleteProfilePolylines(_profile)
-    int(na)
 
 renderProfile(Profile _profile, ProfileConfig _cfg) =>
     if _cfg.showVisuals
@@ -751,6 +739,7 @@ renderProfile(Profile _profile, ProfileConfig _cfg) =>
         renderPocLine(_profile, _cfg)
     else
         deleteProfileVisuals(_profile)
+    // The render and delete branches return different types.
     int(na)
 
 // #endregion Profile Rendering Helpers
@@ -770,7 +759,6 @@ sanitizeConfig(ProfileConfig _cfg) =>
         MIN_GRADIENT_BANDS_PER_SIDE, MAX_GRADIENT_BANDS_PER_SIDE)
     if na(_cfg.style)
         _cfg.style := ProfileStyle.new()
-    int(na)
 
 // Recurring profiles rotate into the history ring; a completed non-recurring
 // profile stays as `active` so it remains drawn and is never reopened.
@@ -788,6 +776,7 @@ archiveCompletedProfile(ProfileState _state, ProfileConfig _cfg) =>
         _state.active := na
     else
         renderProfile(completed, _cfg)
+    // Recurring and non-recurring branches return different types.
     int(na)
 
 // #endregion Profile Lifecycle Helpers

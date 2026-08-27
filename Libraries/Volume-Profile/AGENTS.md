@@ -164,3 +164,4 @@ profileState := VP.update(profileState, profileConfig, not timeframe.isseconds, 
 | `var` State Declaration | `profileState` and `profileConfig` must be declared using `var` in the consumer script, allowing them to persist across bars and hold historical drawings. |
 | Drawing Limits | Chart drawing constraints belong to the consumer indicator (`max_boxes_count`, etc). The library manages its own arrays, but heavy configurations (high `rowCount`, high `historyCount`) may breach limit thresholds if max counts are not set appropriately in the consumer. |
 | Volume Data Precondition | The consumer is responsible for skipping calculation if the chart/ticker has no volume data (e.g. guard against `na(volume)`). |
+| Typed Branch Fallbacks | Use a trailing `int(na)` only when a function's terminal `if`/`else` branches return different types. Do not append it to ordinary side-effect helpers, loops, or conditionals whose branches already resolve to the same type. |

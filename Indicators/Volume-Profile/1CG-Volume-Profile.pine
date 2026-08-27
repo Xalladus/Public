@@ -26,7 +26,7 @@ indicator("Volume Profile Fixed/Range", "VolProfile", overlay = true, max_boxes_
     max_labels_count = 50, max_polylines_count = 100)
 
 import OneCleverGuy/InputLibrary/4 as iLib
-import OneCleverGuy/VolumeProfileLibrary/1 as VP
+import OneCleverGuy/VolumeProfileLibrary/2 as VP
 
 //+-------------------------------------------------------+
 //                          INPUTS                        |
