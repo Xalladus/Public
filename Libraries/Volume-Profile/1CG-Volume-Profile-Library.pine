@@ -7,40 +7,17 @@
 
 // VolumeProfileLibrary
 //
-// Fixed range volume profile engine with built-in rendering. A consumer fills
-// out a ProfileConfig, creates a ProfileState with createState(), and calls
-// update() once per bar. The library resolves the time range, accumulates
-// volume into price rows, computes the Point of Control and value area, and
-// draws the range box, volume rows or profile polylines, POC line, and POC
-// origin label. getMostRecentLevels() exposes the latest POC and value-area
-// boundaries to consumers, retaining them between recurring sessions.
-//
-// Range modes:
-//   FromTime      - one profile from an absolute timestamp to the current bar.
-//   BetweenTimes  - one profile between two absolute timestamps.
-//   DailyAnchor   - recurring profile that resets every day at HH:MM.
-//   DailySession  - recurring profile drawn only inside a HHMM-HHMM session.
-//
-// Intrabar accuracy: the consumer may pass lower-timeframe OHLCV arrays from a
-// global-scope request.security_lower_tf() call. Each sub-bar is distributed
-// into the rows individually. Bars without lower-timeframe coverage fall back
-// to the chart bar's OHLCV automatically.
-//
-// Design note: this library intentionally owns chart drawings because the
-// product requirement is a programmatic drop-in replacement for the platform's
-// fixed range volume profile tool. Consumers still own all user inputs and all
-// request.security*() calls.
-//
-// Drawing budget: box mode uses rows x (splitBuySell ? 2 : 1) x
-// (historyCount + 1) row boxes plus one range box per profile. At the 49-row
-// cap with split and 4 history profiles this totals 495 boxes. With eight
-// gradient bands per region, polyline mode uses at most 18 polylines per
-// profile, or 90 across 5 profiles.
+// Fixed and recurring volume-profile engine with intrabar-aware accumulation,
+// Point of Control and Value Area statistics, and retained session history.
+// It renders box, straight-polyline, or curved-polyline profiles with optional
+// fills, range boxes, level lines, labels, and one-session level extensions.
+// Drawing budgets are resolved automatically while the latest calculated
+// levels remain available to consumer scripts.
 
 // #endregion Information
 
-// @description Fixed range volume profile engine with box and polyline renderers, absolute and recurring ranges, and optional intrabar volume accuracy.
-library("VolumeProfileLibrary", overlay = true)
+// @description Fixed range volume profile engine with box and polyline renderers, absolute and recurring ranges, automatic drawing-budget management with range/level fallback, and optional intrabar volume accuracy.
+library("VolumeProfileLibraryTESTB", overlay = true)
 
 //+-------------------------------------------------------+
 //                           UDT'S                        |
@@ -62,6 +39,12 @@ export enum ProfileDisplay
     Polylines        = "Polylines"
     CurvedPolylines  = "Curved Polylines"
 
+// @enum    PolylineFill        How polyline profile regions are filled.
+export enum PolylineFill
+    None     = "None"
+    Solid    = "Solid"
+    Gradient = "Gradient"
+
 // #endregion Exported Enums
 
 // #region Exported UDTs **********************************
@@ -77,6 +60,11 @@ export enum ProfileDisplay
 // @field   pocStyle                     Point of Control line style (line.style_*).
 // @field   pocTextColor                 POC origin label text color.
 // @field   pocTextSize                  POC origin label text size (size.*).
+// @field   valueAreaColor               Value-area high/low line color.
+// @field   valueAreaWidth               Value-area high/low line width.
+// @field   valueAreaStyle               Value-area high/low line style (line.style_*).
+// @field   valueAreaTextColor           VAH/VAL origin label text color.
+// @field   valueAreaTextSize            VAH/VAL origin label text size (size.*).
 export type ProfileStyle
     color  buyColor                     = #26a69a
     color  sellColor                    = #ef5350
@@ -88,51 +76,59 @@ export type ProfileStyle
     string pocStyle                     = line.style_solid
     color  pocTextColor                 = #ff0000
     string pocTextSize                  = size.small
+    color  valueAreaColor               = #2962ff
+    int    valueAreaWidth               = 1
+    string valueAreaStyle               = line.style_solid
+    color  valueAreaTextColor           = #2962ff
+    string valueAreaTextSize            = size.small
 
 // @type    ProfileConfig       Consumer configuration for the profile engine.
-// @field   rangeMode           How the profile range is anchored.
-// @field   rangeStartTime      Absolute start timestamp for FromTime and BetweenTimes modes.
-// @field   rangeEndTime        Absolute end timestamp for BetweenTimes mode.
-// @field   anchorHHMM          Daily reset time "HHMM" for DailyAnchor mode.
-// @field   sessionString       Session "HHMM-HHMM" for DailySession mode.
-// @field   timezone            IANA timezone used for anchor, session, and label math.
-// @field   rowCount            Number of price rows (1-49).
-// @field   valueAreaPercent    Percentage of total volume covered by the value area.
-// @field   splitBuySell        Split each row into estimated buy and sell volume.
-// @field   showVisuals         Draw profile visuals while continuing to calculate when false.
-// @field   widthPercent        Percentage of the range width the largest row fills.
-// @field   profileDisplay      Draw boxes, straight polylines, or curved polylines.
-// @field   showPolylineGradient Fill the bull and bear regions with stepped gradient bands.
-// @field   gradientBandsPerSide Number of gradient bands in each volume region (1-8).
-// @field   historyCount        Completed recurring profiles to keep drawn (0-4).
-// @field   showRangeBox        Draw the range highlight box.
-// @field   showPoc             Draw the Point of Control line.
-// @field   showValueArea       Dim rows outside the value area.
-// @field   extendPoc           Extend the Point of Control line right.
-// @field   showPocLabel        Label the POC line's origin day (when extendPoc is true).
-// @field   style               Visual styling.
+// @field   rangeMode                 How the profile range is anchored.
+// @field   rangeStartTime            Absolute start timestamp for FromTime and BetweenTimes modes.
+// @field   rangeEndTime              Absolute end timestamp for BetweenTimes mode.
+// @field   anchorHHMM                Daily reset time "HHMM" for DailyAnchor mode.
+// @field   sessionString             Session "HHMM-HHMM" for DailySession mode.
+// @field   timezone                  IANA timezone used for anchor, session, and label math.
+// @field   rowCount                  Number of price rows (1-49). Drives statistics and both renderers.
+// @field   valueAreaPercent          Percentage of total volume covered by the value area.
+// @field   splitBuySell              Split each row into estimated buy and sell volume.
+// @field   showVisuals               Draw profile visuals while continuing to calculate when false.
+// @field   widthPercent              Percentage of the range width the largest row fills.
+// @field   profileDisplay            Draw boxes, straight polylines, or curved polylines.
+// @field   polylineFill              Region fill for polyline modes: none, solid, or adaptive gradient.
+// @field   historyCount              Completed recurring profiles to represent (0-100). As many as fit the
+//                                    drawing budget stay fully drawn; the remainder keep range/level drawings.
+// @field   showRangeBox              Draw the range highlight box.
+// @field   dimOutsideValueArea       Dim box rows outside the value area.
+// @field   showPoc                   Draw the Point of Control line.
+// @field   showPocLabel              Label the POC line's origin day at its right end.
+// @field   showValueAreaLines        Draw the value-area high and low lines.
+// @field   showValueAreaLabels       Label the VAH and VAL lines' origin day at their right end.
+// @field   extendLevelsExtraSession  Run each completed recurring profile's lines until the next profile ends.
+// @field   style                     Visual styling.
 export type ProfileConfig
-    RangeMode       rangeMode        = RangeMode.DailySession
-    int             rangeStartTime   = na
-    int             rangeEndTime     = na
-    string          anchorHHMM       = "1600"
-    string          sessionString    = "0930-1600"
-    string          timezone         = "America/New_York"
-    int             rowCount         = 30
-    float           valueAreaPercent = 70.0
-    bool            splitBuySell     = true
-    bool            showVisuals      = true
-    float           widthPercent     = 100.0
-    ProfileDisplay  profileDisplay   = ProfileDisplay.Boxes
-    bool            showPolylineGradient = false
-    int             gradientBandsPerSide = 5
-    int             historyCount     = 2
-    bool            showRangeBox     = true
-    bool            showPoc          = true
-    bool            showValueArea    = true
-    bool            extendPoc        = false
-    bool            showPocLabel     = true
-    ProfileStyle    style            = na
+    RangeMode       rangeMode                = RangeMode.DailySession
+    int             rangeStartTime           = na
+    int             rangeEndTime             = na
+    string          anchorHHMM               = "1600"
+    string          sessionString            = "0930-1600"
+    string          timezone                 = "America/New_York"
+    int             rowCount                 = 30
+    float           valueAreaPercent         = 70.0
+    bool            splitBuySell             = true
+    bool            showVisuals              = true
+    float           widthPercent             = 100.0
+    ProfileDisplay  profileDisplay           = ProfileDisplay.Boxes
+    PolylineFill    polylineFill             = PolylineFill.Gradient
+    int             historyCount             = 2
+    bool            showRangeBox             = true
+    bool            dimOutsideValueArea      = true
+    bool            showPoc                  = true
+    bool            showPocLabel             = true
+    bool            showValueAreaLines       = false
+    bool            showValueAreaLabels      = true
+    bool            extendLevelsExtraSession = false
+    ProfileStyle    style                    = na
 
 // @type    Profile             One volume profile: accumulated data, statistics, and drawings.
 // @field   startTime           Open time of the first bar in the profile.
@@ -142,12 +138,12 @@ export type ProfileConfig
 // @field   barCount            Chart bars accumulated so far.
 // @field   highPrice           Highest high inside the profile.
 // @field   lowPrice            Lowest low inside the profile.
-// @field   entryHighs          Stored source-entry highs (intrabars when available), used to rebuild rows.
-// @field   entryLows           Stored source-entry lows.
-// @field   entryVolumes        Stored source-entry volumes.
-// @field   entryBuyVolumes     Stored estimated buy volumes.
-// @field   rowVolumes          Total volume per row.
-// @field   rowBuyVolumes       Estimated buy volume per row.
+// @field   entryHighs          Stored source-entry highs (intrabars when available); released on completion.
+// @field   entryLows           Stored source-entry lows; released on completion.
+// @field   entryVolumes        Stored source-entry volumes; released on completion.
+// @field   entryBuyVolumes     Stored estimated buy volumes; released on completion.
+// @field   rowVolumes          Total volume per row; released when the profile drops to level-only.
+// @field   rowBuyVolumes       Estimated buy volume per row; released when the profile drops to level-only.
 // @field   totalVolume         Total accumulated volume.
 // @field   pocRow              Row index of the Point of Control.
 // @field   valueAreaLowRow     Lowest row index inside the value area.
@@ -158,65 +154,79 @@ export type ProfileConfig
 // @field   isComplete          True once the profile stopped accepting bars.
 // @field   rangeBox            Range highlight box.
 // @field   pocLine             Point of Control line.
-// @field   pocLabel            POC origin-day label, present only when extendPoc and showPocLabel are enabled.
+// @field   pocLabel            POC origin-day label.
+// @field   valueAreaHighLine   Value-area high line.
+// @field   valueAreaLowLine    Value-area low line.
+// @field   valueAreaHighLabel  VAH origin-day label.
+// @field   valueAreaLowLabel   VAL origin-day label.
 // @field   primaryBoxes        Row boxes (buy segment in split mode, full row otherwise).
 // @field   secondaryBoxes      Sell segment row boxes in split mode.
 // @field   primaryPolyline     Connected buy endpoints in split mode, total-volume endpoints otherwise.
 // @field   secondaryPolyline   Connected outer sell endpoints in split mode.
-// @field   gradientPolylines   Closed ribbon bands used to approximate spatial gradients.
+// @field   fillPolylines       Closed ribbon bands used for solid and gradient region fills.
 export type Profile
-    int          startTime        = na
-    int          endTime          = na
-    int          startBarIndex    = na
-    int          endBarIndex      = na
-    int          barCount         = 0
-    float        highPrice        = na
-    float        lowPrice         = na
-    array<float> entryHighs       = na
-    array<float> entryLows        = na
-    array<float> entryVolumes     = na
-    array<float> entryBuyVolumes  = na
-    array<float> rowVolumes       = na
-    array<float> rowBuyVolumes    = na
-    float        totalVolume      = 0.0
-    int          pocRow           = na
-    int          valueAreaLowRow  = na
-    int          valueAreaHighRow = na
-    float        pocPrice         = na
-    float        valueAreaHigh    = na
-    float        valueAreaLow     = na
-    bool         isComplete       = false
-    box          rangeBox         = na
-    line         pocLine          = na
-    label        pocLabel         = na
-    array<box>   primaryBoxes     = na
-    array<box>   secondaryBoxes   = na
-    polyline     primaryPolyline   = na
-    polyline     secondaryPolyline = na
-    array<polyline> gradientPolylines = na
+    int             startTime          = na
+    int             endTime            = na
+    int             startBarIndex      = na
+    int             endBarIndex        = na
+    int             barCount           = 0
+    float           highPrice          = na
+    float           lowPrice           = na
+    array<float>    entryHighs         = na
+    array<float>    entryLows          = na
+    array<float>    entryVolumes       = na
+    array<float>    entryBuyVolumes    = na
+    array<float>    rowVolumes         = na
+    array<float>    rowBuyVolumes      = na
+    float           totalVolume        = 0.0
+    int             pocRow             = na
+    int             valueAreaLowRow    = na
+    int             valueAreaHighRow   = na
+    float           pocPrice           = na
+    float           valueAreaHigh      = na
+    float           valueAreaLow       = na
+    bool            isComplete         = false
+    box             rangeBox           = na
+    line            pocLine            = na
+    label           pocLabel           = na
+    line            valueAreaHighLine  = na
+    line            valueAreaLowLine   = na
+    label           valueAreaHighLabel = na
+    label           valueAreaLowLabel  = na
+    array<box>      primaryBoxes       = na
+    array<box>      secondaryBoxes     = na
+    polyline        primaryPolyline    = na
+    polyline        secondaryPolyline  = na
+    array<polyline> fillPolylines      = na
 
 // @type    ProfileState        Persistent engine state owned by the consumer via `var`.
-// @field   active              Profile currently accepting bars (or last completed non-recurring profile).
-// @field   history             Completed recurring profiles still drawn, oldest first.
-// @field   wasInRange          Whether the previous bar was inside the range.
-// @field   lastAnchorKey       Anchor key of the most recent in-range bar.
-// @field   anchorMinute        Cached DailyAnchor minute-of-day.
-// @field   sessionStartMinute  Cached DailySession start minute-of-day.
-// @field   sessionEndMinute    Cached DailySession end minute-of-day.
-// @field   mostRecentPoc       Latest calculated POC, retained after its profile completes.
+// @field   active                  Profile currently accepting bars (or last completed non-recurring profile).
+// @field   history                 Completed recurring profiles still fully drawn, oldest first.
+// @field   levelHistory            Older completed recurring profiles keeping the range box and level drawings, oldest first.
+// @field   effectiveHistoryCount   Fully drawn history slots resolved from the drawing budget this bar.
+// @field   levelOnlyHistoryCount   Lower-tier slots: requested history minus the fully drawn slots.
+// @field   resolvedFillBands       Fill ribbons per region this bar: 0 none, 1 solid, 3-8 adaptive gradient.
+// @field   lastAnchorKey           Anchor key of the most recent in-range bar.
+// @field   anchorMinute            Cached DailyAnchor minute-of-day.
+// @field   sessionStartMinute      Cached DailySession start minute-of-day.
+// @field   sessionEndMinute        Cached DailySession end minute-of-day.
+// @field   mostRecentPoc           Latest calculated POC, retained after its profile completes.
 // @field   mostRecentValueAreaHigh Latest calculated value-area high, retained between sessions.
-// @field   mostRecentValueAreaLow Latest calculated value-area low, retained between sessions.
-// @field   mostRecentBarCount  Bar count from the current or most recently completed profile.
-// @field   mostRecentTotalVolume Total volume from the current or most recently completed profile.
+// @field   mostRecentValueAreaLow  Latest calculated value-area low, retained between sessions.
+// @field   mostRecentBarCount      Bar count from the current or most recently completed profile.
+// @field   mostRecentTotalVolume   Total volume from the current or most recently completed profile.
 export type ProfileState
-    Profile        active             = na
-    array<Profile> history            = na
-    bool           wasInRange         = false
-    int            lastAnchorKey      = na
-    int             anchorMinute      = na
-    int            sessionStartMinute = na
-    int            sessionEndMinute   = na
-    float          mostRecentPoc      = na
+    Profile        active                  = na
+    array<Profile> history                 = na
+    array<Profile> levelHistory            = na
+    int            effectiveHistoryCount   = 0
+    int            levelOnlyHistoryCount   = 0
+    int            resolvedFillBands       = 0
+    int            lastAnchorKey           = na
+    int            anchorMinute            = na
+    int            sessionStartMinute      = na
+    int            sessionEndMinute        = na
+    float          mostRecentPoc           = na
     float          mostRecentValueAreaHigh = na
     float          mostRecentValueAreaLow  = na
     int            mostRecentBarCount      = 0
@@ -233,15 +243,26 @@ export type ProfileState
 
 // #region Helper Globals *********************************
 
-int MINUTES_PER_HOUR       = 60
-int MILLISECONDS_PER_DAY   = 86400000
-int HHMM_LENGTH            = 4
-float FLAT_BAR_BUY_SHARE   = 0.5
-float PERCENT_DIVISOR      = 100.0
-float EXHAUSTED_SIDE       = -1.0
-int NO_BORDER_WIDTH        = 0
-int PROFILE_POLYLINE_WIDTH = 2
-string POC_LABEL_DAY_FORMAT = "EEE MMM dd"
+int    MINUTES_PER_HOUR             = 60
+int    MILLISECONDS_PER_DAY         = 86400000
+int    HHMM_LENGTH                  = 4
+float  FLAT_BAR_BUY_SHARE           = 0.5
+float  PERCENT_DIVISOR              = 100.0
+float  EXHAUSTED_SIDE               = -1.0
+int    NO_BORDER_WIDTH              = 0
+int    PROFILE_POLYLINE_WIDTH       = 2
+int    DRAWING_LIMIT_BOXES          = 500
+int    DRAWING_LIMIT_POLYLINES      = 100
+int    NO_FILL_BANDS                = 0
+int    SOLID_FILL_BANDS             = 1
+int    MIN_GRADIENT_FILL_BANDS      = 3
+int    MAX_GRADIENT_FILL_BANDS      = 8
+color  LEVEL_LABEL_BACKGROUND       = #00000000
+string LEVEL_LABEL_STYLE            = label.style_label_left
+string LEVEL_LABEL_DAY_FORMAT       = "EEE MMM dd"
+string POC_LABEL_PREFIX             = "POC"
+string VALUE_AREA_HIGH_LABEL_PREFIX = "VAH"
+string VALUE_AREA_LOW_LABEL_PREFIX  = "VAL"
 
 // #endregion Helper Globals
 
@@ -249,9 +270,7 @@ string POC_LABEL_DAY_FORMAT = "EEE MMM dd"
 
 export const int MIN_ROW_COUNT     = 1
 export const int MAX_ROW_COUNT     = 49
-export const int MAX_HISTORY_COUNT = 4
-export const int MIN_GRADIENT_BANDS_PER_SIDE = 1
-export const int MAX_GRADIENT_BANDS_PER_SIDE = 8
+export const int MAX_HISTORY_COUNT = 100
 
 // #endregion Exported Globals
 
@@ -304,6 +323,11 @@ mostRecentDailyTimestamp(int _barTime, int _minuteOfDay, string _timezone) =>
         candidate := timestamp(_timezone, year(previousDay, _timezone), month(previousDay, _timezone),
             dayofmonth(previousDay, _timezone), anchorHour, anchorMinute)
     candidate
+
+// Non-time-based chart types can report an na close time; the bar open time is
+// the closest reliable stand-in for "the latest bar".
+currentBarEndTime() =>
+    nz(time_close, time)
 
 profileRowHeight(Profile _profile) =>
     int rowCount = array.size(_profile.rowVolumes)
@@ -377,7 +401,7 @@ createProfile(int _barTime, int _barIndex, int _rowCount) =>
         entryVolumes    = array.new<float>(),                entryBuyVolumes = array.new<float>(),
         rowVolumes      = array.new<float>(_rowCount, 0.0),  rowBuyVolumes   = array.new<float>(_rowCount, 0.0),
         primaryBoxes    = array.new<box>(),                  secondaryBoxes  = array.new<box>(),
-        gradientPolylines = array.new<polyline>()
+        fillPolylines   = array.new<polyline>()
     )
 
 estimateBuyVolume(float _entryHigh, float _entryLow, float _entryClose, float _entryVolume) =>
@@ -438,6 +462,21 @@ appendBarsToProfile(Profile _profile, array<float> _srcHighs, array<float> _srcL
             distributeEntryIntoRows(_profile, array.get(_profile.entryHighs, entryIndex),
                 array.get(_profile.entryLows, entryIndex), array.get(_profile.entryVolumes, entryIndex),
                 array.get(_profile.entryBuyVolumes, entryIndex))
+
+// Entries exist only so rebuildRows can redistribute volume when the profile
+// range expands. A completed profile can never expand, so dropping the entries
+// keeps long intrabar sessions from holding thousands of floats in memory.
+releaseAccumulationData(Profile _profile) =>
+    array.clear(_profile.entryHighs)
+    array.clear(_profile.entryLows)
+    array.clear(_profile.entryVolumes)
+    array.clear(_profile.entryBuyVolumes)
+
+// Row arrays are only read by the body renderers, which never run again once
+// a profile has dropped to level-only drawings.
+releaseRowData(Profile _profile) =>
+    array.clear(_profile.rowVolumes)
+    array.clear(_profile.rowBuyVolumes)
 
 // #endregion Volume Accumulation Helpers
 
@@ -517,52 +556,95 @@ renderRangeBox(Profile _profile, ProfileConfig _cfg) =>
     // The create/update/delete branches return different types.
     int(na)
 
-pocLabelLatestBarX(Profile _profile) =>
-    barstate.islast ? bar_index + 1 : nz(_profile.endBarIndex, _profile.startBarIndex)
+profileOriginDayText(Profile _profile, ProfileConfig _cfg) =>
+    str.format_time(_profile.startTime, LEVEL_LABEL_DAY_FORMAT, _cfg.timezone)
 
-placePocLabelAtLatestBar(label _label, Profile _profile) =>
-    label.set_xloc(_label, pocLabelLatestBarX(_profile), xloc.bar_index)
-    label.set_y(_label, _profile.pocPrice)
-    label.set_style(_label, label.style_label_lower_left)
+levelLabelText(string _levelPrefix, string _originDayText) =>
+    _levelPrefix + " " + _originDayText
 
-renderPocLabel(Profile _profile, ProfileConfig _cfg) =>
-    ProfileStyle style = _cfg.style
-    if _cfg.extendPoc and _cfg.showPocLabel
-        string originText = str.format_time(_profile.startTime, POC_LABEL_DAY_FORMAT, _cfg.timezone)
-        if na(_profile.pocLabel)
-            _profile.pocLabel := label.new(pocLabelLatestBarX(_profile), _profile.pocPrice, originText,
-                xloc = xloc.bar_index, style = label.style_label_lower_left, color = #00000000,
-                textcolor = style.pocTextColor, size = style.pocTextSize)
+// Creates, repositions, or removes one horizontal level line and returns the
+// surviving id so the caller can store it back on the profile. Lines are
+// placed at the profile end here; extension-dependent endpoints are corrected
+// by refreshLevelExtensions() on the last bar.
+syncLevelLine(line _line, bool _show, int _startTime, int _endTime, float _price,
+    color _lineColor, int _lineWidth, string _lineStyle) =>
+    line result = _line
+    if _show
+        if na(result)
+            result := line.new(_startTime, _price, _endTime, _price, xloc = xloc.bar_time,
+                color = _lineColor, width = _lineWidth, style = _lineStyle)
         else
-            placePocLabelAtLatestBar(_profile.pocLabel, _profile)
-            label.set_text(_profile.pocLabel, originText)
-            label.set_textcolor(_profile.pocLabel, style.pocTextColor)
-            label.set_size(_profile.pocLabel, style.pocTextSize)
+            line.set_xy1(result, _startTime, _price)
+            line.set_xy2(result, _endTime, _price)
     else
-        label.delete(_profile.pocLabel)
-        _profile.pocLabel := na
-    // The create/update/delete branches return different types.
+        line.delete(result)
+        result := na
+    result
+
+// Level labels always sit on the same plane as their line, anchored at the
+// line's right endpoint.
+syncLevelLabel(label _label, bool _show, int _xTime, float _price, string _text,
+    color _textColor, string _textSize) =>
+    label result = _label
+    if _show
+        if na(result)
+            result := label.new(_xTime, _price, _text, xloc = xloc.bar_time, style = LEVEL_LABEL_STYLE,
+                color = LEVEL_LABEL_BACKGROUND, textcolor = _textColor, size = _textSize)
+        else
+            label.set_xy(result, _xTime, _price)
+            label.set_text(result, _text)
+            label.set_textcolor(result, _textColor)
+            label.set_size(result, _textSize)
+    else
+        label.delete(result)
+        result := na
+    result
+
+renderPocLevel(Profile _profile, ProfileConfig _cfg) =>
+    ProfileStyle style = _cfg.style
+    bool   canDraw   = _cfg.showPoc and not na(_profile.pocRow)
+    bool   showLabel = canDraw and _cfg.showPocLabel
+    string labelText = levelLabelText(POC_LABEL_PREFIX, profileOriginDayText(_profile, _cfg))
+    _profile.pocLine  := syncLevelLine(_profile.pocLine, canDraw, _profile.startTime, _profile.endTime,
+        _profile.pocPrice, style.pocColor, style.pocWidth, style.pocStyle)
+    _profile.pocLabel := syncLevelLabel(_profile.pocLabel, showLabel, _profile.endTime, _profile.pocPrice,
+        labelText, style.pocTextColor, style.pocTextSize)
     int(na)
 
-renderPocLine(Profile _profile, ProfileConfig _cfg) =>
+renderValueAreaLevels(Profile _profile, ProfileConfig _cfg) =>
     ProfileStyle style = _cfg.style
-    bool canDraw = _cfg.showPoc and not na(_profile.pocRow)
-    string extendMode = (_cfg.extendPoc ? extend.right : extend.none)
-    if canDraw
-        if na(_profile.pocLine)
-            _profile.pocLine := line.new(_profile.startTime, _profile.pocPrice, _profile.endTime, _profile.pocPrice,
-                xloc = xloc.bar_time, extend = extendMode, color = style.pocColor, width = style.pocWidth,
-                style = style.pocStyle)
-        else
-            line.set_xy1(_profile.pocLine, _profile.startTime, _profile.pocPrice)
-            line.set_xy2(_profile.pocLine, _profile.endTime, _profile.pocPrice)
-            line.set_extend(_profile.pocLine, extendMode)
-        renderPocLabel(_profile, _cfg)
+    bool   canDraw    = _cfg.showValueAreaLines and not na(_profile.pocRow)
+    bool   showLabels = canDraw and _cfg.showValueAreaLabels
+    string originDay  = profileOriginDayText(_profile, _cfg)
+    _profile.valueAreaHighLine := syncLevelLine(_profile.valueAreaHighLine, canDraw, _profile.startTime,
+        _profile.endTime, _profile.valueAreaHigh, style.valueAreaColor, style.valueAreaWidth, style.valueAreaStyle)
+    _profile.valueAreaLowLine := syncLevelLine(_profile.valueAreaLowLine, canDraw, _profile.startTime,
+        _profile.endTime, _profile.valueAreaLow, style.valueAreaColor, style.valueAreaWidth, style.valueAreaStyle)
+    _profile.valueAreaHighLabel := syncLevelLabel(_profile.valueAreaHighLabel, showLabels, _profile.endTime,
+        _profile.valueAreaHigh, levelLabelText(VALUE_AREA_HIGH_LABEL_PREFIX, originDay),
+        style.valueAreaTextColor, style.valueAreaTextSize)
+    _profile.valueAreaLowLabel := syncLevelLabel(_profile.valueAreaLowLabel, showLabels, _profile.endTime,
+        _profile.valueAreaLow, levelLabelText(VALUE_AREA_LOW_LABEL_PREFIX, originDay),
+        style.valueAreaTextColor, style.valueAreaTextSize)
+    int(na)
+
+deleteProfileLevels(Profile _profile) =>
+    line.delete(_profile.pocLine)
+    line.delete(_profile.valueAreaHighLine)
+    line.delete(_profile.valueAreaLowLine)
+    label.delete(_profile.pocLabel)
+    label.delete(_profile.valueAreaHighLabel)
+    label.delete(_profile.valueAreaLowLabel)
+    _profile.pocLine            := na,  _profile.pocLabel           := na
+    _profile.valueAreaHighLine  := na,  _profile.valueAreaHighLabel := na
+    _profile.valueAreaLowLine   := na,  _profile.valueAreaLowLabel  := na
+
+renderProfileLevels(Profile _profile, ProfileConfig _cfg) =>
+    if _cfg.showVisuals
+        renderPocLevel(_profile, _cfg)
+        renderValueAreaLevels(_profile, _cfg)
     else
-        line.delete(_profile.pocLine)
-        label.delete(_profile.pocLabel)
-        _profile.pocLine  := na
-        _profile.pocLabel := na
+        deleteProfileLevels(_profile)
     // The render and delete branches return different types.
     int(na)
 
@@ -577,9 +659,9 @@ deleteRowBoxes(Profile _profile) =>
 deleteProfilePolylines(Profile _profile) =>
     polyline.delete(_profile.primaryPolyline)
     polyline.delete(_profile.secondaryPolyline)
-    for gradientPolyline in _profile.gradientPolylines
-        polyline.delete(gradientPolyline)
-    array.clear(_profile.gradientPolylines)
+    for fillPolyline in _profile.fillPolylines
+        polyline.delete(fillPolyline)
+    array.clear(_profile.fillPolylines)
     _profile.primaryPolyline   := na
     _profile.secondaryPolyline := na
 
@@ -598,7 +680,7 @@ renderRowBoxes(Profile _profile, ProfileConfig _cfg) =>
         float rowVolume    = array.get(_profile.rowVolumes, rowIndex)
         float rowBuyVolume = array.get(_profile.rowBuyVolumes, rowIndex)
         float rowWidth     = (maxRowVolume > 0 ? usableWidth * rowVolume / maxRowVolume : 0.0)
-        bool isInsideValueArea = not _cfg.showValueArea or
+        bool isInsideValueArea = not _cfg.dimOutsideValueArea or
           (rowIndex >= _profile.valueAreaLowRow and rowIndex <= _profile.valueAreaHighRow)
         box primaryBox = array.get(_profile.primaryBoxes, rowIndex)
         if _cfg.splitBuySell
@@ -618,9 +700,10 @@ interpolateTime(int _innerTime, int _outerTime, float _ratio) =>
     _innerTime + int(math.round((_outerTime - _innerTime) * _ratio))
 
 // Builds non-overlapping closed ribbons between two full-height contours.
-// Each ribbon has one uniform color, while the progression across adjacent
-// ribbons approximates a spatial gradient toward the outer profile line.
-renderGradientBands(array<polyline> _drawings, array<int> _innerTimes, array<int> _outerTimes,
+// One band renders a flat solid fill because the gradient end color equals the
+// base color. Multiple bands approximate a spatial gradient that fades from
+// the origin-facing edge toward the outer profile line.
+renderFillBands(array<polyline> _drawings, array<int> _innerTimes, array<int> _outerTimes,
     array<float> _prices, int _bandCount, color _baseColor, bool _curved) =>
     int pointCount = array.size(_prices)
     color originColor = color.new(_baseColor, 100)
@@ -648,7 +731,7 @@ renderGradientBands(array<polyline> _drawings, array<int> _innerTimes, array<int
 // buy box, while the secondary line follows the complete buy-plus-sell row.
 // Without a split, one total-volume line is drawn using totalColor. Polylines
 // cannot be mutated, so the active profile's drawings are replaced on render.
-renderProfilePolylines(Profile _profile, ProfileConfig _cfg) =>
+renderProfilePolylines(Profile _profile, ProfileConfig _cfg, int _fillBands) =>
     ProfileStyle style = _cfg.style
     int   rowCount     = array.size(_profile.rowVolumes)
     float rowHeight    = profileRowHeight(_profile)
@@ -689,12 +772,12 @@ renderProfilePolylines(Profile _profile, ProfileConfig _cfg) =>
     deleteProfilePolylines(_profile)
     color primaryColor = (_cfg.splitBuySell ? style.buyColor : style.totalColor)
     bool curvedPolylines = _cfg.profileDisplay == ProfileDisplay.CurvedPolylines
-    if _cfg.showPolylineGradient
-        renderGradientBands(_profile.gradientPolylines, contourOriginTimes, contourPrimaryTimes, contourPrices,
-            _cfg.gradientBandsPerSide, primaryColor, curvedPolylines)
+    if _fillBands > 0
+        renderFillBands(_profile.fillPolylines, contourOriginTimes, contourPrimaryTimes, contourPrices,
+            _fillBands, primaryColor, curvedPolylines)
         if _cfg.splitBuySell
-            renderGradientBands(_profile.gradientPolylines, contourPrimaryTimes, contourSecondaryTimes, contourPrices,
-                _cfg.gradientBandsPerSide, style.sellColor, curvedPolylines)
+            renderFillBands(_profile.fillPolylines, contourPrimaryTimes, contourSecondaryTimes, contourPrices,
+                _fillBands, style.sellColor, curvedPolylines)
     array<chart.point> primaryPoints   = array.new<chart.point>()
     array<chart.point> secondaryPoints = array.new<chart.point>()
     for pointIndex = 0 to array.size(contourPrices) - 1
@@ -710,41 +793,100 @@ renderProfilePolylines(Profile _profile, ProfileConfig _cfg) =>
         _profile.secondaryPolyline := polyline.new(secondaryPoints, curved = curvedPolylines, closed = false,
             xloc = xloc.bar_time, line_color = style.sellColor, line_width = PROFILE_POLYLINE_WIDTH)
 
-renderVolumeProfile(Profile _profile, ProfileConfig _cfg) =>
-    bool showBoxes     = _cfg.profileDisplay == ProfileDisplay.Boxes
-    bool showPolylines = not showBoxes
-    if showBoxes
+renderVolumeProfile(Profile _profile, ProfileConfig _cfg, int _fillBands) =>
+    if _cfg.profileDisplay == ProfileDisplay.Boxes
+        deleteProfilePolylines(_profile)
         renderRowBoxes(_profile, _cfg)
     else
         deleteRowBoxes(_profile)
-    if showPolylines
-        renderProfilePolylines(_profile, _cfg)
-    else
-        deleteProfilePolylines(_profile)
+        renderProfilePolylines(_profile, _cfg, _fillBands)
+    // The box and polyline branches return different types.
+    int(na)
 
-deleteProfileVisuals(Profile _profile) =>
-    box.delete(_profile.rangeBox)
-    line.delete(_profile.pocLine)
-    label.delete(_profile.pocLabel)
-    _profile.rangeBox := na
-    _profile.pocLine  := na
-    _profile.pocLabel := na
+// Row boxes and polylines are the expensive portion of a full profile. They
+// can be removed independently so a lower-tier session can retain its range
+// box and level drawings.
+deleteProfileRows(Profile _profile) =>
     deleteRowBoxes(_profile)
     deleteProfilePolylines(_profile)
 
-renderProfile(Profile _profile, ProfileConfig _cfg) =>
+deleteProfileBody(Profile _profile) =>
+    box.delete(_profile.rangeBox)
+    _profile.rangeBox := na
+    deleteProfileRows(_profile)
+
+deleteProfileVisuals(Profile _profile) =>
+    deleteProfileBody(_profile)
+    deleteProfileLevels(_profile)
+
+renderProfile(Profile _profile, ProfileConfig _cfg, int _fillBands) =>
     if _cfg.showVisuals
         renderRangeBox(_profile, _cfg)
-        renderVolumeProfile(_profile, _cfg)
-        renderPocLine(_profile, _cfg)
+        renderVolumeProfile(_profile, _cfg, _fillBands)
     else
-        deleteProfileVisuals(_profile)
-    // The render and delete branches return different types.
-    int(na)
+        deleteProfileBody(_profile)
+    renderProfileLevels(_profile, _cfg)
 
 // #endregion Profile Rendering Helpers
 
 // #endregion Profile Rendering
+
+// #region Level Extension ********************************
+
+// #region Level Extension Helpers //
+
+// A completed recurring profile extends to its successor's end. While no
+// successor exists yet (the gap between sessions), it follows the current bar
+// so the line stays alive until the next session opens.
+resolveLevelEndTime(Profile _profile, int _successorEndTime, bool _isRecurring) =>
+    bool extendsPastClose = _isRecurring and _profile.isComplete
+    (extendsPastClose ? nz(_successorEndTime, currentBarEndTime()) : _profile.endTime)
+
+placeLevelLine(line _line, int _endTime) =>
+    if not na(_line)
+        line.set_x2(_line, _endTime)
+
+placeLevelLabel(label _label, int _endTime) =>
+    if not na(_label)
+        label.set_x(_label, _endTime)
+
+placeProfileLevels(Profile _profile, int _levelEndTime) =>
+    placeLevelLine(_profile.pocLine,            _levelEndTime)
+    placeLevelLine(_profile.valueAreaHighLine,  _levelEndTime)
+    placeLevelLine(_profile.valueAreaLowLine,   _levelEndTime)
+    placeLevelLabel(_profile.pocLabel,           _levelEndTime)
+    placeLevelLabel(_profile.valueAreaHighLabel, _levelEndTime)
+    placeLevelLabel(_profile.valueAreaLowLabel,  _levelEndTime)
+
+// Every drawn profile in chronological order: lower-tier sets, fully drawn
+// history, then the active (or last completed non-recurring) profile.
+collectDrawnProfiles(ProfileState _state) =>
+    array<Profile> chain = array.copy(_state.levelHistory)
+    array.concat(chain, _state.history)
+    if not na(_state.active)
+        array.push(chain, _state.active)
+    chain
+
+// Runs on the last bar only, and only when the extend toggle is on: endpoints
+// are static at the profile end otherwise. Historical drawings are not visible
+// until the last bar, and every realtime update is also a last bar, so this
+// keeps successor-dependent endpoints current without touching drawings on
+// historical bars.
+refreshLevelExtensions(ProfileState _state, ProfileConfig _cfg) =>
+    array<Profile> chain = collectDrawnProfiles(_state)
+    int  chainSize   = array.size(chain)
+    bool isRecurring = isRecurringMode(_cfg.rangeMode)
+    for [chainIndex, profile] in chain
+        int successorEndTime = na
+        if chainIndex < chainSize - 1
+            Profile successor = array.get(chain, chainIndex + 1)
+            successorEndTime := successor.endTime
+        int levelEndTime = resolveLevelEndTime(profile, successorEndTime, isRecurring)
+        placeProfileLevels(profile, levelEndTime)
+
+// #endregion Level Extension Helpers
+
+// #endregion Level Extension
 
 // #region Profile Lifecycle ******************************
 
@@ -755,27 +897,80 @@ sanitizeConfig(ProfileConfig _cfg) =>
     _cfg.historyCount     := clampInt(nz(_cfg.historyCount, 0), 0, MAX_HISTORY_COUNT)
     _cfg.valueAreaPercent := clampFloat(nz(_cfg.valueAreaPercent, 0.0), 0.0, PERCENT_DIVISOR)
     _cfg.widthPercent     := clampFloat(nz(_cfg.widthPercent, PERCENT_DIVISOR), 1.0, PERCENT_DIVISOR)
-    _cfg.gradientBandsPerSide := clampInt(nz(_cfg.gradientBandsPerSide, MIN_GRADIENT_BANDS_PER_SIDE),
-        MIN_GRADIENT_BANDS_PER_SIDE, MAX_GRADIENT_BANDS_PER_SIDE)
     if na(_cfg.style)
         _cfg.style := ProfileStyle.new()
 
-// Recurring profiles rotate into the history ring; a completed non-recurring
-// profile stays as `active` so it remains drawn and is never reopened.
+// Resolves how the drawing budget is spent. When range boxes are enabled, one
+// box is reserved for every desired profile before row-box capacity is
+// calculated. Gradient fill starts at the maximum band count and steps down
+// toward the minimum until every requested profile fits the polyline limit;
+// only after the minimum is reached do requested sessions lose their row
+// profiles. Capacities are explicitly floored to whole profiles. The capacity
+// includes the active profile, so the fully drawn history allowance is one less.
+resolveDrawingPlan(ProfileConfig _cfg) =>
+    bool isBoxDisplay    = _cfg.profileDisplay == ProfileDisplay.Boxes
+    int  sideCount       = (_cfg.splitBuySell ? 2 : 1)
+    int  desiredProfiles = _cfg.historyCount + 1
+    int fillBands = NO_FILL_BANDS
+    if not isBoxDisplay
+        fillBands := switch _cfg.polylineFill
+            PolylineFill.None     => NO_FILL_BANDS
+            PolylineFill.Solid    => SOLID_FILL_BANDS
+            PolylineFill.Gradient => MAX_GRADIENT_FILL_BANDS
+        if _cfg.polylineFill == PolylineFill.Gradient
+            while fillBands > MIN_GRADIENT_FILL_BANDS and
+              desiredProfiles * sideCount * (1 + fillBands) > DRAWING_LIMIT_POLYLINES
+                fillBands -= 1
+    int reservedRangeBoxes  = (_cfg.showRangeBox ? desiredProfiles : 0)
+    int availableRowBoxes   = math.max(DRAWING_LIMIT_BOXES - reservedRangeBoxes, 0)
+    int rowBoxesPerProfile  = (isBoxDisplay ? _cfg.rowCount * sideCount : 0)
+    int polylinesPerProfile = (isBoxDisplay ? 0 : sideCount * (1 + fillBands))
+    int boxCapacity         = (rowBoxesPerProfile > 0
+        ? int(math.floor(float(availableRowBoxes) / float(rowBoxesPerProfile))) : desiredProfiles)
+    int polylineCapacity    = (polylinesPerProfile > 0
+        ? int(math.floor(float(DRAWING_LIMIT_POLYLINES) / float(polylinesPerProfile))) : desiredProfiles)
+    int fullProfileCapacity = math.min(boxCapacity, polylineCapacity)
+    int fullHistoryCount    = clampInt(_cfg.historyCount, 0, math.max(fullProfileCapacity - 1, 0))
+    [fullHistoryCount, fillBands]
+
+// A profile leaving the fully drawn tier loses its row profile and row data,
+// but keeps its requested range box and level drawings in the lower tier.
+demoteToLevelHistory(ProfileState _state, ProfileConfig _cfg, Profile _profile) =>
+    deleteProfileRows(_profile)
+    releaseRowData(_profile)
+    if _state.levelOnlyHistoryCount > 0
+        if _cfg.showVisuals
+            renderRangeBox(_profile, _cfg)
+        else
+            box.delete(_profile.rangeBox)
+            _profile.rangeBox := na
+        renderProfileLevels(_profile, _cfg)
+        array.push(_state.levelHistory, _profile)
+        while array.size(_state.levelHistory) > _state.levelOnlyHistoryCount
+            deleteProfileVisuals(array.shift(_state.levelHistory))
+    else
+        deleteProfileVisuals(_profile)
+    // The keep and delete branches return different types.
+    int(na)
+
+// Recurring profiles rotate through the fully drawn ring and then the
+// lower-tier ring; a completed non-recurring profile stays as `active` so it
+// remains drawn and is never reopened.
 archiveCompletedProfile(ProfileState _state, ProfileConfig _cfg) =>
     Profile completed = _state.active
     completed.isComplete := true
+    releaseAccumulationData(completed)
     if isRecurringMode(_cfg.rangeMode)
-        if _cfg.historyCount > 0
-            renderProfile(completed, _cfg)
+        if _state.effectiveHistoryCount > 0
+            renderProfile(completed, _cfg, _state.resolvedFillBands)
             array.push(_state.history, completed)
-            while array.size(_state.history) > _cfg.historyCount
-                deleteProfileVisuals(array.shift(_state.history))
+            while array.size(_state.history) > _state.effectiveHistoryCount
+                demoteToLevelHistory(_state, _cfg, array.shift(_state.history))
         else
-            deleteProfileVisuals(completed)
+            demoteToLevelHistory(_state, _cfg, completed)
         _state.active := na
     else
-        renderProfile(completed, _cfg)
+        renderProfile(completed, _cfg, _state.resolvedFillBands)
     // Recurring and non-recurring branches return different types.
     int(na)
 
@@ -784,9 +979,9 @@ archiveCompletedProfile(ProfileState _state, ProfileConfig _cfg) =>
 // #region Profile Lifecycle Functions //
 
 // @function createState                          - Build an initialised engine state. Store it in a `var`.
-// @returns                (ProfileState)         - Empty state with an initialised history array.
+// @returns                (ProfileState)         - Empty state with initialised history arrays.
 export createState() =>
-    ProfileState.new(history = array.new<Profile>())
+    ProfileState.new(history = array.new<Profile>(), levelHistory = array.new<Profile>())
 
 // @function getMostRecentPoc                    - Return the single latest POC calculated by update().
 // @param    _state        (ProfileState)         - Persistent engine state after its current-bar update.
@@ -802,7 +997,8 @@ export getMostRecentLevels(ProfileState _state) =>
 
 // @function update                               - Run the profile engine for the current bar. Call once per bar at global scope.
 // @param    _state        (ProfileState)         - Persistent engine state created by createState().
-// @param    _cfg          (ProfileConfig)        - Consumer configuration. Out-of-range values are clamped in place.
+// @param    _cfg          (ProfileConfig)        - Consumer configuration. Out-of-range values are clamped in place;
+//                                                  the resolved drawing plan is written to the state each bar.
 // @param    _useIntrabar  (bool)                 - Distribute the lower-timeframe arrays when they have coverage.
 // @param    _ltfHighs     (array<float>)         - Lower-timeframe highs for this chart bar from request.security_lower_tf().
 // @param    _ltfLows      (array<float>)         - Lower-timeframe lows.
@@ -812,6 +1008,10 @@ export getMostRecentLevels(ProfileState _state) =>
 export update(ProfileState _state, ProfileConfig _cfg, bool _useIntrabar, array<float> _ltfHighs,
     array<float> _ltfLows, array<float> _ltfCloses, array<float> _ltfVolumes) =>
     sanitizeConfig(_cfg)
+    [fullHistoryCount, fillBands] = resolveDrawingPlan(_cfg)
+    _state.effectiveHistoryCount := fullHistoryCount
+    _state.levelOnlyHistoryCount := _cfg.historyCount - fullHistoryCount
+    _state.resolvedFillBands     := fillBands
     ensureSessionCache(_state, _cfg)
     [isInRange, anchorKey] = resolveRangeMembership(_state, _cfg, time)
     bool hasAnchor     = not na(anchorKey)
@@ -840,15 +1040,12 @@ export update(ProfileState _state, ProfileConfig _cfg, bool _useIntrabar, array<
             _state.mostRecentTotalVolume   := _state.active.totalVolume
     if hasAnchor and isInRange
         _state.lastAnchorKey := anchorKey
-    _state.wasInRange := isInRange
-    bool shouldRenderActive = barstate.islast and not na(_state.active) and not _state.active.isComplete
-    if shouldRenderActive
-        renderProfile(_state.active, _cfg)
     if barstate.islast
-        if _cfg.showVisuals and _cfg.extendPoc and _cfg.showPocLabel
-            for histProfile in _state.history
-                if not na(histProfile.pocLabel)
-                    placePocLabelAtLatestBar(histProfile.pocLabel, histProfile)
+        bool isActiveOpen = not na(_state.active) and not _state.active.isComplete
+        if isActiveOpen
+            renderProfile(_state.active, _cfg, _state.resolvedFillBands)
+        if _cfg.showVisuals and _cfg.extendLevelsExtraSession
+            refreshLevelExtensions(_state, _cfg)
     _state
 
 // #endregion Profile Lifecycle Functions

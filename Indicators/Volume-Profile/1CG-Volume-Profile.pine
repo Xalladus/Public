@@ -8,25 +8,20 @@
 // FixedRangeVolumeProfile
 //
 // Example consumer of VolumeProfileLibrary. Gathers all user inputs, resolves
-// the timezone through InputLibrary, reinterprets fixed time pickers into the
-// selected timezone, requests 1-minute intrabar data for volume accuracy, and
+// recurring-range timezones through InputLibrary, passes fixed picker timestamps
+// through unchanged, requests 1-minute intrabar data for volume accuracy, and
 // hands the per-bar work to VP.update(). The library owns the profile
 // drawings; this script owns inputs, the request.security_lower_tf() call,
 // the no-volume guard, the optional debug table, and chart-invisible latest
 // POC/value-area plots available in the Data Window and to downstream consumers.
-//
-// Drawing budget: box mode uses rows x (split ? 2 : 1) x (history + 1) plus
-// (history + 1) range boxes. At the 49-row cap with split and 4 history
-// profiles this is 495 of 500. With 8 gradient bands per region, polyline mode
-// uses at most 90 of 100 polylines.
 
 // #endregion Information
 
-indicator("Volume Profile Fixed/Range", "VolProfile", overlay = true, max_boxes_count = 500, max_lines_count = 50,
-    max_labels_count = 50, max_polylines_count = 100)
+indicator("Volume Profile Fixed/Range/Session", "VolProfile", overlay = true, max_boxes_count = 500, max_lines_count = 500,
+    max_labels_count = 500, max_polylines_count = 100)
 
 import OneCleverGuy/InputLibrary/4 as iLib
-import OneCleverGuy/VolumeProfileLibrary/2 as VP
+import OneCleverGuy/VolumeProfileLibrary/3 as VP
 
 //+-------------------------------------------------------+
 //                          INPUTS                        |
@@ -35,34 +30,40 @@ import OneCleverGuy/VolumeProfileLibrary/2 as VP
 
 // #region Tooltips ***************************************
 
-string tt_timezone     = "Timezone applied to the fixed time pickers, the daily anchor, the daily session, and the POC labels."
-string tt_rangeMode    = "From Time: one profile from Range Start to now. Between Times: one profile between Range Start and Range End."
-  + " Daily Anchor: resets every day at the anchor time. Daily Session: drawn only inside the session, every day."
-string tt_rangeStart   = "Profile start for From Time and Between Times modes. Interpreted in the selected timezone."
-string tt_rangeEnd     = "Profile end for Between Times mode. Interpreted in the selected timezone."
-string tt_dailyAnchor  = "Time of day the profile resets in Daily Anchor mode."
-string tt_session      = "Session window for Daily Session mode. Day-of-week flags are ignored."
-string tt_historyCount = "Completed profiles to keep drawn in the recurring modes. 0 shows the current profile only."
-string tt_rowCount     = "Number of price rows, capped at 49 so split rows across 5 profiles stay inside Pine's 500-box limit."
-string tt_valueArea    = "Percentage of total volume covered by the value area. Box rows outside it are dimmed."
-string tt_splitBuySell = "Split each row into estimated buy and sell volume using the close location inside each source bar."
-string tt_showVisuals  = "Show profile drawings on the chart. Calculations, statistics, and Data Window values remain available when disabled."
-string tt_widthPercent = "Percentage of the range width the largest row fills."
-string tt_display      = "Boxes draws the row histogram. Polylines connect row endpoints with straight segments."
-  + " Curved Polylines uses curved segments for the same profile. When the buy/sell split is disabled, polyline"
-  + " modes draw one total-volume line."
-string tt_gradient     = "Fill each polyline region with discrete color bands that fade from the origin-facing edge"
-  + " toward the selected profile color."
-string tt_gradientBands = "Number of color bands in each region. Split profiles use this many bull bands and this"
-  + " many bear bands. More bands look smoother but use more polyline drawings."
-string tt_useIntrabar  = "Distribute volume using 1-minute intrabar data for accuracy. Bars without 1-minute coverage"
-  + " automatically fall back to chart-bar data."
-string tt_rowColors    = "Buy, sell, and single-color profile colors. Opacity is respected by boxes and polylines."
-string tt_outsideVA    = "Transparency applied to box rows outside the value area."
-string tt_rangeBox     = "Range highlight box visibility and fill color."
-string tt_poc          = "Point of Control color, width, and style."
-string tt_pocLabel     = "Origin-day label drawn at the right end of extended POC lines: text color and size."
-string tt_debug        = "Show the current session statistics, retaining the last session values between sessions."
+string tt_timezone        = "Timezone applied to the daily anchor, daily session, and level labels. Fixed time pickers use the chart timezone."
+string tt_rangeMode       = "From Time: one profile from Range Start to now. Between Times: one profile between Range Start and Range End."
+                          + " Daily Anchor: resets every day at the anchor time. Daily Session: drawn only inside the session, every day."
+string tt_rangeStart      = "Profile start for From Time and Between Times modes. TradingView displays this picker in the chart timezone."
+string tt_rangeEnd        = "Profile end for Between Times mode. TradingView displays this picker in the chart timezone."
+string tt_dailyAnchor     = "Time of day the profile resets in Daily Anchor mode."
+string tt_session         = "Session window for Daily Session mode. Day-of-week flags are ignored."
+string tt_historyCount    = "Completed sessions to keep on the chart in the recurring modes. As many as fit Pine's drawing"
+                          + " limits stay fully drawn; older sessions retain their range box when enabled and their selected level drawings."
+                          + " Fewer rows, no buy/sell split, or a lighter line fill let more sessions stay fully drawn."
+                          + " The statistics table compares full sessions with the requested count."
+string tt_valueArea       = "Percentage of total volume covered by the value area. Calculated even when profile visuals are hidden."
+string tt_showVisuals     = "Show profile drawings on the chart. Calculations, statistics, and Data Window values remain available when disabled."
+string tt_splitBuySell    = "Split each profile into estimated buy and sell volume using the close location inside each source bar."
+string tt_widthPercent    = "Percentage of the range width the largest row fills."
+string tt_display         = "Boxes draws the row histogram. Polylines connect row endpoints with straight segments."
+                          + " Curved Polylines uses curved segments for the same profile. When the buy/sell split is disabled, polyline"
+                          + " modes draw one total-volume line."
+string tt_rowCount        = "Number of price rows used for volume distribution, statistics, and both renderers."
+                          + " Fewer rows let more sessions stay fully drawn."
+string tt_outsideVA       = "Dim box rows outside the value area, and the transparency applied to them."
+string tt_lineFill        = "Region fill for the polyline displays. None draws outlines only. Solid fills each region with"
+                          + " its profile color. Gradient fades from the origin-facing edge toward the profile line using 3 to 8 bands;"
+                          + " the band count adapts automatically so the requested sessions fit Pine's polyline limit."
+string tt_rowColors       = "Buy, sell, and single-color profile colors. Opacity is respected by boxes and polylines."
+string tt_rangeBox        = "Range highlight box visibility and fill color."
+string tt_poc             = "Point of Control line visibility, color, width, and style."
+string tt_pocLabel        = "Origin label drawn at the right end of each POC line, showing POC and the session day: text color and size."
+string tt_valueAreaLines  = "Value Area High and Low lines share one toggle, color, width, and style."
+string tt_valueAreaLabels = "Origin labels drawn at the right end of each value-area line, showing VAH or VAL and the session day:"
+                          + " text color and size."
+string tt_extendLevels    = "Extend each completed session's POC and value-area lines until the end of the following session."
+                          + " The newest completed session's lines follow the latest bar until the next session begins. Recurring modes only."
+string tt_debug           = "Show the current session statistics, retaining the last session values between sessions."
 
 // #endregion Tooltips
 
@@ -77,86 +78,88 @@ i_timezone = input.enum(iLib.Timezones.ny, "Timezone", group = iGroupTimezone, t
 
 var string iGroupRangeMode = "Range Mode"
 i_rangeMode = input.enum(VP.RangeMode.DailySession, "Range Mode", group = iGroupRangeMode, tooltip = tt_rangeMode)
+bool a_rec  = i_rangeMode == VP.RangeMode.DailyAnchor or i_rangeMode == VP.RangeMode.DailySession
 
 // #endregion Range Mode
 
 // #region Fixed Anchors **********************************
 
 var string iGroupFixed = "Fixed Anchors"
-i_rangeStart = input.time(timestamp("2024-01-01 00:00 +0000"), "Range Start", group = iGroupFixed, tooltip = tt_rangeStart,
-     display = display.none, active = i_rangeMode == VP.RangeMode.FromTime or i_rangeMode == VP.RangeMode.BetweenTimes)
-i_rangeEnd   = input.time(timestamp("2024-02-01 00:00 +0000"), "Range End",   group = iGroupFixed, tooltip = tt_rangeEnd,
-     display = display.none, active = i_rangeMode == VP.RangeMode.BetweenTimes)
+i_rangeStart = input.time(timestamp("2024-01-01 00:00 +0000"), "Range Start", group = iGroupFixed, tooltip = tt_rangeStart, display = display.none, active = i_rangeMode == VP.RangeMode.FromTime or i_rangeMode == VP.RangeMode.BetweenTimes)
+i_rangeEnd   = input.time(timestamp("2024-02-01 00:00 +0000"), "Range End",   group = iGroupFixed, tooltip = tt_rangeEnd,   display = display.none, active = i_rangeMode == VP.RangeMode.BetweenTimes)
 
 // #endregion Fixed Anchors
 
 // #region Recurring Anchors ******************************
 
 var string iGroupRecurring = "Recurring Anchors"
-i_anchorQuarter = input.enum(iLib.quarterHours.t1600, "Daily Anchor", group = iGroupRecurring, tooltip = tt_dailyAnchor,
-     active = i_rangeMode == VP.RangeMode.DailyAnchor)
-i_session       = input.session("0930-1600", "Session",              group = iGroupRecurring, tooltip = tt_session,
-     active = i_rangeMode == VP.RangeMode.DailySession)
-i_historyCount  = input.int(2, "Previous Sessions", minval = 0, maxval = VP.MAX_HISTORY_COUNT,
-     group = iGroupRecurring, tooltip = tt_historyCount, display = display.none,
-     active = i_rangeMode == VP.RangeMode.DailyAnchor or i_rangeMode == VP.RangeMode.DailySession)
+i_anchorQuarter = input.enum(iLib.quarterHours.t1600, "Daily Anchor", group = iGroupRecurring, tooltip = tt_dailyAnchor, active = i_rangeMode == VP.RangeMode.DailyAnchor)
+i_session       = input.session("0930-1600", "Session",              group = iGroupRecurring, tooltip = tt_session,     active = i_rangeMode == VP.RangeMode.DailySession)
+i_historyCount  = input.int(2, "Previous Sessions", minval = 0, maxval = VP.MAX_HISTORY_COUNT, group = iGroupRecurring, tooltip = tt_historyCount, display = display.none, active = a_rec)
 
 // #endregion Recurring Anchors
 
 // #region Profile ****************************************
 
 var string iGroupProfile = "Profile"
-i_showVisuals  = input.bool(true, "Show Profile Visuals", group = iGroupProfile, tooltip = tt_showVisuals, display = display.none)
-i_rowCount     = input.int(30, "Rows",             minval = VP.MIN_ROW_COUNT, maxval = VP.MAX_ROW_COUNT, group = iGroupProfile, tooltip = tt_rowCount,
-     display = display.none)
-i_valueArea    = input.float(70.0, "Value Area %", minval = 0.0, maxval = 100.0, step = 1.0,             group = iGroupProfile, tooltip = tt_valueArea,
-     display = display.none)
-i_splitBuySell = input.bool(true, "Split Buy/Sell", group = iGroupProfile, tooltip = tt_splitBuySell, display = display.none)
-i_widthPercent = input.float(100.0, "Width %",     minval = 1.0, maxval = 100.0, step = 5.0,             group = iGroupProfile, tooltip = tt_widthPercent,
-     display = display.none, active = i_showVisuals)
-i_display      = input.enum(VP.ProfileDisplay.Boxes, "Display", group = iGroupProfile, tooltip = tt_display, active = i_showVisuals)
-bool isPolylineDisplay = i_showVisuals and i_display != VP.ProfileDisplay.Boxes
+i_valueArea    = input.float(70.0, "Value Area %", minval = 0.0, maxval = 100.0, step = 1.0, group = iGroupProfile, tooltip = tt_valueArea, display = display.none)
+i_rowCount     = input.int(30, "Rows", minval = VP.MIN_ROW_COUNT, maxval = VP.MAX_ROW_COUNT, group = iGroupProfile, tooltip = tt_rowCount, display = display.none)
+i_widthPercent = input.float(100.0, "Width %", minval = 1.0, maxval = 100.0, step = 5.0, group = iGroupProfile, tooltip = tt_widthPercent, display = display.none)
 
 // #endregion Profile
+
+// #region Display ****************************************
+
+var string iGroupDisplay = "Display"
+i_showVisuals = input.bool(true, "Show Profile Visuals", group = iGroupDisplay, tooltip = tt_showVisuals, display = display.none)
+i_display     = input.enum(VP.ProfileDisplay.Boxes, "Display", group = iGroupDisplay, tooltip = tt_display, active = i_showVisuals)
+bool a_box    = i_showVisuals and i_display == VP.ProfileDisplay.Boxes
+bool a_ply    = i_showVisuals and i_display != VP.ProfileDisplay.Boxes
+
+i_dimOutsideValueArea = input.bool(true, "Dim Outside VA", group = iGroupDisplay, inline = "VA", tooltip = tt_outsideVA, display = display.none, active = a_box)
+i_outTransparency     = input.int(75, " ",                 group = iGroupDisplay, inline = "VA", minval = 0, maxval = 100, display = display.none, active = a_box and i_dimOutsideValueArea)
+
+i_lineFill            = input.enum(VP.PolylineFill.Gradient, "Line Fill", group = iGroupDisplay, tooltip = tt_lineFill, active = a_ply)
+
+// #endregion Display
 
 // #region Appearance *************************************
 
 var string iGroupAppearance = "Appearance"
-i_buyColor        = input.color(color.new(#26a69a, 35), "Row Colors",       group = iGroupAppearance, inline = "RC", tooltip = tt_rowColors,
-     display = display.none, active = i_showVisuals)
-i_sellColor       = input.color(color.new(#ef5350, 35), " ",                group = iGroupAppearance, inline = "RC", display = display.none,
-     active = i_showVisuals)
-i_totalColor      = input.color(color.new(#2962ff, 35), " ",                group = iGroupAppearance, inline = "RC", display = display.none,
-     active = i_showVisuals)
-i_showGradient    = input.bool(true, "Gradient Fill", group = iGroupAppearance, inline = "GF", tooltip = tt_gradient,
-     display = display.none, active = isPolylineDisplay)
-i_gradientBands   = input.int(5, "Bands", minval = VP.MIN_GRADIENT_BANDS_PER_SIDE,
-     maxval = VP.MAX_GRADIENT_BANDS_PER_SIDE, group = iGroupAppearance, inline = "GF", display = display.none,
-     tooltip = tt_gradientBands, active = isPolylineDisplay and i_showGradient)
-i_showValueArea   = input.bool(true,                    "Dim Outside VA",   group = iGroupAppearance, inline = "VA", tooltip = tt_outsideVA,
-     display = display.none, active = i_showVisuals and i_display == VP.ProfileDisplay.Boxes)
-i_outTransparency = input.int(75, " ", minval = 0, maxval = 100,            group = iGroupAppearance, inline = "VA", display = display.none,
-     active = i_showVisuals and i_showValueArea and i_display == VP.ProfileDisplay.Boxes)
-i_showRangeBox    = input.bool(true,                    "Range Box",        group = iGroupAppearance, inline = "RB", tooltip = tt_rangeBox,
-     display = display.none, active = i_showVisuals)
-i_rangeFill       = input.color(#2962ff12,              " ",                group = iGroupAppearance, inline = "RB", display = display.none,
-     active = i_showVisuals and i_showRangeBox)
-i_showPoc         = input.bool(true,                    "Point of Control", group = iGroupAppearance, inline = "PC", tooltip = tt_poc,
-     display = display.none, active = i_showVisuals)
-i_pocColor        = input.color(#ff0000,                " ",                group = iGroupAppearance, inline = "PC", display = display.none,
-     active = i_showVisuals and i_showPoc)
-i_pocWidth        = input.enum(iLib.LineSize.normal,    " ",                group = iGroupAppearance, inline = "PC", display = display.none,
-     active = i_showVisuals and i_showPoc)
-i_pocStyle        = input.enum(iLib.LineStyle.solid,    " ",                group = iGroupAppearance, inline = "PC", display = display.none,
-     active = i_showVisuals and i_showPoc)
-i_extendPoc       = input.bool(false,                   "Extend POC Right", group = iGroupAppearance, tooltip = tt_pocLabel,
-     display = display.none, active = i_showVisuals and i_showPoc)
-i_showPocLabel    = input.bool(true,                    "Show POC Label",   group = iGroupAppearance, inline = "PL2", tooltip = tt_pocLabel,
-     display = display.none, active = i_showVisuals and i_showPoc and i_extendPoc)
-i_pocTextColor    = input.color(#ffffff,                " ",                group = iGroupAppearance, inline = "PL2", display = display.none,
-     active = i_showVisuals and i_showPoc and i_extendPoc and i_showPocLabel)
-i_pocTextSize     = input.enum(iLib.TextSize.small,     " ",                group = iGroupAppearance, inline = "PL2", display = display.none,
-     active = i_showVisuals and i_showPoc and i_extendPoc and i_showPocLabel)
+i_splitBuySell        = input.bool(true, "Split Buy/Sell", group = iGroupAppearance, tooltip = tt_splitBuySell, display = display.none, active = i_showVisuals)
+i_buyColor            = input.color(color.new(#26a69a, 35), "Row Colors", group = iGroupAppearance, inline = "RC", tooltip = tt_rowColors, display = display.none, active = i_showVisuals)
+i_sellColor           = input.color(color.new(#ef5350, 35), " ",          group = iGroupAppearance, inline = "RC", display = display.none, active = i_showVisuals)
+i_totalColor          = input.color(color.new(#2962ff, 35), " ",          group = iGroupAppearance, inline = "RC", display = display.none, active = i_showVisuals)
+
+i_showRangeBox        = input.bool(true,       "Range Box", group = iGroupAppearance, inline = "RB", tooltip = tt_rangeBox, display = display.none, active = i_showVisuals)
+bool a_rbx            = i_showVisuals and i_showRangeBox
+i_rangeFill           = input.color(#2962ff12, " ",         group = iGroupAppearance, inline = "RB", display = display.none, active = a_rbx)
+
+i_showPoc             = input.bool(true,    "Point of Control", group = iGroupAppearance, inline = "PC", tooltip = tt_poc, display = display.none, active = i_showVisuals)
+bool a_poc            = i_showVisuals and i_showPoc
+i_pocColor            = input.color(#ff0000,             " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
+i_pocWidth            = input.enum(iLib.LineSize.normal, " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
+i_pocStyle            = input.enum(iLib.LineStyle.solid, " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
+
+i_showPocLabel        = input.bool(true, "POC Label",        group = iGroupAppearance, inline = "PL", tooltip = tt_pocLabel, display = display.none, active = a_poc)
+bool a_pcl            = a_poc and i_showPocLabel
+i_pocTextColor        = input.color(#ffffff,          " ",   group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
+i_pocTextSize         = input.enum(iLib.TextSize.small, " ", group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
+
+i_showValueAreaLines  = input.bool(false, "Value Area Lines", group = iGroupAppearance, inline = "VL", tooltip = tt_valueAreaLines, display = display.none, active = i_showVisuals)
+bool a_val            = i_showVisuals and i_showValueAreaLines
+i_valueAreaColor      = input.color(#2962ff, " ",             group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
+i_valueAreaWidth      = input.enum(iLib.LineSize.normal, " ", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
+i_valueAreaStyle      = input.enum(iLib.LineStyle.solid, " ", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
+
+i_showValueAreaLabels = input.bool(true, "VA Labels",        group = iGroupAppearance, inline = "VB", tooltip = tt_valueAreaLabels, display = display.none, active = a_val)
+bool a_vlb            = a_val and i_showValueAreaLabels
+i_valueAreaTextColor  = input.color(#ffffff, " ",            group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
+i_valueAreaTextSize   = input.enum(iLib.TextSize.small, " ", group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
+
+bool a_ext            = i_showVisuals and a_rec and (i_showPoc or i_showValueAreaLines)
+i_extendLevels        = input.bool(false, "Extend Lines One Extra Session", group = iGroupAppearance, tooltip = tt_extendLevels, display = display.none, active = a_ext)
+
 // #endregion Appearance
 
 // #region Debug ******************************************
@@ -177,6 +180,7 @@ int DEBUG_TABLE_COLUMNS = 2
 int DEBUG_TABLE_ROWS    = 6
 color DEBUG_TABLE_BACKGROUND = color.new(#111827, 10)
 color DEBUG_TABLE_TEXT       = #f3f4f6
+string DEBUG_EMPTY_VALUE     = "—"
 
 var VP.ProfileState profileState = VP.createState()
 var bool hasSeenVolume = false
@@ -190,16 +194,8 @@ var bool hasSeenVolume = false
 
 // #region Shared Helper Functions ************************
 
-// The time picker returns a timestamp anchored to the chart's timezone. Reading
-// its wall-clock components through the exchange timezone (the picker's default
-// display) and rebuilding them in the selected timezone makes "09:30 on Jan 2"
-// always mean 09:30 in the user's chosen timezone.
-reinterpretInTimezone(int _pickedTime, string _timezone) =>
-    timestamp(_timezone, year(_pickedTime), month(_pickedTime), dayofmonth(_pickedTime),
-        hour(_pickedTime), minute(_pickedTime))
-
 formatPrice(float _price) =>
-    (na(_price) ? "—" : str.tostring(_price, format.mintick))
+    (na(_price) ? DEBUG_EMPTY_VALUE : str.tostring(_price, format.mintick))
 
 // #endregion Shared Helper Functions
 
@@ -214,20 +210,25 @@ writeDebugRow(table _table, int _row, string _label, string _value) =>
         text_halign = text.align_right, text_size = size.small)
     int(na)
 
+formatSessionPlan(int _fullSessions, int _requestedSessions) =>
+    str.tostring(_fullSessions) + "/" + str.tostring(_requestedSessions)
+
 // #endregion Debug Table Helpers
 
-// @function renderDebugTable                     - Fill the table from the current/latest retained statistics.
+// @function renderDebugTable                     - Fill the table from the retained statistics and the resolved drawing plan.
 // @param    _table        (table)                - Table to write into.
-// @param    _state        (VP.ProfileState)       - State retaining current or last-session statistics.
+// @param    _state        (VP.ProfileState)      - State retaining statistics and the current drawing plan.
+// @param    _cfg          (VP.ProfileConfig)     - Sanitised configuration holding the requested history count.
 // @returns                (int)                  - Typed fallback; side effects only.
-renderDebugTable(table _table, VP.ProfileState _state) =>
+renderDebugTable(table _table, VP.ProfileState _state, VP.ProfileConfig _cfg) =>
     bool hasStatistics = not na(_state.mostRecentPoc)
-    writeDebugRow(_table, 0, "Bars",         hasStatistics ? str.tostring(_state.mostRecentBarCount) : "—")
-    writeDebugRow(_table, 1, "Total Volume", hasStatistics ? str.tostring(_state.mostRecentTotalVolume, format.volume) : "—")
-    writeDebugRow(_table, 2, "POC",          hasStatistics ? formatPrice(_state.mostRecentPoc) : "—")
-    writeDebugRow(_table, 3, "VA High",      hasStatistics ? formatPrice(_state.mostRecentValueAreaHigh) : "—")
-    writeDebugRow(_table, 4, "VA Low",       hasStatistics ? formatPrice(_state.mostRecentValueAreaLow) : "—")
-    writeDebugRow(_table, 5, "History",      str.tostring(array.size(_state.history)))
+    writeDebugRow(_table, 0, "Bars",               hasStatistics ? str.tostring(_state.mostRecentBarCount) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 1, "Total Volume",       hasStatistics ? str.tostring(_state.mostRecentTotalVolume, format.volume) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 2, "POC",                hasStatistics ? formatPrice(_state.mostRecentPoc) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 3, "VA High",            hasStatistics ? formatPrice(_state.mostRecentValueAreaHigh) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 4, "VA Low",             hasStatistics ? formatPrice(_state.mostRecentValueAreaLow) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 5, "Full Sessions / Requested",
+        formatSessionPlan(_state.effectiveHistoryCount, _cfg.historyCount))
     int(na)
 
 // #endregion Debug Table Functions
@@ -244,8 +245,8 @@ renderDebugTable(table _table, VP.ProfileState _state) =>
 string globalTimezone = i_timezone.getOfficialTimezone()
 string anchorHHMM     = i_anchorQuarter.toHHMMString()
 
-var int rangeStartTime = reinterpretInTimezone(i_rangeStart, globalTimezone)
-var int rangeEndTime   = reinterpretInTimezone(i_rangeEnd, globalTimezone)
+int rangeStartTime = i_rangeStart
+int rangeEndTime   = i_rangeEnd
 
 // Charts at or below 1 minute request their own timeframe, which returns
 // single-entry arrays and avoids a lower-timeframe runtime error.
@@ -269,27 +270,29 @@ if barstate.islast and not hasSeenVolume
 // #region Component Config Assembly **********************
 
 var VP.ProfileStyle profileStyle = VP.ProfileStyle.new(
-    buyColor                     = i_buyColor,             sellColor    = i_sellColor,
-    totalColor                   = i_totalColor,           pocColor     = i_pocColor,
-    outsideValueAreaTransparency = i_outTransparency,      pocTextColor = i_pocTextColor,
-    rangeBackgroundColor         = i_rangeFill,            pocWidth     = i_pocWidth.lineSize(),
-    pocStyle                     = i_pocStyle.lineStyle(), pocTextSize  = i_pocTextSize.textSize()
+    buyColor                     = i_buyColor,                   sellColor            = i_sellColor,
+    totalColor                   = i_totalColor,                 rangeBackgroundColor = i_rangeFill,
+    outsideValueAreaTransparency = i_outTransparency,
+    pocColor                     = i_pocColor,                   pocWidth             = i_pocWidth.lineSize(),
+    pocStyle                     = i_pocStyle.lineStyle(),       pocTextColor         = i_pocTextColor,
+    pocTextSize                  = i_pocTextSize.textSize(),
+    valueAreaColor               = i_valueAreaColor,             valueAreaWidth       = i_valueAreaWidth.lineSize(),
+    valueAreaStyle               = i_valueAreaStyle.lineStyle(), valueAreaTextColor   = i_valueAreaTextColor,
+    valueAreaTextSize            = i_valueAreaTextSize.textSize()
 )
 
 var VP.ProfileConfig profileConfig = VP.ProfileConfig.new(
-    rangeMode        = i_rangeMode,        rangeStartTime = rangeStartTime,
-    rangeEndTime     = rangeEndTime,       anchorHHMM     = anchorHHMM,
-    sessionString    = i_session,          timezone       = globalTimezone,
-    rowCount         = i_rowCount,         valueAreaPercent = i_valueArea,
-    splitBuySell     = i_splitBuySell,     showVisuals       = i_showVisuals,
-    widthPercent     = i_widthPercent,
-    profileDisplay   = i_display,
-    showPolylineGradient = i_showGradient, gradientBandsPerSide = i_gradientBands,
-    historyCount     = i_historyCount,
-    showRangeBox     = i_showRangeBox,     showPoc          = i_showPoc,
-    showValueArea    = i_showValueArea,    extendPoc        = i_extendPoc,
-    showPocLabel     = i_showPocLabel,
-    style            = profileStyle
+    rangeMode            = i_rangeMode,            rangeStartTime           = rangeStartTime,
+    rangeEndTime         = rangeEndTime,           anchorHHMM               = anchorHHMM,
+    sessionString        = i_session,              timezone                 = globalTimezone,
+    rowCount             = i_rowCount,             valueAreaPercent         = i_valueArea,
+    splitBuySell         = i_splitBuySell,         showVisuals              = i_showVisuals,
+    widthPercent         = i_widthPercent,         profileDisplay           = i_display,
+    polylineFill         = i_lineFill,             historyCount             = i_historyCount,
+    showRangeBox         = i_showRangeBox,         dimOutsideValueArea      = i_dimOutsideValueArea,
+    showPoc              = i_showPoc,              showPocLabel             = i_showPocLabel,
+    showValueAreaLines   = i_showValueAreaLines,   showValueAreaLabels      = i_showValueAreaLabels,
+    extendLevelsExtraSession = i_extendLevels,     style                    = profileStyle
 )
 
 // #endregion Component Config Assembly
@@ -316,6 +319,6 @@ if i_debug and barstate.islast
     var table debugTable = table.new(position.top_right, DEBUG_TABLE_COLUMNS, DEBUG_TABLE_ROWS,
         bgcolor = DEBUG_TABLE_BACKGROUND, frame_color = color.new(DEBUG_TABLE_TEXT, 65), frame_width = 1,
         border_color = color.new(DEBUG_TABLE_TEXT, 80), border_width = 1)
-    renderDebugTable(debugTable, profileState)
+    renderDebugTable(debugTable, profileState, profileConfig)
 
 // #endregion Debug

@@ -30,7 +30,30 @@ Because these plots are exposed to the Data Window, you can use this script as a
 [b]How to Use[/b]
 [list=1]
 [*] Add the indicator to your chart.
-[*] Open the settings menu and configure your preferred [b]Timezone[/b]. All fixed time pickers and session windows respect this timezone automatically.
+[*] Open the settings menu and configure your preferred [b]Timezone[/b] for recurring anchors, session windows, and POC labels. Fixed time pickers follow the chart timezone.
 [*] Select your [b]Range Mode[/b] (e.g. 'Daily Session' for the RTH open).
 [*] Customize your resolution (`Rows`), rendering styles, and gradients.
+[/list]
+
+[b]Update - Profile History, Levels, and Settings[/b]
+
+This update expands the indicator's session-history and appearance controls while keeping POC, Value Area High, and Value Area Low available through the Data Window.
+
+[b]New and Updated Features[/b]
+[list]
+[*][b]Reorganized settings[/b]: Profile now contains Value Area %, Rows, and Width %. Display begins with Show Profile Visuals. Split Buy/Sell is the first Appearance option.
+[*][b]Shared row resolution[/b]: Rows now controls the volume distribution used by Boxes, Polylines, and Curved Polylines.
+[*][b]Flexible polyline fills[/b]: Line Fill can be None, Solid, or Gradient. Gradient quality adapts automatically to the available polyline budget.
+[*][b]Expanded level controls[/b]: Point of Control and Value Area lines have separate visibility, color, width, style, label, text-color, and text-size controls.
+[*][b]Extended recurring levels[/b]: Extend Lines One Extra Session carries each completed session's POC and Value Area levels through the following session.
+[*][b]Larger session history[/b]: Previous Sessions requests the full history target. The engine keeps as many complete profiles as Pine permits and preserves range boxes and selected levels for the remainder.
+[*][b]Range-box priority[/b]: An enabled Range Box is reserved for every represented session before the remaining box budget is assigned to volume rows.
+[*][b]Clearer statistics[/b]: The table now reports Bars, Total Volume, POC, VA High, VA Low, and Full Sessions / Requested. Session counts are displayed as whole numbers.
+[/list]
+
+[b]Settings Notes[/b]
+[list]
+[*]The Timezone setting applies to Daily Anchor, Daily Session, and level-label dates. Fixed Range Start and Range End pickers remain absolute timestamps displayed in the chart timezone.
+[*]Show Profile Visuals hides chart drawings without disabling calculations or Data Window outputs.
+[*]Reducing Rows, disabling Split Buy/Sell, or selecting a lighter polyline fill allows more sessions to remain fully drawn.
 [/list]

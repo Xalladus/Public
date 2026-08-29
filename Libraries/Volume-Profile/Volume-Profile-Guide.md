@@ -1,53 +1,190 @@
 # Volume Profile Guide
 
-This guide maps the underlying architecture and execution pipeline of the `VolumeProfileLibrary` to explain **how** the components fit together and **why** it handles state the way it does.
+This internal guide explains how `VolumeProfileLibrary` divides ownership, processes profile data, resolves drawing budgets, and retains recurring-session history.
 
-## Core Philosophy & Data Flow
+## Architecture and Ownership
 
-The `VolumeProfileLibrary` operates as a **stateful accumulation engine** bundled with an **embedded renderer**. 
+`VolumeProfileLibrary` is a stateful volume-distribution engine with an embedded renderer. It supports fixed and recurring ranges, box and polyline displays, Point of Control (POC), Value Area High (VAH), Value Area Low (VAL), retained session history, and optional lower-timeframe accumulation.
 
-Unlike stateless mathematical helpers, the library requires persistent state (via `ProfileState`) to retain multiple price rows, drawings, and past session history. However, it still enforces a strict **separation of concerns** by forcing the consumer to own user inputs, chart limit boundaries, and data fetching (such as lower timeframe arrays).
+The consumer owns:
 
-The pipeline follows three major steps on every bar: **Configure -> Accumulate -> Orchestrate Drawings**.
+- User inputs and conversion of input-library enums.
+- Persistent `ProfileState`, `ProfileStyle`, and `ProfileConfig` declarations.
+- The `indicator()` or `strategy()` drawing-limit declarations.
+- Missing-volume validation.
+- The global `request.security_lower_tf()` call and its four returned arrays.
+- Any plots, tables, alerts, or strategy logic that consume the calculated levels.
 
-## Pipeline Stages
+The library owns:
 
-### 1. Configure and Initialize (State Management)
-To maintain performance and keep drawings alive, the consumer establishes a persistent environment:
-- **`createState()`**: Generates an empty `ProfileState` that holds the currently active profile and an array of historical completed profiles.
-- **`ProfileConfig`**: Gathers all rules about when profiles start/stop (e.g. `RangeMode`), styling instructions (`ProfileStyle`), and resolution fidelity (`rowCount`, `gradientBandsPerSide`).
+- Configuration sanitization.
+- Fixed and recurring range membership.
+- Profile creation, accumulation, and completion.
+- Volume distribution into price rows.
+- POC and Value Area calculations.
+- Drawing-budget resolution in whole sessions.
+- Full and level-only history tiers.
+- Range boxes, profile bodies, level lines, labels, and level extensions.
 
-*Beneath the surface:* The state object serves as a ledger. Because drawing limits in Pine Script can easily be exhausted, the state is responsible for archiving completed sessions into history and stripping visuals from old ones to free up limits.
+The per-bar flow is:
 
-### 2. Volume Accumulation
-Triggered on every bar by `update()`, the engine resolves if the current chart bar belongs inside an active profile based on the range mode (`FromTime`, `BetweenTimes`, `DailyAnchor`, `DailySession`).
-- **`appendBarsToProfile()`**: Accepts either the fallback chart-bar OHLCV or the highly accurate arrays provided by `request.security_lower_tf()`.
-- **`distributeEntryIntoRows()`**: Distributes the volume data proportionally across the constructed price rows (`rowVolumes` and `rowBuyVolumes`). 
-- **`rebuildRows()`**: If an incoming candle expands the price boundaries of the profile beyond what was already seen, the library must recalibrate the price row heights and fully rebuild the rows by replaying the stored entry history.
-
-### 3. Statistics and Rendering
-Once data is accumulated, the engine resolves actionable analytics and handles the rendering payload.
-- **`computeStatistics()`**: Walks outward from the Point of Control (POC) to compute the Value Area (VA) by accumulating the fattest price rows until `valueAreaPercent` is reached.
-- **`renderProfile()`**: Removes all profile drawings when `ProfileConfig.showVisuals` is false; otherwise dispatches to the selected box or polyline renderer.
-- **Level Exposure**: By calling `getMostRecentLevels()`, the consumer can pull the calculated POC and VA boundaries out of the library state to use for external analysis (e.g., plotting, triggering webhook alerts, etc.).
-
-## Critical Rules / Execution Patterns
-
-### Intrabar Data Fetching
-Pine Script does not allow `request.*` function calls inside loops or complex conditional library blocks securely. **Lower timeframe data must be fetched manually by the consumer** and passed directly into `update()`.
-
-```pine
-// Correct Pattern:
-string intrabarTimeframe = (timeframe.in_seconds() > 60 ? "1" : timeframe.period)
-[ltfHighs, ltfLows, ltfCloses, ltfVolumes] = request.security_lower_tf(syminfo.tickerid, intrabarTimeframe, [high, low, close, volume])
-profileState := VP.update(profileState, profileConfig, true, ltfHighs, ltfLows, ltfCloses, ltfVolumes)
+```text
+Consumer inputs and intrabar arrays
+    -> sanitize configuration
+    -> resolve range membership
+    -> close or open a profile
+    -> accumulate and distribute volume
+    -> calculate POC, VAH, and VAL
+    -> resolve drawing capacity
+    -> archive or demote completed sessions
+    -> render on the last bar
+    -> expose retained levels and diagnostics
 ```
 
-### Maximum Objects Budgeting
-Because the engine uses native Pine boxes, lines, and polylines, it is heavily susceptible to limits. Consumers **must** increase object counts in their `indicator()` or `strategy()` declaration. For example, 49 split rows × 5 profiles = 490 boxes. Declare `max_boxes_count = 500` to prevent chart glitches.
+## State and Configuration
 
-## Conclusion
+### `ProfileState`
 
-1. **Consumer-Driven Data**: The consumer handles inputs, chart settings, and fetches intrabar data, passing them down into the engine to keep the runtime clean.
-2. **Stateful Processing**: The library holds its own state, tracking arrays of volume data per row and managing the recycling of older historical drawings.
-3. **Internal Orchestration**: Rendering logic for complex gradient polylines and stacked boxes is cleanly abstracted, freeing the consumer script to focus on logic and signals.
+Create the state once with `VP.createState()` and retain it with `var`. The state contains:
+
+- `active`: The open profile, or the retained completed profile in a fixed mode.
+- `history`: Completed recurring sessions that retain their full profile drawings.
+- `levelHistory`: Older recurring sessions that retain their requested range box and level drawings but no row body.
+- `effectiveHistoryCount`: Whole completed-session capacity for full profile drawings.
+- `levelOnlyHistoryCount`: Requested completed sessions assigned to the lower tier.
+- `resolvedFillBands`: Polyline ribbons per region: `0`, `1`, or `3-8`.
+- Retained POC, VAH, VAL, bar count, and total-volume values.
+
+The consumer should read diagnostic and latest-value fields but should not mutate the engine-owned lifecycle fields or `Profile` objects.
+
+### `ProfileConfig`
+
+`ProfileConfig` combines range, calculation, display, history, and appearance settings. Important relationships include:
+
+- `rowCount` drives the statistics and every renderer.
+- `valueAreaPercent` controls the target volume share used for VAH and VAL.
+- `splitBuySell` changes the number of box rows or polyline regions per profile.
+- `showVisuals` hides chart objects without stopping calculations.
+- `profileDisplay` selects boxes, straight polylines, or curved polylines.
+- `polylineFill` selects no fill, a solid fill, or an adaptive gradient.
+- `historyCount` requests completed recurring sessions. The active session is additional.
+- `showRangeBox` reserves and draws a range box for every represented session.
+- POC and Value Area lines and labels have separate visibility and style settings.
+- `extendLevelsExtraSession` extends completed recurring levels through their successor.
+
+The shared `MAX_ROW_COUNT` is `49`. This is a library design limit shared by boxes and polylines so one Rows setting controls the complete profile. It is not the point limit of an individual Pine polyline.
+
+## Processing Pipeline
+
+### 1. Range Resolution
+
+`resolveRangeMembership()` determines whether the current chart bar belongs to the configured range and returns its anchor key.
+
+- `FromTime` creates one profile from an absolute start timestamp onward.
+- `BetweenTimes` creates one profile between two absolute timestamps.
+- `DailyAnchor` starts a new recurring profile at the configured time each day.
+- `DailySession` accumulates only during the configured recurring session.
+
+Fixed `input.time` values are absolute UNIX timestamps and pass through unchanged. The configured timezone applies to daily anchors, daily sessions, and level-label dates.
+
+### 2. Volume Accumulation
+
+`appendBarsToProfile()` accepts either the lower-timeframe arrays supplied by the consumer or fallback chart-bar OHLCV data.
+
+Each source entry stores its high, low, volume, and estimated buy volume. `distributeEntryIntoRows()` assigns volume proportionally to every overlapping price row. A flat source bar distributes evenly across its intersected rows and uses a 50% buy-volume estimate.
+
+Row boundaries depend on the complete profile high and low. When a new entry expands that range, `rebuildRows()` clears the row arrays and replays the stored entries against the new boundaries. Entries that remain inside the existing range can be added incrementally.
+
+### 3. Statistics
+
+`computeStatistics()` identifies the row with the greatest volume as the POC. Starting from that row, it compares the next row above and below and adds the larger one until the configured Value Area percentage is reached.
+
+The active or latest profile values are retained in `ProfileState`, allowing consumers to read them during gaps between recurring sessions.
+
+### 4. Drawing-Plan Resolution
+
+`resolveDrawingPlan()` converts Pine's drawing limits into whole-profile capacity.
+
+For box displays:
+
+- One range box is reserved for the active profile and every requested completed session when range boxes are enabled.
+- The remaining box capacity is divided by `rowCount` and by one or two sides depending on `splitBuySell`.
+- The result is floored before the active-profile slot is removed, so `effectiveHistoryCount` is always a whole completed-session count.
+
+For polyline displays:
+
+- Each unsplit profile uses one outline; each split profile uses two.
+- No Fill adds no ribbons per region.
+- Solid adds one ribbon per region.
+- Gradient begins at eight ribbons per region and steps down to three when necessary.
+- Full sessions are reduced only after the gradient reaches its three-band minimum.
+
+The range-box reservation is independent of the selected body renderer. This guarantees that every represented session retains its range box when the user enables it.
+
+### 5. History Lifecycle
+
+Completed recurring profiles move through two tiers:
+
+1. `history` retains the newest sessions with their full row boxes or polylines, range box, and selected levels.
+2. `levelHistory` retains the remaining requested sessions with their range box and selected level drawings only.
+
+When a profile completes, its source-entry arrays are cleared because its price range can no longer expand. When it moves to `levelHistory`, its row drawings and row arrays are also cleared. This prevents long intrabar sessions and large requested histories from retaining unnecessary data.
+
+Fixed profiles do not rotate through recurring history. A completed fixed profile remains in `active` so its values and drawings remain available.
+
+### 6. Rendering and Level Extensions
+
+`renderProfile()` treats the profile body and its levels separately:
+
+- The body contains the range box plus box rows or polylines.
+- The levels contain the POC, VAH, and VAL lines and their optional labels.
+- Disabling `showVisuals` deletes both parts while calculations continue.
+
+When `extendLevelsExtraSession` is enabled, a completed recurring profile's selected levels end at its successor's end time. Until a successor exists, the newest completed profile follows the latest bar. The extension refresh runs on the last bar because the endpoints depend on the current session chain.
+
+## Consumer Integration
+
+The consumer must declare the full drawing budgets used by the engine:
+
+```pine
+indicator("Volume Profile Consumer", overlay = true,
+    max_boxes_count = 500, max_lines_count = 500,
+    max_labels_count = 500, max_polylines_count = 100)
+```
+
+The library intentionally leaves the lower-timeframe request in the consumer. Request the chart timeframe at or below one minute to avoid requesting a timeframe that is not lower than the chart:
+
+```pine
+import OneCleverGuy/VolumeProfileLibraryTESTB/3 as VP
+
+var VP.ProfileState profileState = VP.createState()
+var VP.ProfileStyle profileStyle = VP.ProfileStyle.new()
+var VP.ProfileConfig profileConfig = VP.ProfileConfig.new(style = profileStyle)
+
+string intrabarTimeframe = timeframe.in_seconds() > 60 ? "1" : timeframe.period
+[ltfHighs, ltfLows, ltfCloses, ltfVolumes] = request.security_lower_tf(
+    syminfo.tickerid, intrabarTimeframe, [high, low, close, volume])
+
+profileState := VP.update(
+    profileState, profileConfig, not timeframe.isseconds,
+    ltfHighs, ltfLows, ltfCloses, ltfVolumes)
+
+[poc, vaHigh, vaLow] = VP.getMostRecentLevels(profileState)
+```
+
+If lower-timeframe use is disabled or the arrays contain no entries for a chart bar, `update()` falls back to that chart bar's OHLCV data. The consumer should still stop or suppress execution on symbols that provide no usable volume.
+
+## Operational Rules
+
+- Call `VP.update()` exactly once per bar from global scope.
+- Store `ProfileState`, `ProfileStyle`, and `ProfileConfig` with `var`.
+- Pass all four lower-timeframe arrays directly to `update()`.
+- Declare 500 boxes, 500 lines, 500 labels, and 100 polylines in the consumer.
+- Treat `historyCount` as completed recurring sessions; the active session is not included.
+- Use `effectiveHistoryCount/historyCount` for the whole-session drawing-plan diagnostic.
+- Do not expose `resolvedFillBands` as a user-facing statistic unless it is needed for debugging.
+- Do not construct or mutate exported `Profile` instances in consumer code.
+
+## Summary
+
+The consumer supplies configuration and data. The library owns the state machine, volume distribution, statistics, drawing allocation, history lifecycle, and rendering. This boundary keeps integrations small while ensuring that range boxes, profile bodies, and levels remain within Pine's object budgets.

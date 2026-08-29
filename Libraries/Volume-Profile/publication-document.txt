@@ -44,3 +44,52 @@ profileState := VP.update(profileState, profileConfig, true, ltfHighs, ltfLows, 
 [*] Bars without lower-timeframe coverage will automatically fall back to the chart bar's data during accumulation.
 [*] Ensure you guard against missing volume in your main script (e.g., `if not na(volume)`), as the engine strictly requires volume data to function.
 [/list]
+
+[b]Update - Expanded Rendering and Session Management[/b]
+
+This update extends the original engine while preserving the same state-driven integration pattern. The library now manages a broader visual system, exposes more retained statistics, and resolves Pine drawing limits automatically for recurring profiles.
+
+[b]What Changed[/b]
+[list]
+[*][b]Expanded profile rendering[/b]: Box, straight-polyline, and curved-polyline displays now share the same row calculation. Polyline regions support None, Solid, and Gradient fill modes.
+[*][b]Adaptive gradient allocation[/b]: Gradient fills automatically use between three and eight ribbons per region. The engine reduces the ribbon count before reducing the number of fully drawn sessions.
+[*][b]Independent level visuals[/b]: Point of Control, Value Area High, and Value Area Low lines now have independent visibility, style, width, color, and label controls.
+[*][b]One-session level extension[/b]: Completed recurring-session levels can extend through the following session. The newest completed session follows the current bar until its successor is available.
+[*][b]Budget-aware history[/b]: The requested history count can exceed the number of row profiles that fit Pine's drawing limits. Fully drawn sessions are retained first; remaining sessions keep their requested range box and level drawings.
+[*][b]Range-box priority[/b]: When range boxes are enabled, the engine reserves one for every represented session before allocating boxes to row profiles.
+[*][b]Retained diagnostics[/b]: ProfileState now exposes the resolved full-history count, lower-tier history count, fill-band count, latest bar count, and latest total volume.
+[*][b]Memory cleanup[/b]: Source-entry arrays are released when a profile completes, and row arrays are released when a session leaves the fully drawn tier.
+[/list]
+
+[b]Updated Integration Requirements[/b]
+[list]
+[*]Use the current library import and continue storing ProfileState and ProfileConfig with var.
+[*]Pass fixed input.time timestamps directly. The timezone config applies to recurring anchors, recurring sessions, and level-label dates.
+[*]Declare max_boxes_count = 500, max_polylines_count = 100, max_lines_count = 500, and max_labels_count = 500 in the consuming script.
+[*]Continue fetching lower-timeframe High, Low, Close, and Volume arrays in the consumer. Missing intrabar coverage falls back to chart-bar data.
+[*]Use PolylineFill.None, PolylineFill.Solid, or PolylineFill.Gradient through ProfileConfig.polylineFill instead of manually selecting a gradient-band count.
+[/list]
+
+[b]Current Integration Shape[/b]
+[pine]
+import OneCleverGuy/VolumeProfileLibraryTESTB/3 as VP
+
+var VP.ProfileState profileState = VP.createState()
+var VP.ProfileStyle profileStyle = VP.ProfileStyle.new()
+var VP.ProfileConfig profileConfig = VP.ProfileConfig.new(
+    polylineFill = VP.PolylineFill.Gradient,
+    showPoc = true,
+    showValueAreaLines = true,
+    extendLevelsExtraSession = false,
+    style = profileStyle)
+
+string ltf = timeframe.in_seconds() > 60 ? "1" : timeframe.period
+[ltfHighs, ltfLows, ltfCloses, ltfVolumes] = request.security_lower_tf(
+    syminfo.tickerid, ltf, [high, low, close, volume])
+
+profileState := VP.update(
+    profileState, profileConfig, not timeframe.isseconds,
+    ltfHighs, ltfLows, ltfCloses, ltfVolumes)
+
+[poc, vaHigh, vaLow] = VP.getMostRecentLevels(profileState)
+[/pine]
