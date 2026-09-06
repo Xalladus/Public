@@ -17,7 +17,7 @@
 // #endregion Information
 
 // @description Fixed range volume profile engine with box and polyline renderers, absolute and recurring ranges, automatic drawing-budget management with range/level fallback, and optional intrabar volume accuracy.
-library("VolumeProfileLibraryTESTB", overlay = true)
+library("VolumeProfileLibrary", overlay = true)
 
 //+-------------------------------------------------------+
 //                           UDT'S                        |
@@ -45,6 +45,15 @@ export enum PolylineFill
     Solid    = "Solid"
     Gradient = "Gradient"
 
+// @enum    DateFormat          Date format applied to POC, VAH, and VAL origin labels.
+export enum DateFormat
+    DayMonth    = "EEE MMM dd"
+    FullDay     = "EEEE"
+    ShortDay    = "EEE"
+    DayMonthNum = "dd/MM"
+    MonthDayNum = "MM/dd"
+    IsoDate     = "yyyy-MM-dd"
+
 // #endregion Exported Enums
 
 // #region Exported UDTs **********************************
@@ -65,22 +74,34 @@ export enum PolylineFill
 // @field   valueAreaStyle               Value-area high/low line style (line.style_*).
 // @field   valueAreaTextColor           VAH/VAL origin label text color.
 // @field   valueAreaTextSize            VAH/VAL origin label text size (size.*).
+// @field   pocLabelPrefix               POC origin label text prefix.
+// @field   showPocDate                  Include origin date on POC label.
+// @field   vahLabelPrefix               Value Area High origin label text prefix.
+// @field   valLabelPrefix               Value Area Low origin label text prefix.
+// @field   showValueAreaDate            Include origin date on VAH/VAL labels.
+// @field   dateFormat                   Date format applied to level labels.
 export type ProfileStyle
-    color  buyColor                     = #26a69a
-    color  sellColor                    = #ef5350
-    color  totalColor                   = #2962ff
-    int    outsideValueAreaTransparency = 75
-    color  rangeBackgroundColor         = #2962ff12
-    color  pocColor                     = #ff0000
-    int    pocWidth                     = 2
-    string pocStyle                     = line.style_solid
-    color  pocTextColor                 = #ff0000
-    string pocTextSize                  = size.small
-    color  valueAreaColor               = #2962ff
-    int    valueAreaWidth               = 1
-    string valueAreaStyle               = line.style_solid
-    color  valueAreaTextColor           = #2962ff
-    string valueAreaTextSize            = size.small
+    color      buyColor                     = #26a69a
+    color      sellColor                    = #ef5350
+    color      totalColor                   = #2962ff
+    int        outsideValueAreaTransparency = 75
+    color      rangeBackgroundColor         = #2962ff12
+    color      pocColor                     = #ff0000
+    int        pocWidth                     = 2
+    string     pocStyle                     = line.style_solid
+    color      pocTextColor                 = #ff0000
+    string     pocTextSize                  = size.small
+    string     pocLabelPrefix               = "POC"
+    bool       showPocDate                  = true
+    color      valueAreaColor               = #2962ff
+    int        valueAreaWidth               = 1
+    string     valueAreaStyle               = line.style_solid
+    color      valueAreaTextColor           = #2962ff
+    string     valueAreaTextSize            = size.small
+    string     vahLabelPrefix               = "VAH"
+    string     valLabelPrefix               = "VAL"
+    bool       showValueAreaDate            = true
+    DateFormat dateFormat                   = DateFormat.DayMonth
 
 // @type    ProfileConfig       Consumer configuration for the profile engine.
 // @field   rangeMode                 How the profile range is anchored.
@@ -89,7 +110,7 @@ export type ProfileStyle
 // @field   anchorHHMM                Daily reset time "HHMM" for DailyAnchor mode.
 // @field   sessionString             Session "HHMM-HHMM" for DailySession mode.
 // @field   timezone                  IANA timezone used for anchor, session, and label math.
-// @field   rowCount                  Number of price rows (1-49). Drives statistics and both renderers.
+// @field   rowCount                  Number of price rows (1-200). Drives statistics and both renderers.
 // @field   valueAreaPercent          Percentage of total volume covered by the value area.
 // @field   splitBuySell              Split each row into estimated buy and sell volume.
 // @field   showVisuals               Draw profile visuals while continuing to calculate when false.
@@ -105,6 +126,8 @@ export type ProfileStyle
 // @field   showValueAreaLines        Draw the value-area high and low lines.
 // @field   showValueAreaLabels       Label the VAH and VAL lines' origin day at their right end.
 // @field   extendLevelsExtraSession  Run each completed recurring profile's lines until the next profile ends.
+// @field   maxBoxBudget              Maximum boxes allowed for this profile engine.
+// @field   maxPolylineBudget         Maximum polylines allowed for this profile engine.
 // @field   style                     Visual styling.
 export type ProfileConfig
     RangeMode       rangeMode                = RangeMode.DailySession
@@ -128,6 +151,8 @@ export type ProfileConfig
     bool            showValueAreaLines       = false
     bool            showValueAreaLabels      = true
     bool            extendLevelsExtraSession = false
+    int             maxBoxBudget             = 500
+    int             maxPolylineBudget        = 100
     ProfileStyle    style                    = na
 
 // @type    Profile             One volume profile: accumulated data, statistics, and drawings.
@@ -151,6 +176,9 @@ export type ProfileConfig
 // @field   pocPrice            Mid price of the Point of Control row.
 // @field   valueAreaHigh       Top price of the value area.
 // @field   valueAreaLow        Bottom price of the value area.
+// @field   pocVolume           Total volume in the Point of Control row.
+// @field   pocBuyVolume        Estimated buy volume in the Point of Control row.
+// @field   pocSellVolume       Estimated sell volume in the Point of Control row.
 // @field   isComplete          True once the profile stopped accepting bars.
 // @field   rangeBox            Range highlight box.
 // @field   pocLine             Point of Control line.
@@ -185,6 +213,9 @@ export type Profile
     float           pocPrice           = na
     float           valueAreaHigh      = na
     float           valueAreaLow       = na
+    float           pocVolume          = 0.0
+    float           pocBuyVolume       = 0.0
+    float           pocSellVolume      = 0.0
     bool            isComplete         = false
     box             rangeBox           = na
     line            pocLine            = na
@@ -215,6 +246,9 @@ export type Profile
 // @field   mostRecentValueAreaLow  Latest calculated value-area low, retained between sessions.
 // @field   mostRecentBarCount      Bar count from the current or most recently completed profile.
 // @field   mostRecentTotalVolume   Total volume from the current or most recently completed profile.
+// @field   mostRecentPocVolume     Latest calculated POC total volume.
+// @field   mostRecentPocBuyVolume  Latest calculated POC buy volume.
+// @field   mostRecentPocSellVolume Latest calculated POC sell volume.
 export type ProfileState
     Profile        active                  = na
     array<Profile> history                 = na
@@ -231,6 +265,9 @@ export type ProfileState
     float          mostRecentValueAreaLow  = na
     int            mostRecentBarCount      = 0
     float          mostRecentTotalVolume   = na
+    float          mostRecentPocVolume     = na
+    float          mostRecentPocBuyVolume  = na
+    float          mostRecentPocSellVolume = na
 
 // #endregion Exported UDTs
 
@@ -251,12 +288,8 @@ float  PERCENT_DIVISOR              = 100.0
 float  EXHAUSTED_SIDE               = -1.0
 int    NO_BORDER_WIDTH              = 0
 int    PROFILE_POLYLINE_WIDTH       = 2
-int    DRAWING_LIMIT_BOXES          = 500
-int    DRAWING_LIMIT_POLYLINES      = 100
 int    NO_FILL_BANDS                = 0
 int    SOLID_FILL_BANDS             = 1
-int    MIN_GRADIENT_FILL_BANDS      = 3
-int    MAX_GRADIENT_FILL_BANDS      = 8
 color  LEVEL_LABEL_BACKGROUND       = #00000000
 string LEVEL_LABEL_STYLE            = label.style_label_left
 string LEVEL_LABEL_DAY_FORMAT       = "EEE MMM dd"
@@ -268,9 +301,13 @@ string VALUE_AREA_LOW_LABEL_PREFIX  = "VAL"
 
 // #region Exported Globals *******************************
 
-export const int MIN_ROW_COUNT     = 1
-export const int MAX_ROW_COUNT     = 49
-export const int MAX_HISTORY_COUNT = 100
+export const int MIN_ROW_COUNT           = 1
+export const int MAX_ROW_COUNT           = 200
+export const int MAX_HISTORY_COUNT       = 100
+export const int DRAWING_LIMIT_BOXES     = 500
+export const int DRAWING_LIMIT_POLYLINES = 100
+export const int MIN_GRADIENT_FILL_BANDS = 3
+export const int MAX_GRADIENT_FILL_BANDS = 8
 
 // #endregion Exported Globals
 
@@ -512,6 +549,9 @@ computeStatistics(Profile _profile, float _valueAreaPercent) =>
         _profile.pocPrice         := rowBottomPrice(_profile, pocRow, rowHeight) + rowHeight / 2.0
         _profile.valueAreaLow     := rowBottomPrice(_profile, lowRow, rowHeight)
         _profile.valueAreaHigh    := rowBottomPrice(_profile, highRow, rowHeight) + rowHeight
+        _profile.pocVolume        := array.get(_profile.rowVolumes, pocRow)
+        _profile.pocBuyVolume     := array.get(_profile.rowBuyVolumes, pocRow)
+        _profile.pocSellVolume    := _profile.pocVolume - _profile.pocBuyVolume
 
 // #endregion Profile Statistics Helpers
 
@@ -556,11 +596,20 @@ renderRangeBox(Profile _profile, ProfileConfig _cfg) =>
     // The create/update/delete branches return different types.
     int(na)
 
-profileOriginDayText(Profile _profile, ProfileConfig _cfg) =>
-    str.format_time(_profile.startTime, LEVEL_LABEL_DAY_FORMAT, _cfg.timezone)
+profileOriginDayText(Profile _profile, ProfileConfig _cfg, ProfileStyle _style) =>
+    str.format_time(_profile.startTime, str.tostring(_style.dateFormat), _cfg.timezone)
 
-levelLabelText(string _levelPrefix, string _originDayText) =>
-    _levelPrefix + " " + _originDayText
+levelLabelText(string _prefix, bool _showDate, string _dateText) =>
+    string trimmedPrefix = str.trim(_prefix)
+    bool hasPrefix = str.length(trimmedPrefix) > 0
+    if hasPrefix and _showDate
+        trimmedPrefix + " " + _dateText
+    else if hasPrefix
+        trimmedPrefix
+    else if _showDate
+        _dateText
+    else
+        ""
 
 // Creates, repositions, or removes one horizontal level line and returns the
 // surviving id so the caller can store it back on the profile. Lines are
@@ -603,8 +652,9 @@ syncLevelLabel(label _label, bool _show, int _xTime, float _price, string _text,
 renderPocLevel(Profile _profile, ProfileConfig _cfg) =>
     ProfileStyle style = _cfg.style
     bool   canDraw   = _cfg.showPoc and not na(_profile.pocRow)
-    bool   showLabel = canDraw and _cfg.showPocLabel
-    string labelText = levelLabelText(POC_LABEL_PREFIX, profileOriginDayText(_profile, _cfg))
+    string originDay = profileOriginDayText(_profile, _cfg, style)
+    string labelText = levelLabelText(style.pocLabelPrefix, style.showPocDate, originDay)
+    bool   showLabel = canDraw and _cfg.showPocLabel and str.length(labelText) > 0
     _profile.pocLine  := syncLevelLine(_profile.pocLine, canDraw, _profile.startTime, _profile.endTime,
         _profile.pocPrice, style.pocColor, style.pocWidth, style.pocStyle)
     _profile.pocLabel := syncLevelLabel(_profile.pocLabel, showLabel, _profile.endTime, _profile.pocPrice,
@@ -613,19 +663,20 @@ renderPocLevel(Profile _profile, ProfileConfig _cfg) =>
 
 renderValueAreaLevels(Profile _profile, ProfileConfig _cfg) =>
     ProfileStyle style = _cfg.style
-    bool   canDraw    = _cfg.showValueAreaLines and not na(_profile.pocRow)
-    bool   showLabels = canDraw and _cfg.showValueAreaLabels
-    string originDay  = profileOriginDayText(_profile, _cfg)
+    bool   canDraw      = _cfg.showValueAreaLines and not na(_profile.pocRow)
+    string originDay    = profileOriginDayText(_profile, _cfg, style)
+    string vahText      = levelLabelText(style.vahLabelPrefix, style.showValueAreaDate, originDay)
+    string valText      = levelLabelText(style.valLabelPrefix, style.showValueAreaDate, originDay)
+    bool   showVahLabel = canDraw and _cfg.showValueAreaLabels and str.length(vahText) > 0
+    bool   showValLabel = canDraw and _cfg.showValueAreaLabels and str.length(valText) > 0
     _profile.valueAreaHighLine := syncLevelLine(_profile.valueAreaHighLine, canDraw, _profile.startTime,
         _profile.endTime, _profile.valueAreaHigh, style.valueAreaColor, style.valueAreaWidth, style.valueAreaStyle)
     _profile.valueAreaLowLine := syncLevelLine(_profile.valueAreaLowLine, canDraw, _profile.startTime,
         _profile.endTime, _profile.valueAreaLow, style.valueAreaColor, style.valueAreaWidth, style.valueAreaStyle)
-    _profile.valueAreaHighLabel := syncLevelLabel(_profile.valueAreaHighLabel, showLabels, _profile.endTime,
-        _profile.valueAreaHigh, levelLabelText(VALUE_AREA_HIGH_LABEL_PREFIX, originDay),
-        style.valueAreaTextColor, style.valueAreaTextSize)
-    _profile.valueAreaLowLabel := syncLevelLabel(_profile.valueAreaLowLabel, showLabels, _profile.endTime,
-        _profile.valueAreaLow, levelLabelText(VALUE_AREA_LOW_LABEL_PREFIX, originDay),
-        style.valueAreaTextColor, style.valueAreaTextSize)
+    _profile.valueAreaHighLabel := syncLevelLabel(_profile.valueAreaHighLabel, showVahLabel, _profile.endTime,
+        _profile.valueAreaHigh, vahText, style.valueAreaTextColor, style.valueAreaTextSize)
+    _profile.valueAreaLowLabel := syncLevelLabel(_profile.valueAreaLowLabel, showValLabel, _profile.endTime,
+        _profile.valueAreaLow, valText, style.valueAreaTextColor, style.valueAreaTextSize)
     int(na)
 
 deleteProfileLevels(Profile _profile) =>
@@ -893,10 +944,12 @@ refreshLevelExtensions(ProfileState _state, ProfileConfig _cfg) =>
 // #region Profile Lifecycle Helpers //
 
 sanitizeConfig(ProfileConfig _cfg) =>
-    _cfg.rowCount         := clampInt(nz(_cfg.rowCount, MIN_ROW_COUNT), MIN_ROW_COUNT, MAX_ROW_COUNT)
-    _cfg.historyCount     := clampInt(nz(_cfg.historyCount, 0), 0, MAX_HISTORY_COUNT)
-    _cfg.valueAreaPercent := clampFloat(nz(_cfg.valueAreaPercent, 0.0), 0.0, PERCENT_DIVISOR)
-    _cfg.widthPercent     := clampFloat(nz(_cfg.widthPercent, PERCENT_DIVISOR), 1.0, PERCENT_DIVISOR)
+    _cfg.rowCount          := clampInt(nz(_cfg.rowCount, MIN_ROW_COUNT), MIN_ROW_COUNT, MAX_ROW_COUNT)
+    _cfg.historyCount      := clampInt(nz(_cfg.historyCount, 0), 0, MAX_HISTORY_COUNT)
+    _cfg.valueAreaPercent  := clampFloat(nz(_cfg.valueAreaPercent, 0.0), 0.0, PERCENT_DIVISOR)
+    _cfg.widthPercent      := clampFloat(nz(_cfg.widthPercent, PERCENT_DIVISOR), 1.0, PERCENT_DIVISOR)
+    _cfg.maxBoxBudget      := math.max(nz(_cfg.maxBoxBudget, DRAWING_LIMIT_BOXES), 0)
+    _cfg.maxPolylineBudget := math.max(nz(_cfg.maxPolylineBudget, DRAWING_LIMIT_POLYLINES), 0)
     if na(_cfg.style)
         _cfg.style := ProfileStyle.new()
 
@@ -919,16 +972,16 @@ resolveDrawingPlan(ProfileConfig _cfg) =>
             PolylineFill.Gradient => MAX_GRADIENT_FILL_BANDS
         if _cfg.polylineFill == PolylineFill.Gradient
             while fillBands > MIN_GRADIENT_FILL_BANDS and
-              desiredProfiles * sideCount * (1 + fillBands) > DRAWING_LIMIT_POLYLINES
+              desiredProfiles * sideCount * (1 + fillBands) > _cfg.maxPolylineBudget
                 fillBands -= 1
     int reservedRangeBoxes  = (_cfg.showRangeBox ? desiredProfiles : 0)
-    int availableRowBoxes   = math.max(DRAWING_LIMIT_BOXES - reservedRangeBoxes, 0)
+    int availableRowBoxes   = math.max(_cfg.maxBoxBudget - reservedRangeBoxes, 0)
     int rowBoxesPerProfile  = (isBoxDisplay ? _cfg.rowCount * sideCount : 0)
     int polylinesPerProfile = (isBoxDisplay ? 0 : sideCount * (1 + fillBands))
     int boxCapacity         = (rowBoxesPerProfile > 0
         ? int(math.floor(float(availableRowBoxes) / float(rowBoxesPerProfile))) : desiredProfiles)
     int polylineCapacity    = (polylinesPerProfile > 0
-        ? int(math.floor(float(DRAWING_LIMIT_POLYLINES) / float(polylinesPerProfile))) : desiredProfiles)
+        ? int(math.floor(float(_cfg.maxPolylineBudget) / float(polylinesPerProfile))) : desiredProfiles)
     int fullProfileCapacity = math.min(boxCapacity, polylineCapacity)
     int fullHistoryCount    = clampInt(_cfg.historyCount, 0, math.max(fullProfileCapacity - 1, 0))
     [fullHistoryCount, fillBands]
@@ -995,6 +1048,12 @@ export getMostRecentPoc(ProfileState _state) =>
 export getMostRecentLevels(ProfileState _state) =>
     [_state.mostRecentPoc, _state.mostRecentValueAreaHigh, _state.mostRecentValueAreaLow]
 
+// @function getMostRecentPocVolumes             - Return the latest retained POC volume breakdown.
+// @param    _state        (ProfileState)         - Persistent engine state after its current-bar update.
+// @returns                ([float, float, float])- POC total volume, POC buy volume, and POC sell volume; na until available.
+export getMostRecentPocVolumes(ProfileState _state) =>
+    [_state.mostRecentPocVolume, _state.mostRecentPocBuyVolume, _state.mostRecentPocSellVolume]
+
 // @function update                               - Run the profile engine for the current bar. Call once per bar at global scope.
 // @param    _state        (ProfileState)         - Persistent engine state created by createState().
 // @param    _cfg          (ProfileConfig)        - Consumer configuration. Out-of-range values are clamped in place;
@@ -1033,11 +1092,14 @@ export update(ProfileState _state, ProfileConfig _cfg, bool _useIntrabar, array<
                 array.from(nz(volume)), time_close)
         computeStatistics(_state.active, _cfg.valueAreaPercent)
         if not na(_state.active.pocPrice)
-            _state.mostRecentPoc := _state.active.pocPrice
+            _state.mostRecentPoc           := _state.active.pocPrice
             _state.mostRecentValueAreaHigh := _state.active.valueAreaHigh
             _state.mostRecentValueAreaLow  := _state.active.valueAreaLow
             _state.mostRecentBarCount      := _state.active.barCount
             _state.mostRecentTotalVolume   := _state.active.totalVolume
+            _state.mostRecentPocVolume     := _state.active.pocVolume
+            _state.mostRecentPocBuyVolume  := _state.active.pocBuyVolume
+            _state.mostRecentPocSellVolume := _state.active.pocSellVolume
     if hasAnchor and isInRange
         _state.lastAnchorKey := anchorKey
     if barstate.islast

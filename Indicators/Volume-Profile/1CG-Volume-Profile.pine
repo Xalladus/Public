@@ -21,7 +21,7 @@ indicator("Volume Profile Fixed/Range/Session", "VolProfile", overlay = true, ma
     max_labels_count = 500, max_polylines_count = 100)
 
 import OneCleverGuy/InputLibrary/4 as iLib
-import OneCleverGuy/VolumeProfileLibrary/3 as VP
+import OneCleverGuy/VolumeProfileLibrary/4 as VP
 
 //+-------------------------------------------------------+
 //                          INPUTS                        |
@@ -57,10 +57,10 @@ string tt_lineFill        = "Region fill for the polyline displays. None draws o
 string tt_rowColors       = "Buy, sell, and single-color profile colors. Opacity is respected by boxes and polylines."
 string tt_rangeBox        = "Range highlight box visibility and fill color."
 string tt_poc             = "Point of Control line visibility, color, width, and style."
-string tt_pocLabel        = "Origin label drawn at the right end of each POC line, showing POC and the session day: text color and size."
+string tt_pocLabel        = "Origin label drawn at the right end of each POC line: prefix text, show origin date, text color, and size."
 string tt_valueAreaLines  = "Value Area High and Low lines share one toggle, color, width, and style."
-string tt_valueAreaLabels = "Origin labels drawn at the right end of each value-area line, showing VAH or VAL and the session day:"
-                          + " text color and size."
+string tt_valueAreaLabels = "Origin labels drawn at the right end of each value-area line: VAH/VAL prefix text, show origin date, text color, and size."
+string tt_dateFormat      = "Date format applied to POC, VAH, and VAL origin labels."
 string tt_extendLevels    = "Extend each completed session's POC and value-area lines until the end of the following session."
                           + " The newest completed session's lines follow the latest bar until the next session begins. Recurring modes only."
 string tt_debug           = "Show the current session statistics, retaining the last session values between sessions."
@@ -145,6 +145,8 @@ i_showPocLabel        = input.bool(true, "POC Label",        group = iGroupAppea
 bool a_pcl            = a_poc and i_showPocLabel
 i_pocTextColor        = input.color(#ffffff,          " ",   group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
 i_pocTextSize         = input.enum(iLib.TextSize.small, " ", group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
+i_pocPrefix           = input.string("POC", "Prefix",        group = iGroupAppearance, inline = "PLT", display = display.none, active = a_pcl)
+i_showPocDate         = input.bool(true, "Show Date",        group = iGroupAppearance, inline = "PLT", display = display.none, active = a_pcl)
 
 i_showValueAreaLines  = input.bool(false, "Value Area Lines", group = iGroupAppearance, inline = "VL", tooltip = tt_valueAreaLines, display = display.none, active = i_showVisuals)
 bool a_val            = i_showVisuals and i_showValueAreaLines
@@ -156,6 +158,12 @@ i_showValueAreaLabels = input.bool(true, "VA Labels",        group = iGroupAppea
 bool a_vlb            = a_val and i_showValueAreaLabels
 i_valueAreaTextColor  = input.color(#ffffff, " ",            group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
 i_valueAreaTextSize   = input.enum(iLib.TextSize.small, " ", group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
+i_vahPrefix           = input.string("VAH", "VAH Prefix",    group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
+i_valPrefix           = input.string("VAL", "VAL Prefix",    group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
+i_showVaDate          = input.bool(true, "Show Date",        group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
+
+bool a_lbl_date       = (a_pcl and i_showPocDate) or (a_vlb and i_showVaDate)
+i_dateFormat          = input.enum(VP.DateFormat.DayMonth, "Label Date Format", group = iGroupAppearance, tooltip = tt_dateFormat, display = display.none, active = a_lbl_date)
 
 bool a_ext            = i_showVisuals and a_rec and (i_showPoc or i_showValueAreaLines)
 i_extendLevels        = input.bool(false, "Extend Lines One Extra Session", group = iGroupAppearance, tooltip = tt_extendLevels, display = display.none, active = a_ext)
@@ -177,7 +185,7 @@ i_debug = input.bool(false, "Show Statistics Table", group = iGroupDebug, toolti
 // #region Global Variables
 
 int DEBUG_TABLE_COLUMNS = 2
-int DEBUG_TABLE_ROWS    = 6
+int DEBUG_TABLE_ROWS    = 8
 color DEBUG_TABLE_BACKGROUND = color.new(#111827, 10)
 color DEBUG_TABLE_TEXT       = #f3f4f6
 string DEBUG_EMPTY_VALUE     = "—"
@@ -224,10 +232,12 @@ renderDebugTable(table _table, VP.ProfileState _state, VP.ProfileConfig _cfg) =>
     bool hasStatistics = not na(_state.mostRecentPoc)
     writeDebugRow(_table, 0, "Bars",               hasStatistics ? str.tostring(_state.mostRecentBarCount) : DEBUG_EMPTY_VALUE)
     writeDebugRow(_table, 1, "Total Volume",       hasStatistics ? str.tostring(_state.mostRecentTotalVolume, format.volume) : DEBUG_EMPTY_VALUE)
-    writeDebugRow(_table, 2, "POC",                hasStatistics ? formatPrice(_state.mostRecentPoc) : DEBUG_EMPTY_VALUE)
-    writeDebugRow(_table, 3, "VA High",            hasStatistics ? formatPrice(_state.mostRecentValueAreaHigh) : DEBUG_EMPTY_VALUE)
-    writeDebugRow(_table, 4, "VA Low",             hasStatistics ? formatPrice(_state.mostRecentValueAreaLow) : DEBUG_EMPTY_VALUE)
-    writeDebugRow(_table, 5, "Full Sessions / Requested",
+    writeDebugRow(_table, 2, "POC Buy Volume",     hasStatistics ? str.tostring(_state.mostRecentPocBuyVolume, format.volume) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 3, "POC Sell Volume",    hasStatistics ? str.tostring(_state.mostRecentPocSellVolume, format.volume) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 4, "POC",                hasStatistics ? formatPrice(_state.mostRecentPoc) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 5, "VA High",            hasStatistics ? formatPrice(_state.mostRecentValueAreaHigh) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 6, "VA Low",             hasStatistics ? formatPrice(_state.mostRecentValueAreaLow) : DEBUG_EMPTY_VALUE)
+    writeDebugRow(_table, 7, "Full Sessions / Requested",
         formatSessionPlan(_state.effectiveHistoryCount, _cfg.historyCount))
     int(na)
 
@@ -275,10 +285,13 @@ var VP.ProfileStyle profileStyle = VP.ProfileStyle.new(
     outsideValueAreaTransparency = i_outTransparency,
     pocColor                     = i_pocColor,                   pocWidth             = i_pocWidth.lineSize(),
     pocStyle                     = i_pocStyle.lineStyle(),       pocTextColor         = i_pocTextColor,
-    pocTextSize                  = i_pocTextSize.textSize(),
+    pocTextSize                  = i_pocTextSize.textSize(),     pocLabelPrefix       = i_pocPrefix,
+    showPocDate                  = i_showPocDate,
     valueAreaColor               = i_valueAreaColor,             valueAreaWidth       = i_valueAreaWidth.lineSize(),
     valueAreaStyle               = i_valueAreaStyle.lineStyle(), valueAreaTextColor   = i_valueAreaTextColor,
-    valueAreaTextSize            = i_valueAreaTextSize.textSize()
+    valueAreaTextSize            = i_valueAreaTextSize.textSize(), vahLabelPrefix     = i_vahPrefix,
+    valLabelPrefix               = i_valPrefix,                  showValueAreaDate    = i_showVaDate,
+    dateFormat                   = i_dateFormat
 )
 
 var VP.ProfileConfig profileConfig = VP.ProfileConfig.new(
@@ -302,9 +315,12 @@ var VP.ProfileConfig profileConfig = VP.ProfileConfig.new(
 bool useIntrabar = not timeframe.isseconds
 profileState := VP.update(profileState, profileConfig, useIntrabar, ltfHighs, ltfLows, ltfCloses, ltfVolumes)
 [mostRecentPoc, mostRecentValueAreaHigh, mostRecentValueAreaLow] = VP.getMostRecentLevels(profileState)
+[mostRecentPocVol, mostRecentPocBuyVol, mostRecentPocSellVol]   = VP.getMostRecentPocVolumes(profileState)
 plot(mostRecentPoc, "Most Recent POC", display = display.data_window, format = format.price, editable = false)
 plot(mostRecentValueAreaHigh, "Most Recent Value Area High", display = display.data_window, format = format.price, editable = false)
 plot(mostRecentValueAreaLow, "Most Recent Value Area Low", display = display.data_window, format = format.price, editable = false)
+plot(mostRecentPocBuyVol, "Most Recent POC Buy Volume", display = display.data_window, format = format.volume, editable = false)
+plot(mostRecentPocSellVol, "Most Recent POC Sell Volume", display = display.data_window, format = format.volume, editable = false)
 
 // #endregion Central Orchestration
 

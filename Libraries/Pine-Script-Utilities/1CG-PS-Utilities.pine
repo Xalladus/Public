@@ -1,0 +1,1677 @@
+//@version=6
+
+//+-------------------------------------------------------+
+//                       INFORMATION                      |
+//+-------------------------------------------------------+
+// #region Information
+
+// UtilityLibrary1CG
+//
+// Shared foundation layer for charting scripts on any asset class.
+//
+//   1. Inputs and style    - enums for input.enum() plus converters to Pine constants
+//   2. Symbol and units    - asset class detection, tick/pip/price math, risk sizing
+//   3. Time and sessions   - timezones, time tokens, observed-gap handling, session descriptors
+//                            with native timezones, and session lifecycle state
+//   4. Drawing support     - batched property writes, object pools, chart.point construction
+//
+// Boundaries:
+//   - No drawing object is ever created here. Update methods mutate objects the host owns.
+//   - No inputs are gathered here.
+//   - Every duration in the public API is milliseconds.
+//   - Every intraday time token in the public API is a four character "HHMM" string.
+//   - Every SessionInfo carries the IANA timezone it is defined in.
+
+// #endregion Information
+
+//@description Cross-asset utility layer for input enums, symbol unit conversion, risk sizing, drawing support, observed market-gap handling, and session lifecycle state.
+library("UtilityLibrary1CG", overlay = true)
+
+//+-------------------------------------------------------+
+//                           UDT'S                        |
+//+-------------------------------------------------------+
+// #region UDT's
+
+// #region Exported Enums *********************************
+
+// @enum    Timezones           Selectable timezones. Dropdown labels include the UTC offset.
+// @field   exch                Resolves to the chart symbol's exchange timezone.
+export enum Timezones
+    utc  = "UTC"
+    exch = "Brokers/Exchange"
+    lon  = "Europe/London(+0/+1)"
+    ber  = "Europe/Berlin(+1/+2)"
+    jnb  = "Africa/Johannesburg(+2)"
+    nbo  = "Africa/Nairobi(+3)"
+    ath  = "Europe/Athens(+2/+3)"
+    cai  = "Africa/Cairo(+2/+3)"
+    msk  = "Europe/Moscow(+3)"
+    ruh  = "Asia/Riyadh(+3)"
+    doha = "Asia/Qatar(+3)"
+    dxb  = "Asia/Dubai(+4)"
+    bom  = "Asia/Kolkata(+5.5)"
+    rgn  = "Asia/Yangon(+6.5)"
+    bkk  = "Asia/Bangkok(+7)"
+    hkg  = "Asia/Hong_Kong(+8)"
+    bjs  = "Asia/Shanghai(+8)"
+    sgp  = "Asia/Singapore(+8)"
+    sel  = "Asia/Seoul(+9)"
+    tyo  = "Asia/Tokyo(+9)"
+    adl  = "Australia/Adelaide(+9.5/+10.5)"
+    drw  = "Australia/Darwin(+9.5)"
+    syd  = "Australia/Sydney(+10/+11)"
+    lhi  = "Australia/Lord_Howe(+10.5/+11)"
+    vvo  = "Asia/Vladivostok(+10)"
+    nou  = "Pacific/Noumea(+11)"
+    akl  = "Pacific/Auckland(+12/+13)"
+    tonu = "Pacific/Tongatapu(+13)"
+    kir  = "Pacific/Kiritimati(+14)"
+    ppgo = "Pacific/Pago_Pago(-11)"
+    adk  = "America/Adak(-10/-9)"
+    hnl  = "Pacific/Honolulu(-10)"
+    anc  = "America/Anchorage(-9/-8)"
+    gam  = "Pacific/Gambier(-9)"
+    yvr  = "America/Vancouver(-8/-7)"
+    lax  = "America/Los_Angeles(-8/-7)"
+    pit  = "Pacific/Pitcairn(-8)"
+    den  = "America/Denver(-7/-6)"
+    phx  = "America/Phoenix(-7)"
+    edm  = "America/Edmonton(-7/-6)"
+    chi  = "America/Chicago(-6/-5)"
+    mex  = "America/Mexico_City(-6)"
+    win  = "America/Winnipeg(-6/-5)"
+    bz   = "America/Belize(-6)"
+    ny   = "America/New_York(-5/-4)"
+    tor  = "America/Toronto(-5/-4)"
+    lim  = "America/Lima(-5)"
+    bog  = "America/Bogota(-5)"
+    ccs  = "America/Caracas(-4)"
+    scl  = "America/Santiago(-4/-3)"
+    lpb  = "America/La_Paz(-4)"
+    sp   = "America/Sao_Paulo(-3)"
+    bsb  = "America/Araguaina(-3)"
+    eze  = "America/Argentina/Buenos_Aires(-3)"
+    yyt  = "America/St_Johns(-3.5/-2.5)"
+    nor  = "America/Noronha(-2)"
+    sg   = "Atlantic/South_Georgia(-2)"
+
+// @enum    Hours               Two-digit 24-hour values for hour dropdowns.
+export enum Hours
+    h0  = "00"
+    h1  = "01"
+    h2  = "02"
+    h3  = "03"
+    h4  = "04"
+    h5  = "05"
+    h6  = "06"
+    h7  = "07"
+    h8  = "08"
+    h9  = "09"
+    h10 = "10"
+    h11 = "11"
+    h12 = "12"
+    h13 = "13"
+    h14 = "14"
+    h15 = "15"
+    h16 = "16"
+    h17 = "17"
+    h18 = "18"
+    h19 = "19"
+    h20 = "20"
+    h21 = "21"
+    h22 = "22"
+    h23 = "23"
+
+// @enum    Minutes             Two-digit minute values for minute dropdowns.
+export enum Minutes
+    m0  = "00"
+    m1  = "01"
+    m2  = "02"
+    m3  = "03"
+    m4  = "04"
+    m5  = "05"
+    m6  = "06"
+    m7  = "07"
+    m8  = "08"
+    m9  = "09"
+    m10 = "10"
+    m11 = "11"
+    m12 = "12"
+    m13 = "13"
+    m14 = "14"
+    m15 = "15"
+    m16 = "16"
+    m17 = "17"
+    m18 = "18"
+    m19 = "19"
+    m20 = "20"
+    m21 = "21"
+    m22 = "22"
+    m23 = "23"
+    m24 = "24"
+    m25 = "25"
+    m26 = "26"
+    m27 = "27"
+    m28 = "28"
+    m29 = "29"
+    m30 = "30"
+    m31 = "31"
+    m32 = "32"
+    m33 = "33"
+    m34 = "34"
+    m35 = "35"
+    m36 = "36"
+    m37 = "37"
+    m38 = "38"
+    m39 = "39"
+    m40 = "40"
+    m41 = "41"
+    m42 = "42"
+    m43 = "43"
+    m44 = "44"
+    m45 = "45"
+    m46 = "46"
+    m47 = "47"
+    m48 = "48"
+    m49 = "49"
+    m50 = "50"
+    m51 = "51"
+    m52 = "52"
+    m53 = "53"
+    m54 = "54"
+    m55 = "55"
+    m56 = "56"
+    m57 = "57"
+    m58 = "58"
+    m59 = "59"
+
+// @enum    QuarterHours        Quarter-hour slots for single-dropdown time selection.
+export enum QuarterHours
+    t0000 = "00:00"
+    t0015 = "00:15"
+    t0030 = "00:30"
+    t0045 = "00:45"
+    t0100 = "01:00"
+    t0115 = "01:15"
+    t0130 = "01:30"
+    t0145 = "01:45"
+    t0200 = "02:00"
+    t0215 = "02:15"
+    t0230 = "02:30"
+    t0245 = "02:45"
+    t0300 = "03:00"
+    t0315 = "03:15"
+    t0330 = "03:30"
+    t0345 = "03:45"
+    t0400 = "04:00"
+    t0415 = "04:15"
+    t0430 = "04:30"
+    t0445 = "04:45"
+    t0500 = "05:00"
+    t0515 = "05:15"
+    t0530 = "05:30"
+    t0545 = "05:45"
+    t0600 = "06:00"
+    t0615 = "06:15"
+    t0630 = "06:30"
+    t0645 = "06:45"
+    t0700 = "07:00"
+    t0715 = "07:15"
+    t0730 = "07:30"
+    t0745 = "07:45"
+    t0800 = "08:00"
+    t0815 = "08:15"
+    t0830 = "08:30"
+    t0845 = "08:45"
+    t0900 = "09:00"
+    t0915 = "09:15"
+    t0930 = "09:30"
+    t0945 = "09:45"
+    t1000 = "10:00"
+    t1015 = "10:15"
+    t1030 = "10:30"
+    t1045 = "10:45"
+    t1100 = "11:00"
+    t1115 = "11:15"
+    t1130 = "11:30"
+    t1145 = "11:45"
+    t1200 = "12:00"
+    t1215 = "12:15"
+    t1230 = "12:30"
+    t1245 = "12:45"
+    t1300 = "13:00"
+    t1315 = "13:15"
+    t1330 = "13:30"
+    t1345 = "13:45"
+    t1400 = "14:00"
+    t1415 = "14:15"
+    t1430 = "14:30"
+    t1445 = "14:45"
+    t1500 = "15:00"
+    t1515 = "15:15"
+    t1530 = "15:30"
+    t1545 = "15:45"
+    t1600 = "16:00"
+    t1615 = "16:15"
+    t1630 = "16:30"
+    t1645 = "16:45"
+    t1700 = "17:00"
+    t1715 = "17:15"
+    t1730 = "17:30"
+    t1745 = "17:45"
+    t1800 = "18:00"
+    t1815 = "18:15"
+    t1830 = "18:30"
+    t1845 = "18:45"
+    t1900 = "19:00"
+    t1915 = "19:15"
+    t1930 = "19:30"
+    t1945 = "19:45"
+    t2000 = "20:00"
+    t2015 = "20:15"
+    t2030 = "20:30"
+    t2045 = "20:45"
+    t2100 = "21:00"
+    t2115 = "21:15"
+    t2130 = "21:30"
+    t2145 = "21:45"
+    t2200 = "22:00"
+    t2215 = "22:15"
+    t2230 = "22:30"
+    t2245 = "22:45"
+    t2300 = "23:00"
+    t2315 = "23:15"
+    t2330 = "23:30"
+    t2345 = "23:45"
+
+// @enum    Duration            Named time spans. Convert with durationMs().
+export enum Duration
+    Minute      = "Minute"
+    QuarterHour = "15 Minutes"
+    HalfHour    = "30 Minutes"
+    Hour        = "Hour"
+    FourHours   = "4 Hours"
+    EightHours  = "8 Hours"
+    TwelveHours = "12 Hours"
+    Day         = "Day"
+    Week        = "Week"
+
+// @enum    AssetClass          Normalized symbol categories resolved from syminfo.type.
+export enum AssetClass
+    Forex    = "Forex"
+    Crypto   = "Crypto"
+    Futures  = "Futures"
+    Stock    = "Stock"
+    Index    = "Index"
+    CFD      = "CFD"
+    Fund     = "Fund"
+    Bond     = "Bond"
+    Economic = "Economic"
+    Other    = "Other"
+
+// @enum    LineStyle           Line style selection for lines and box borders.
+export enum LineStyle
+    solid  = "Solid (─)"
+    dotted = "Dotted (┈)"
+    dashed = "Dashed (╌)"
+    lArrow = "Left Arrow (<─)"
+    rArrow = "Right Arrow (─>)"
+    bArrow = "Both Arrows (<─>)"
+
+// @enum    LineSize            Line width selection in pixels.
+export enum LineSize
+    thin   = "1px (thin)"
+    normal = "2px (normal)"
+    heavy  = "3px (heavy)"
+    thick  = "4px (thick)"
+    wide   = "5px (wide)"
+
+// @enum    TextSize            Text size selection for labels, boxes, and tables.
+export enum TextSize
+    auto   = "Auto"
+    tiny   = "Tiny"
+    small  = "Small"
+    normal = "Normal"
+    large  = "Large"
+    huge   = "Huge"
+
+// @enum    HorizontalAlign     Horizontal text alignment selection.
+export enum HorizontalAlign
+    left   = "Left"
+    center = "Center"
+    right  = "Right"
+
+// @enum    VerticalAlign       Vertical text alignment selection.
+export enum VerticalAlign
+    top    = "Top"
+    center = "Center"
+    bottom = "Bottom"
+
+// @enum    LineExtend          Line extension selection.
+export enum LineExtend
+    none  = "None"
+    right = "Right"
+    left  = "Left"
+    both  = "Both"
+
+// @enum    LabelStyle          Label style selection.
+export enum LabelStyle
+    center     = "Center"
+    down       = "Down"
+    left       = "Left"
+    right      = "Right"
+    up         = "Up"
+    lowLeft    = "Low Left"
+    lowRight   = "Low Right"
+    upperLeft  = "Upper Left"
+    upperRight = "Upper Right"
+
+// @enum    SessionPreset       Major regional and exchange-wide trading windows. Each preset is defined in its native timezone so DST resolves automatically.
+// @field   FxSydney            Australia/Sydney 0700-1600.
+// @field   FxTokyo             Asia/Tokyo 0900-1800.
+// @field   FxLondon            Europe/London 0800-1700.
+// @field   FxNewYork           America/New_York 0800-1700.
+// @field   EqUnitedStates      America/New_York 0930-1600.
+// @field   EqUnitedKingdom     Europe/London 0800-1630.
+// @field   EqGermany           Europe/Berlin 0900-1730.
+// @field   EqJapan             Asia/Tokyo 0900-1530, represented as a continuous open-to-close envelope.
+// @field   EqHongKong          Asia/Hong_Kong 0930-1600, represented as a continuous open-to-close envelope.
+// @field   EqIndia             Asia/Kolkata 0915-1530.
+// @field   EqAustralia         Australia/Sydney 1000-1600.
+// @field   FutCmeGlobex        America/Chicago 1700-1600.
+// @field   FutCmeEquityDay     America/Chicago 0830-1515.
+// @field   FutEurexCore        Europe/Berlin 0800-2200.
+// @field   DailyFxClose        America/New_York 1700-1700.
+// @field   DailyUtc            UTC 0000-0000.
+// @field   DailyExchange       Exchange timezone 0000-0000.
+// @field   DailyNewYork        America/New_York 0000-0000.
+// @field   Custom              Uses SessionConfig.customSession, customLabel, and timezone.
+export enum SessionPreset
+    FxSydney        = "FX: Sydney (0700-1600 Sydney)"
+    FxTokyo         = "FX: Tokyo (0900-1800 Tokyo)"
+    FxLondon        = "FX: London (0800-1700 London)"
+    FxNewYork       = "FX: New York (0800-1700 New York)"
+    EqUnitedStates  = "Equities: US RTH (0930-1600 New York)"
+    EqUnitedKingdom = "Equities: UK LSE (0800-1630 London)"
+    EqGermany       = "Equities: Germany Xetra (0900-1730 Berlin)"
+    EqJapan         = "Equities: Japan TSE (0900-1530 Tokyo)"
+    EqHongKong      = "Equities: Hong Kong HKEX (0930-1600 Hong Kong)"
+    EqIndia         = "Equities: India NSE (0915-1530 Kolkata)"
+    EqAustralia     = "Equities: Australia ASX (1000-1600 Sydney)"
+    FutCmeGlobex    = "Futures: CME Globex (1700-1600 Chicago)"
+    FutCmeEquityDay = "Futures: CME Equity Day (0830-1515 Chicago)"
+    FutEurexCore    = "Futures: Eurex Core (0800-2200 Berlin)"
+    DailyFxClose    = "Daily: FX Close (1700-1700 New York)"
+    DailyUtc        = "Daily: UTC (0000-0000 UTC)"
+    DailyExchange   = "Daily: Exchange (0000-0000 Exchange)"
+    DailyNewYork    = "Daily: New York (0000-0000 New York)"
+    Custom          = "Custom"
+
+// @enum    SessionAnchor       Controls where session high and low line anchors begin.
+// @field   SessionEnd          Anchor at the session close. While active, use the current chart bar.
+// @field   SessionOpen         Anchor at the session open timestamp.
+// @field   ExtremeTime         Anchor at the timestamp where the extreme was made.
+export enum SessionAnchor
+    SessionEnd  = "Session End"
+    SessionOpen = "Session Open"
+    ExtremeTime = "Extreme Time"
+
+// #endregion Exported Enums
+
+// #region Exported UDTs **********************************
+
+// @type    IntrabarScan                Aggregated one-minute data for a time range inside the current bar.
+// @field   openPrice   (float)         First one-minute open inside the range.
+// @field   highPrice   (float)         Highest one-minute high inside the range, seeded by the caller.
+// @field   lowPrice    (float)         Lowest one-minute low inside the range, seeded by the caller.
+// @field   closePrice  (float)         Last one-minute close inside the range.
+// @field   highTime    (int)           Stamp time written when a new high was found.
+// @field   lowTime     (int)           Stamp time written when a new low was found.
+// @field   hasData     (bool)          True when at least one one-minute bar fell inside the range.
+export type IntrabarScan
+    float openPrice  = na
+    float highPrice  = na
+    float lowPrice   = na
+    float closePrice = na
+    int   highTime   = na
+    int   lowTime    = na
+    bool  hasData    = false
+
+// @type    IntrabarData                Shared one-minute arrays for the current chart bar.
+// @field   times       (array<int>)     One-minute bar opening timestamps.
+// @field   opens       (array<float>)   One-minute opening prices.
+// @field   highs       (array<float>)   One-minute high prices.
+// @field   lows        (array<float>)   One-minute low prices.
+// @field   closes      (array<float>)   One-minute closing prices.
+export type IntrabarData
+    array<int>   times
+    array<float> opens
+    array<float> highs
+    array<float> lows
+    array<float> closes
+
+// @type    SessionInfo                 Static session descriptor including the timezone it is defined in.
+// @field   labelText   (string)        Display label for the session.
+// @field   session     (string)        Session string in "HHMM-HHMM" format.
+// @field   timezone    (string)        IANA timezone the session times are expressed in.
+// @field   openHour    (int)           Session open hour.
+// @field   openMinute  (int)           Session open minute.
+// @field   closeHour   (int)           Session close hour.
+// @field   closeMinute (int)           Session close minute.
+// @field   durationMs  (int)           Nominal session length in milliseconds. Calendar boundaries are built separately so DST remains correct.
+// @field   isDaily     (bool)          True when open and close are identical, meaning a 24-hour session.
+export type SessionInfo
+    string labelText   = na
+    string session     = na
+    string timezone    = na
+    int    openHour    = na
+    int    openMinute  = na
+    int    closeHour   = na
+    int    closeMinute = na
+    int    durationMs  = na
+    bool   isDaily     = false
+
+// @type    SessionState                Lifecycle state for one tracked session instance.
+// @field   openPrice         (float)   First available qualifying session open. na until session data is available.
+// @field   openTime          (int)     UNIX time when the session opened.
+// @field   highPrice         (float)   Current session high.
+// @field   highTime          (int)     UNIX time when the session high was made.
+// @field   lowPrice          (float)   Current session low.
+// @field   lowTime           (int)     UNIX time when the session low was made.
+// @field   closePrice        (float)   Latest session close, finalized when the session ends.
+// @field   closeTime         (int)     Session close boundary, extended across an observed closure that interrupted the session.
+// @field   labelText         (string)  Resolved session label text.
+// @field   sessStartTime     (int)     Session start UNIX time.
+// @field   sessEndTime       (int)     Inclusive session end UNIX time. Interrupted sessions resume after observed long gaps.
+// @field   highLineStartTime (int)     High-line anchor UNIX time.
+// @field   lowLineStartTime  (int)     Low-line anchor UNIX time.
+// @field   lineEndTime       (int)     UNIX time when the line lifecycle ends. Persists intrabar so first-update gap adjustments survive rollback.
+// @field   sessStartBarTime  (int)     Bar time of the chart bar containing the session start.
+// @field   sessEndBarTime    (int)     Bar time of the chart bar containing the session end.
+export type SessionState
+    float  openPrice         = na
+    int    openTime          = na
+    float  highPrice         = na
+    int    highTime          = na
+    float  lowPrice          = na
+    int    lowTime           = na
+    float  closePrice        = na
+    varip int closeTime      = na
+    string labelText         = na
+    int    sessStartTime     = na
+    varip int sessEndTime    = na
+    int    highLineStartTime = na
+    int    lowLineStartTime  = na
+    varip int lineEndTime    = na
+    int    sessStartBarTime  = na
+    int    sessEndBarTime    = na
+
+// @type    SessionConfig                      Consumer configuration for the session engine.
+// @field   isEnabled       (bool)             Master processing toggle.
+// @field   preset          (SessionPreset)    Preset session, or SessionPreset.Custom.
+// @field   customLabel     (string)           Label used when preset is Custom.
+// @field   customSession   (string)           Session string used when preset is Custom.
+// @field   timezone        (string)           IANA timezone for a Custom session. na uses the exchange timezone. Presets ignore this field.
+// @field   anchor          (SessionAnchor)    Controls high and low line anchor timestamps.
+// @field   lineEndHour     (int)              Hour at which the line lifecycle ends. na ends at session close.
+// @field   lineEndMinute   (int)              Minute at which the line lifecycle ends. Treated as 0 when na.
+// @field   lineEndTimezone (string)           Timezone for lineEndHour and lineEndMinute. na uses the session timezone.
+// @field   addExtraLineDay (bool)             Extends the line lifecycle by one additional day.
+export type SessionConfig
+    bool          isEnabled       = true
+    SessionPreset preset          = SessionPreset.Custom
+    string        customLabel     = na
+    string        customSession   = na
+    string        timezone        = na
+    SessionAnchor anchor          = SessionAnchor.SessionEnd
+    int           lineEndHour     = na
+    int           lineEndMinute   = na
+    string        lineEndTimezone = na
+    bool          addExtraLineDay = false
+
+// @type    TradeWindowPlan                 Planning output for drawing trade-window boundaries.
+// @field   startTime    (int)              Window start UNIX time.
+// @field   endTime      (int)              Scheduled window end UNIX time.
+// @field   isInWindow   (bool)             True when the current bar is inside the window.
+// @field   alreadyDrawn (bool)             True when this window start was already drawn by the host.
+// @field   shouldDraw   (bool)             True when the host should draw the window boundaries now.
+export type TradeWindowPlan
+    int  startTime    = na
+    int  endTime      = na
+    bool isInWindow   = false
+    bool alreadyDrawn = false
+    bool shouldDraw   = false
+
+// #endregion Exported UDTs
+
+// #endregion UDT's
+
+//+-------------------------------------------------------+
+//                         METHODS                        |
+//+-------------------------------------------------------+
+// #region Methods
+
+// #region Enum Conversion Methods ************************
+
+// Call these on input variables. Pine does not allow a method call chained directly onto an enum member.
+
+// @function toTimezone                         - Resolves a timezone selection into a string usable by time() and timestamp().
+// @param    this          (Timezones)          - Timezone enum value.
+// @returns                (string)             - IANA timezone name, or the exchange timezone for Timezones.exch.
+export method toTimezone(Timezones this) =>
+    string dropdownLabel = str.tostring(this)
+    (this == Timezones.exch ? syminfo.timezone : array.get(str.split(dropdownLabel, "("), 0))
+
+// @function toHourInt                          - Converts an hour selection into an integer hour.
+// @param    this          (Hours)              - Hour enum value.
+// @returns                (int)                - Hour in 24-hour format.
+export method toHourInt(Hours this) =>
+    int(str.tonumber(str.tostring(this)))
+
+// @function toMinuteInt                        - Converts a minute selection into an integer minute.
+// @param    this          (Minutes)            - Minute enum value.
+// @returns                (int)                - Minute value from 0 to 59.
+export method toMinuteInt(Minutes this) =>
+    int(str.tonumber(str.tostring(this)))
+
+// @function toHhmm                             - Converts a quarter-hour selection into a compact time token.
+// @param    this          (QuarterHours)       - Quarter-hour enum value.
+// @returns                (string)             - Four-character time token. Example: "1430".
+export method toHhmm(QuarterHours this) =>
+    string dropdownLabel = str.tostring(this)
+    str.substring(dropdownLabel, 0, 2) + str.substring(dropdownLabel, 3, 5)
+
+// @function toLineStyle                        - Converts a line style selection into a Pine line style constant.
+// @param    this          (LineStyle)          - Line style enum value.
+// @returns                (string)             - Pine line style constant.
+export method toLineStyle(LineStyle this) =>
+    switch this
+        LineStyle.solid  => line.style_solid
+        LineStyle.dotted => line.style_dotted
+        LineStyle.dashed => line.style_dashed
+        LineStyle.lArrow => line.style_arrow_left
+        LineStyle.rArrow => line.style_arrow_right
+        LineStyle.bArrow => line.style_arrow_both
+        =>                  line.style_solid
+
+// @function toLineWidth                        - Converts a line size selection into a pixel width.
+// @param    this          (LineSize)           - Line size enum value.
+// @returns                (int)                - Width in pixels.
+export method toLineWidth(LineSize this) =>
+    switch this
+        LineSize.thin   => 1
+        LineSize.normal => 2
+        LineSize.heavy  => 3
+        LineSize.thick  => 4
+        LineSize.wide   => 5
+        =>                 2
+
+// @function toTextSizeString                   - Converts a text size selection into a Pine size constant.
+// @param    this          (TextSize)           - Text size enum value.
+// @returns                (string)             - Pine size constant.
+export method toTextSizeString(TextSize this) =>
+    switch this
+        TextSize.auto   => size.auto
+        TextSize.tiny   => size.tiny
+        TextSize.small  => size.small
+        TextSize.normal => size.normal
+        TextSize.large  => size.large
+        TextSize.huge   => size.huge
+        =>                 size.normal
+
+// @function toHorizontalAlign                  - Converts a horizontal alignment selection into a Pine text align constant.
+// @param    this          (HorizontalAlign)    - Horizontal alignment enum value.
+// @returns                (string)             - Pine text align constant.
+export method toHorizontalAlign(HorizontalAlign this) =>
+    switch this
+        HorizontalAlign.left   => text.align_left
+        HorizontalAlign.center => text.align_center
+        HorizontalAlign.right  => text.align_right
+        =>                        text.align_center
+
+// @function toVerticalAlign                    - Converts a vertical alignment selection into a Pine text align constant.
+// @param    this          (VerticalAlign)      - Vertical alignment enum value.
+// @returns                (string)             - Pine text align constant.
+export method toVerticalAlign(VerticalAlign this) =>
+    switch this
+        VerticalAlign.top    => text.align_top
+        VerticalAlign.center => text.align_center
+        VerticalAlign.bottom => text.align_bottom
+        =>                      text.align_center
+
+// @function toLineExtend                       - Converts a line extension selection into a Pine extend constant.
+// @param    this          (LineExtend)         - Line extension enum value.
+// @returns                (string)             - Pine extend constant.
+export method toLineExtend(LineExtend this) =>
+    switch this
+        LineExtend.none  => extend.none
+        LineExtend.right => extend.right
+        LineExtend.left  => extend.left
+        LineExtend.both  => extend.both
+        =>                  extend.none
+
+// @function toLabelStyle                       - Converts a label style selection into a Pine label style constant.
+// @param    this          (LabelStyle)         - Label style enum value.
+// @returns                (string)             - Pine label style constant.
+export method toLabelStyle(LabelStyle this) =>
+    switch this
+        LabelStyle.center     => label.style_label_center
+        LabelStyle.down       => label.style_label_down
+        LabelStyle.left       => label.style_label_left
+        LabelStyle.right      => label.style_label_right
+        LabelStyle.up         => label.style_label_up
+        LabelStyle.lowLeft    => label.style_label_lower_left
+        LabelStyle.lowRight   => label.style_label_lower_right
+        LabelStyle.upperLeft  => label.style_label_upper_left
+        LabelStyle.upperRight => label.style_label_upper_right
+        =>                       label.style_label_center
+
+// #endregion Enum Conversion Methods
+
+// #region Drawing Object Methods *************************
+
+// These methods never create drawing objects and never decide whether to draw.
+// Every optional argument uses na to mean "leave this property unchanged".
+
+// @function updateLine                         - Updates any combination of line properties in one call.
+// @param    this          (line)               - Line being updated.
+// @param    _x1           (int)                - New first point x value.
+// @param    _y1           (float)              - New first point price.
+// @param    _x2           (int)                - New second point x value.
+// @param    _y2           (float)              - New second point price.
+// @param    _extend       (string)             - New extend constant.
+// @param    _color        (color)              - New line color.
+// @param    _style        (string)             - New line style constant.
+// @param    _width        (int)                - New line width in pixels.
+// @returns                (line)               - The same line, to allow chaining.
+export method updateLine(line this, int _x1 = na, float _y1 = na, int _x2 = na, float _y2 = na,
+     string _extend = na, color _color = na, string _style = na, int _width = na) =>
+    if not na(_x1)
+        line.set_x1(this, _x1)
+    if not na(_y1)
+        line.set_y1(this, _y1)
+    if not na(_x2)
+        line.set_x2(this, _x2)
+    if not na(_y2)
+        line.set_y2(this, _y2)
+    if not na(_extend)
+        line.set_extend(this, _extend)
+    if not na(_color)
+        line.set_color(this, _color)
+    if not na(_style)
+        line.set_style(this, _style)
+    if not na(_width)
+        line.set_width(this, _width)
+    this
+
+// @function updateLabel                        - Updates any combination of label properties in one call.
+// @param    this          (label)              - Label being updated.
+// @param    _x            (int)                - New x value.
+// @param    _y            (float)              - New price, used when yloc is yloc.price.
+// @param    _text         (string)             - New label text.
+// @param    _yloc         (string)             - New yloc constant.
+// @param    _color        (color)              - New label background color.
+// @param    _style        (string)             - New label style constant.
+// @param    _textColor    (color)              - New text color.
+// @param    _textSize     (string)             - New text size constant.
+// @param    _textAlign    (string)             - New text alignment constant.
+// @param    _tooltip      (string)             - New tooltip text.
+// @param    _fontFamily   (string)             - New font family constant.
+// @returns                (label)              - The same label, to allow chaining.
+export method updateLabel(label this, int _x = na, float _y = na, string _text = na, string _yloc = na,
+     color _color = na, string _style = na, color _textColor = na, string _textSize = na,
+     string _textAlign = na, string _tooltip = na, string _fontFamily = na) =>
+    if not na(_x)
+        label.set_x(this, _x)
+    if not na(_y)
+        label.set_y(this, _y)
+    if not na(_text)
+        label.set_text(this, _text)
+    if not na(_yloc)
+        label.set_yloc(this, _yloc)
+    if not na(_color)
+        label.set_color(this, _color)
+    if not na(_style)
+        label.set_style(this, _style)
+    if not na(_textColor)
+        label.set_textcolor(this, _textColor)
+    if not na(_textSize)
+        label.set_size(this, _textSize)
+    if not na(_textAlign)
+        label.set_textalign(this, _textAlign)
+    if not na(_tooltip)
+        label.set_tooltip(this, _tooltip)
+    if not na(_fontFamily)
+        label.set_text_font_family(this, _fontFamily)
+    this
+
+// @function updateBox                          - Updates any combination of box properties in one call.
+// @param    this          (box)                - Box being updated.
+// @param    _left         (int)                - New left edge x value.
+// @param    _top          (float)              - New top edge price.
+// @param    _right        (int)                - New right edge x value.
+// @param    _bottom       (float)              - New bottom edge price.
+// @param    _borderColor  (color)              - New border color.
+// @param    _borderWidth  (int)                - New border width in pixels.
+// @param    _borderStyle  (string)             - New border style constant.
+// @param    _extend       (string)             - New extend constant.
+// @param    _bgColor      (color)              - New background color.
+// @param    _text         (string)             - New box text.
+// @param    _textSize     (string)             - New text size constant.
+// @param    _textColor    (color)              - New text color.
+// @param    _textHAlign   (string)             - New horizontal text alignment constant.
+// @param    _textVAlign   (string)             - New vertical text alignment constant.
+// @param    _textWrap     (string)             - New text wrap constant.
+// @param    _fontFamily   (string)             - New font family constant.
+// @returns                (box)                - The same box, to allow chaining.
+export method updateBox(box this, int _left = na, float _top = na, int _right = na, float _bottom = na,
+     color _borderColor = na, int _borderWidth = na, string _borderStyle = na, string _extend = na,
+     color _bgColor = na, string _text = na, string _textSize = na, color _textColor = na,
+     string _textHAlign = na, string _textVAlign = na, string _textWrap = na, string _fontFamily = na) =>
+    if not na(_left)
+        box.set_left(this, _left)
+    if not na(_top)
+        box.set_top(this, _top)
+    if not na(_right)
+        box.set_right(this, _right)
+    if not na(_bottom)
+        box.set_bottom(this, _bottom)
+    if not na(_borderColor)
+        box.set_border_color(this, _borderColor)
+    if not na(_borderWidth)
+        box.set_border_width(this, _borderWidth)
+    if not na(_borderStyle)
+        box.set_border_style(this, _borderStyle)
+    if not na(_extend)
+        box.set_extend(this, _extend)
+    if not na(_bgColor)
+        box.set_bgcolor(this, _bgColor)
+    if not na(_text)
+        box.set_text(this, _text)
+    if not na(_textSize)
+        box.set_text_size(this, _textSize)
+    if not na(_textColor)
+        box.set_text_color(this, _textColor)
+    if not na(_textHAlign)
+        box.set_text_halign(this, _textHAlign)
+    if not na(_textVAlign)
+        box.set_text_valign(this, _textVAlign)
+    if not na(_textWrap)
+        box.set_text_wrap(this, _textWrap)
+    if not na(_fontFamily)
+        box.set_text_font_family(this, _fontFamily)
+    this
+
+// @function updateTableCell                    - Updates any combination of properties on an existing table cell.
+// @param    this          (table)              - Table that already contains the cell.
+// @param    _column       (int)                - Zero-based column index.
+// @param    _row          (int)                - Zero-based row index.
+// @param    _text         (string)             - New cell text.
+// @param    _textColor    (color)              - New text color.
+// @param    _textSize     (string)             - New text size constant.
+// @param    _bgColor      (color)              - New cell background color.
+// @param    _textHAlign   (string)             - New horizontal text alignment constant.
+// @param    _textVAlign   (string)             - New vertical text alignment constant.
+// @param    _tooltip      (string)             - New cell tooltip.
+// @param    _fontFamily   (string)             - New font family constant.
+// @returns                (table)              - The same table, to allow chaining.
+export method updateTableCell(table this, int _column, int _row, string _text = na, color _textColor = na,
+     string _textSize = na, color _bgColor = na, string _textHAlign = na, string _textVAlign = na,
+     string _tooltip = na, string _fontFamily = na) =>
+    if not na(_text)
+        table.cell_set_text(this, _column, _row, _text)
+    if not na(_textColor)
+        table.cell_set_text_color(this, _column, _row, _textColor)
+    if not na(_textSize)
+        table.cell_set_text_size(this, _column, _row, _textSize)
+    if not na(_bgColor)
+        table.cell_set_bgcolor(this, _column, _row, _bgColor)
+    if not na(_textHAlign)
+        table.cell_set_text_halign(this, _column, _row, _textHAlign)
+    if not na(_textVAlign)
+        table.cell_set_text_valign(this, _column, _row, _textVAlign)
+    if not na(_tooltip)
+        table.cell_set_tooltip(this, _column, _row, _tooltip)
+    if not na(_fontFamily)
+        table.cell_set_text_font_family(this, _column, _row, _fontFamily)
+    this
+
+// #endregion Drawing Object Methods
+
+// #endregion Methods
+
+//+-------------------------------------------------------+
+//                     GLOBAL VARIABLES                   |
+//+-------------------------------------------------------+
+// #region Global Variables
+
+// #region Helper Globals *********************************
+
+const int MS_PER_MINUTE   = 60000
+const int MS_PER_HOUR     = 3600000
+const int MS_PER_DAY      = 86400000
+const int MS_PER_WEEK     = 604800000
+const int MINUTES_PER_DAY = 1440
+
+// Forex quotes are priced one decimal finer than a pip on most feeds.
+const int FOREX_TICKS_PER_PIP = 10
+
+// A one-day interruption separates weekends and full-market holidays from normal overnight closures.
+const int LONG_GAP_MIN_MS = MS_PER_DAY
+
+// Day arithmetic is anchored at noon so a DST transition cannot move a date across midnight.
+const int NOON_HOUR = 12
+
+// #endregion Helper Globals
+
+// #endregion Global Variables
+
+//+-------------------------------------------------------+
+//                        FUNCTIONS                       |
+//+-------------------------------------------------------+
+// #region Functions
+
+// #region Shared Helper Functions ************************
+
+padTwoDigits(int _value) =>
+    (_value < 10 ? "0" + str.tostring(_value) : str.tostring(_value))
+
+wallClockTimestamp(int _dayReferenceTime, int _hour, int _minute, string _timezone) =>
+    timestamp(_timezone, year(_dayReferenceTime, _timezone), month(_dayReferenceTime, _timezone),
+         dayofmonth(_dayReferenceTime, _timezone), _hour, _minute)
+
+shiftCalendarDays(int _referenceTime, int _dayCount, string _timezone) =>
+    wallClockTimestamp(_referenceTime, NOON_HOUR, 0, _timezone) + _dayCount * MS_PER_DAY
+
+// #endregion Shared Helper Functions
+
+// #region Symbol And Unit Functions **********************
+
+// @function detectAssetClass                   - Resolves the chart symbol into a normalized asset class.
+// @returns                (AssetClass)         - Normalized asset class for the current symbol.
+export detectAssetClass() =>
+    switch syminfo.type
+        "forex"    => AssetClass.Forex
+        "crypto"   => AssetClass.Crypto
+        "futures"  => AssetClass.Futures
+        "stock"    => AssetClass.Stock
+        "dr"       => AssetClass.Stock
+        "index"    => AssetClass.Index
+        "cfd"      => AssetClass.CFD
+        "fund"     => AssetClass.Fund
+        "bond"     => AssetClass.Bond
+        "economic" => AssetClass.Economic
+        =>            AssetClass.Other
+
+// @function priceDecimals                      - Returns the number of decimal places implied by the symbol tick size.
+// @returns                (int)                - Decimal places, clamped to zero or more.
+export priceDecimals() =>
+    array<string> parts = str.split(str.tostring(syminfo.mintick, format.mintick), ".")
+    (array.size(parts) > 1 ? str.length(array.get(parts, 1)) : 0)
+
+// @function tickValue                          - Returns the money value of one tick for one contract or unit.
+// @returns                (float)              - Tick value in the instrument's quote currency.
+export tickValue() =>
+    syminfo.pointvalue * syminfo.mintick
+
+// @function priceToTicks                       - Converts a price distance into ticks.
+// @param    _priceDistance (float)             - Distance in price units.
+// @returns                 (float)             - Distance in ticks.
+export priceToTicks(float _priceDistance) =>
+    _priceDistance / syminfo.mintick
+
+// @function ticksToPrice                       - Converts a tick distance into price units.
+// @param    _ticks         (float)             - Distance in ticks.
+// @returns                 (float)             - Distance in price units.
+export ticksToPrice(float _ticks) =>
+    _ticks * syminfo.mintick
+
+// @function pipSize                            - Returns the price distance of one pip.
+// @returns                 (float)             - Override when supplied; otherwise ten ticks on forex symbols, one tick elsewhere. Override for feeds without fractional pips.
+// @param    _pipSizeOverride (float) - Optional pip price distance. na uses the default; nonpositive values return na.
+export pipSize(float _pipSizeOverride = na) =>
+    float defaultSize = syminfo.mintick * (syminfo.type == "forex" ? FOREX_TICKS_PER_PIP : 1)
+    (na(_pipSizeOverride) ? defaultSize : (_pipSizeOverride > 0 ? _pipSizeOverride : float(na)))
+
+// @function priceToPips                        - Converts a price distance into pips.
+// @param    _priceDistance (float)             - Distance in price units.
+// @returns                 (float)             - Distance in pips.
+// @param    _pipSizeOverride (float) - Optional pip price distance, passed to pipSize().
+export priceToPips(float _priceDistance, float _pipSizeOverride = na) =>
+    _priceDistance / pipSize(_pipSizeOverride)
+
+// @function pipsToPrice                        - Converts a pip distance into price units.
+// @param    _pips          (float)             - Distance in pips.
+// @returns                 (float)             - Distance in price units.
+// @param    _pipSizeOverride (float) - Optional pip price distance, passed to pipSize().
+export pipsToPrice(float _pips, float _pipSizeOverride = na) =>
+    _pips * pipSize(_pipSizeOverride)
+
+// #endregion Symbol And Unit Functions
+
+// #region Quantity And Notional Functions *********************************
+
+// @function defaultQuantityStep                - Returns a sensible quantity increment for the current asset class.
+// @returns                (float)              - 1.0 for whole-unit markets, 0.01 for crypto. Override per venue when needed.
+export defaultQuantityStep() =>
+    (detectAssetClass() == AssetClass.Crypto ? 0.01 : 1.0)
+
+// @function roundQuantity                      - Rounds a position size down to a tradable increment.
+// @param    _quantity     (float)              - Unrounded position size.
+// @param    _step         (float)              - Quantity increment. Futures and equities use 1.0.
+// @returns                (float)              - Nonnegative quantity rounded down to the increment.
+export roundQuantity(float _quantity, float _step = 1.0) =>
+    float step = (na(_step) or _step <= 0 ? 1.0 : _step)
+    math.max(math.floor(_quantity / step) * step, 0.0)
+
+// @function positionNotional                   - Returns the notional exposure of a position.
+// @param    _quantity     (float)              - Position size in broker units.
+// @param    _price        (float)              - Price used for the valuation.
+// @returns                (float)              - Notional value in the instrument's quote currency.
+export positionNotional(float _quantity, float _price) =>
+    _quantity * _price * syminfo.pointvalue
+
+// #endregion Quantity And Notional Functions
+
+// #region Time Functions *********************************
+
+// @function durationMs                         - Converts a named duration into milliseconds.
+// @param    _duration     (Duration)           - Duration enum value.
+// @returns                (int)                - Length in milliseconds.
+export durationMs(Duration _duration) =>
+    switch _duration
+        Duration.Minute      => MS_PER_MINUTE
+        Duration.QuarterHour => MS_PER_MINUTE * 15
+        Duration.HalfHour    => MS_PER_MINUTE * 30
+        Duration.Hour        => MS_PER_HOUR
+        Duration.FourHours   => MS_PER_HOUR * 4
+        Duration.EightHours  => MS_PER_HOUR * 8
+        Duration.TwelveHours => MS_PER_HOUR * 12
+        Duration.Day         => MS_PER_DAY
+        Duration.Week        => MS_PER_WEEK
+        =>                      int(na)
+
+// @function timezoneOffsetMs                   - Measures the offset between a timezone and UTC on the current chart day.
+// @param    _timezone     (string)             - IANA timezone name.
+// @returns                (int)                - Offset in milliseconds. Negative west of UTC. Divide by 3600000 for hours.
+export timezoneOffsetMs(string _timezone) =>
+    int localMidnight = timestamp(_timezone, year, month, dayofmonth, 0, 0)
+    int utcMidnight   = timestamp("Etc/UTC", year, month, dayofmonth, 0, 0)
+    utcMidnight - localMidnight
+
+// @function hhmmFromParts                      - Combines hour and minute selections into a compact time token.
+// @param    _hour         (Hours)              - Hour enum value.
+// @param    _minute       (Minutes)            - Minute enum value.
+// @returns                (string)             - Four-character time token. Example: "0930".
+export hhmmFromParts(Hours _hour, Minutes _minute) =>
+    str.tostring(_hour) + str.tostring(_minute)
+
+// @function hhmmToParts                        - Splits a compact time token into hour and minute integers.
+// @param    _hhmm         (string)             - Four-character time token.
+// @returns                ([int, int])         - Hour and minute, or [na, na] when the token is invalid.
+export hhmmToParts(string _hhmm) =>
+    bool hasValidDigits = not na(_hhmm) and str.length(_hhmm) == 4
+    if hasValidDigits
+        for index = 0 to 3
+            if not str.contains("0123456789", str.substring(_hhmm, index, index + 1))
+                hasValidDigits := false
+                break
+    float hourValue      = (hasValidDigits ? str.tonumber(str.substring(_hhmm, 0, 2)) : na)
+    float minuteValue    = (hasValidDigits ? str.tonumber(str.substring(_hhmm, 2, 4)) : na)
+    bool  isValid        = (
+        not na(hourValue) and not na(minuteValue)
+    ) and (
+        hourValue >= 0 and hourValue <= 23 and minuteValue >= 0 and minuteValue <= 59
+    )
+    [(isValid ? int(hourValue) : int(na)), (isValid ? int(minuteValue) : int(na))]
+
+// @function hhmmToMinutes                      - Converts a compact time token into minutes from midnight.
+// @param    _hhmm         (string)             - Four-character time token.
+// @returns                (int)                - Minutes from midnight, or na when the token is invalid.
+export hhmmToMinutes(string _hhmm) =>
+    [hourPart, minutePart] = hhmmToParts(_hhmm)
+    (na(hourPart) or na(minutePart) ? int(na) : hourPart * 60 + minutePart)
+
+// @function minutesToHhmm                      - Converts minutes from midnight into a compact time token.
+// @param    _minutesOfDay (int)                - Minutes from midnight. Values outside one day wrap.
+// @returns                (string)             - Four-character time token, or na when the input is na.
+export minutesToHhmm(int _minutesOfDay) =>
+    string result = na
+    if not na(_minutesOfDay)
+        int wrapped = ((_minutesOfDay % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
+        result := padTwoDigits(int(wrapped / 60)) + padTwoDigits(wrapped % 60)
+    result
+
+// @function barDurationMs                      - Returns the length of one chart bar in milliseconds.
+// @returns                (int)                - Bar length in milliseconds.
+export barDurationMs() =>
+    int declaredLength = timeframe.in_seconds() * 1000
+    (na(declaredLength) or declaredLength <= 0 ? time - time[1] : declaredLength)
+
+// @function barDayBoundaryOffsetMs             - Returns the day offset needed when a wall-clock target occurs after local midnight inside this bar.
+// @param    _timezone     (string)             - Timezone whose calendar boundary is tested.
+// @param    _hour         (int)                - Wall-clock target hour.
+// @param    _minute       (int)                - Wall-clock target minute.
+// @returns                (int)                - One nominal day when tomorrow's target occurs inside this bar, otherwise 0.
+// @description The nominal millisecond value is a compatibility token consumed as a calendar-day count by session helpers.
+export barDayBoundaryOffsetMs(string _timezone, int _hour, int _minute) =>
+    int nextDate   = shiftCalendarDays(time, 1, _timezone)
+    int nextTarget = wallClockTimestamp(nextDate, _hour, _minute, _timezone)
+    (nextTarget >= time and nextTarget < time_close ? MS_PER_DAY : 0)
+
+// #endregion Time Functions
+
+// #region Drawing Support Functions **********************
+
+// @function clearDrawings                      - Deletes drawings and empties any combination of supplied drawing pools.
+// @param    lines         (array<line>)        - Optional line pool to clear.
+// @param    labels        (array<label>)       - Optional label pool to clear.
+// @param    boxes         (array<box>)         - Optional box pool to clear.
+// @param    polylines     (array<polyline>)    - Optional polyline pool to clear.
+// @returns                (int)                - Total count of drawings deleted across all supplied pools.
+export clearDrawings(array<line> lines = na, array<label> labels = na,
+     array<box> boxes = na, array<polyline> polylines = na) =>
+    int deletedCount = 0
+    if not na(lines)
+        deletedCount += array.size(lines)
+        for item in lines
+            line.delete(item)
+        array.clear(lines)
+    if not na(labels)
+        deletedCount += array.size(labels)
+        for item in labels
+            label.delete(item)
+        array.clear(labels)
+    if not na(boxes)
+        deletedCount += array.size(boxes)
+        for item in boxes
+            box.delete(item)
+        array.clear(boxes)
+    if not na(polylines)
+        deletedCount += array.size(polylines)
+        for item in polylines
+            polyline.delete(item)
+        array.clear(polylines)
+    deletedCount
+
+// @function trimPool                           - Trims any combination of drawing pools down to a maximum size.
+// @param    maxSize       (int)                - Maximum number of objects to retain in each supplied pool.
+// @param    lines         (array<line>)        - Optional line pool to trim (newest first).
+// @param    labels        (array<label>)       - Optional label pool to trim (newest first).
+// @param    boxes         (array<box>)         - Optional box pool to trim (newest first).
+// @param    polylines     (array<polyline>)    - Optional polyline pool to trim (newest first).
+// @returns                (int)                - Total count of drawings remaining across all supplied pools.
+export trimPool(int maxSize, array<line> lines = na, array<label> labels = na,
+     array<box> boxes = na, array<polyline> polylines = na) =>
+    int limit = math.max(maxSize, 0)
+    int totalRemaining = 0
+    if not na(lines)
+        while array.size(lines) > limit
+            line.delete(array.pop(lines))
+        totalRemaining += array.size(lines)
+    if not na(labels)
+        while array.size(labels) > limit
+            label.delete(array.pop(labels))
+        totalRemaining += array.size(labels)
+    if not na(boxes)
+        while array.size(boxes) > limit
+            box.delete(array.pop(boxes))
+        totalRemaining += array.size(boxes)
+    if not na(polylines)
+        while array.size(polylines) > limit
+            polyline.delete(array.pop(polylines))
+        totalRemaining += array.size(polylines)
+    totalRemaining
+
+// @function toChartPoints                      - Builds a chart.point array for polyline and multi-point drawing calls.
+// @param    _times        (array<int>)         - UNIX times, one per point.
+// @param    _prices       (array<float>)       - Prices, one per point.
+// @returns                (array<chart.point>) - Points built from the shorter of the two input arrays.
+export toChartPoints(array<int> _times, array<float> _prices) =>
+    array<chart.point> points = array.new<chart.point>()
+    int pointCount = math.min(array.size(_times), array.size(_prices))
+    if pointCount > 0
+        for index = 0 to pointCount - 1
+            array.push(points, chart.point.from_time(array.get(_times, index), array.get(_prices, index)))
+    points
+
+// #endregion Drawing Support Functions
+
+// #region Session Parsing Functions **********************
+
+// @function sessionToParts                     - Parses a session string into its hour and minute components.
+// @param    _session      (string)             - Exactly one "HHMM-HHMM" window. Day suffixes and multiple windows are unsupported.
+// @returns                ([int, int, int, int]) - Start hour, start minute, end hour, end minute; all na when invalid.
+export sessionToParts(string _session) =>
+    bool validShape = not na(_session) and str.length(_session) == 9
+    if validShape
+        validShape := str.substring(_session, 4, 5) == "-"
+    [startHour, startMinute] = hhmmToParts(validShape ? str.substring(_session, 0, 4) : string(na))
+    [endHour, endMinute] = hhmmToParts(validShape ? str.substring(_session, 5, 9) : string(na))
+    bool valid = not na(startHour) and not na(startMinute) and not na(endHour) and not na(endMinute)
+    [valid ? startHour : int(na), valid ? startMinute : int(na),
+         valid ? endHour : int(na), valid ? endMinute : int(na)]
+
+// @function sessionDurationMs                  - Calculates the length of a session string in milliseconds.
+// @param    _session      (string)             - Session string in "HHMM-HHMM" format.
+// @returns                (int)                - Session length in milliseconds, or na when invalid. Identical valid start and end times return 24 hours.
+export sessionDurationMs(string _session) =>
+    [startHour, startMinute, endHour, endMinute] = sessionToParts(_session)
+    int result = na
+    if not na(startHour) and not na(endHour)
+        int startOfDayMinutes = startHour * 60 + startMinute
+        int endOfDayMinutes   = endHour * 60 + endMinute
+        if endOfDayMinutes <= startOfDayMinutes
+            endOfDayMinutes += MINUTES_PER_DAY
+        result := (endOfDayMinutes - startOfDayMinutes) * MS_PER_MINUTE
+    result
+
+// #endregion Session Parsing Functions
+
+// #region Observed Market Gap Functions *****************
+
+// @function getObservedLongGap                - Detects a long interruption immediately before the current chart bar.
+// @param    _minimumGapMs (int)               - Smallest qualifying interruption in milliseconds. Defaults to one day.
+// @returns                 ([bool, int, int, int]) - Detection flag, previous bar close, current bar open, and observed duration.
+export getObservedLongGap(int _minimumGapMs = 86400000) =>
+    int  minimumGap = math.max(_minimumGapMs, 1)
+    int  gapStart   = (barstate.isnew and bar_index > 0 ? time_close[1] : int(na))
+    int  gapEnd     = (not na(gapStart) ? time : int(na))
+    int  gapMs      = (not na(gapStart) and gapEnd > gapStart ? gapEnd - gapStart : 0)
+    bool hasLongGap = gapMs >= minimumGap
+    [hasLongGap, gapStart, gapEnd, gapMs]
+
+// @function historyCutoffTime                  - Returns the oldest timestamp a script should process, counted in calendar days.
+// @param    _calendarDays (int)                - Number of calendar days of history to allow.
+// @param    _referenceTime (int)               - Newest chart timestamp used as the history anchor.
+// @returns                (int)                - Cutoff UNIX timestamp.
+export historyCutoffTime(int _calendarDays, int _referenceTime) =>
+    int dayReference = shiftCalendarDays(
+         _referenceTime, -math.max(_calendarDays, 0), syminfo.timezone)
+    wallClockTimestamp(
+         dayReference, hour(_referenceTime, syminfo.timezone),
+         minute(_referenceTime, syminfo.timezone), syminfo.timezone)
+
+// @function isWithinHistoryWindow              - Reports whether the current bar is inside the allowed calendar history window.
+// @param    _calendarDays (int)                - Number of calendar days of history to allow.
+// @param    _referenceTime (int)               - Newest chart timestamp used as the history anchor.
+// @param    _extraDays    (int)                - Additional calendar days of slack for sessions that span days.
+// @returns                (bool)               - True when the bar should be processed.
+export isWithinHistoryWindow(int _calendarDays, int _referenceTime, int _extraDays = 0) =>
+    int totalDays = math.max(_calendarDays + _extraDays, 1)
+    time >= historyCutoffTime(totalDays, _referenceTime)
+
+// #endregion Observed Market Gap Functions
+
+// #region Session Descriptor Functions *******************
+
+// #region Session Descriptor Helpers //
+
+buildSessionInfo(string _labelText, string _session, string _timezone) =>
+    [openHour, openMinute, closeHour, closeMinute] = sessionToParts(_session)
+    SessionInfo result = na
+    if not na(openHour) and not na(closeHour)
+        bool isDaily = openHour == closeHour and openMinute == closeMinute
+        result := SessionInfo.new(_labelText, _session, _timezone, openHour, openMinute, closeHour, closeMinute,
+             sessionDurationMs(_session), isDaily)
+    result
+
+// #endregion Session Descriptor Helpers
+
+// #region Session Descriptor Preset Lookup //
+
+presetToSessionInfo(SessionPreset _preset) =>
+    SessionInfo unresolved = na
+    switch _preset
+        SessionPreset.FxSydney        => buildSessionInfo("Sydney",       "0700-1600", "Australia/Sydney")
+        SessionPreset.FxTokyo         => buildSessionInfo("Tokyo",        "0900-1800", "Asia/Tokyo")
+        SessionPreset.FxLondon        => buildSessionInfo("London",       "0800-1700", "Europe/London")
+        SessionPreset.FxNewYork       => buildSessionInfo("New York",     "0800-1700", "America/New_York")
+        SessionPreset.EqUnitedStates  => buildSessionInfo("US RTH",       "0930-1600", "America/New_York")
+        SessionPreset.EqUnitedKingdom => buildSessionInfo("LSE",          "0800-1630", "Europe/London")
+        SessionPreset.EqGermany       => buildSessionInfo("Xetra",        "0900-1730", "Europe/Berlin")
+        SessionPreset.EqJapan         => buildSessionInfo("TSE",          "0900-1530", "Asia/Tokyo")
+        SessionPreset.EqHongKong      => buildSessionInfo("HKEX",         "0930-1600", "Asia/Hong_Kong")
+        SessionPreset.EqIndia         => buildSessionInfo("NSE",          "0915-1530", "Asia/Kolkata")
+        SessionPreset.EqAustralia     => buildSessionInfo("ASX",          "1000-1600", "Australia/Sydney")
+        SessionPreset.FutCmeGlobex    => buildSessionInfo("Globex",       "1700-1600", "America/Chicago")
+        SessionPreset.FutCmeEquityDay => buildSessionInfo("CME Day",      "0830-1515", "America/Chicago")
+        SessionPreset.FutEurexCore    => buildSessionInfo("Eurex",        "0800-2200", "Europe/Berlin")
+        SessionPreset.DailyFxClose    => buildSessionInfo("Daily FX",     "1700-1700", "America/New_York")
+        SessionPreset.DailyUtc        => buildSessionInfo("Daily UTC",    "0000-0000", "UTC")
+        SessionPreset.DailyExchange   => buildSessionInfo("Daily",        "0000-0000", syminfo.timezone)
+        SessionPreset.DailyNewYork    => buildSessionInfo("Daily NY",     "0000-0000", "America/New_York")
+        =>                               unresolved
+
+// #endregion Session Descriptor Preset Lookup
+
+// @function resolveSessionInfo                 - Resolves a preset, or builds a descriptor from a custom session string.
+// @param    _preset         (SessionPreset)    - Preset selection, or SessionPreset.Custom.
+// @param    _customSession  (string)           - Session string in "HHMM-HHMM" format, required when the preset is Custom.
+// @param    _customLabel    (string)           - Label applied when the preset is Custom. Defaults to "Custom".
+// @param    _customTimezone (string)           - IANA timezone for a Custom session. na uses the exchange timezone.
+// @returns                  (SessionInfo)      - Resolved descriptor with timezone, or na when a Custom session string is missing or invalid.
+export resolveSessionInfo(SessionPreset _preset, string _customSession = na, string _customLabel = na,
+     string _customTimezone = na) =>
+    SessionInfo resolved = na
+    if _preset == SessionPreset.Custom
+        if not na(_customSession)
+            string labelText = (na(_customLabel) ? "Custom" : _customLabel)
+            string timezone  = (na(_customTimezone) ? syminfo.timezone : _customTimezone)
+            resolved := buildSessionInfo(labelText, _customSession, timezone)
+    else
+        resolved := presetToSessionInfo(_preset)
+    resolved
+
+// #endregion Session Descriptor Functions
+
+// #region Session Query Functions ************************
+
+// @function isInSession                        - Reports whether the current bar falls inside a session.
+// @param    _session      (string)             - Session string in TradingView format.
+// @param    _timezone     (string)             - IANA timezone used for the session test.
+// @returns                (bool)               - True when the current bar is inside the session.
+export isInSession(string _session, string _timezone) =>
+    not na(time(timeframe.period, _session, _timezone))
+
+// @function isInAnySession                     - Reports whether the current bar falls inside any supplied session.
+// @param    _sessions     (array<string>)      - Session strings to test.
+// @param    _timezone     (string)             - IANA timezone used for the session tests.
+// @returns                (bool)               - True when at least one session contains the current bar. False on an empty array.
+export isInAnySession(array<string> _sessions, string _timezone) =>
+    bool isInside = false
+    for sessionString in _sessions
+        if not na(sessionString) and isInSession(sessionString, _timezone)
+            isInside := true
+            break
+    isInside
+
+// @function getSessionStartTime                - Returns the session open timestamp for the current local session day.
+// @param    _session      (SessionInfo)        - Session descriptor. Its timezone is used.
+// @param    _dayOffsetMs  (int)                - Nominal-day token from barDayBoundaryOffsetMs() or a manual whole-day shift.
+// @returns                (int)                - Session open UNIX time.
+export getSessionStartTime(SessionInfo _session, int _dayOffsetMs = 0) =>
+    int dayCount     = int(math.round(_dayOffsetMs / float(MS_PER_DAY)))
+    int dayReference = shiftCalendarDays(time, dayCount, _session.timezone)
+    wallClockTimestamp(dayReference, _session.openHour, _session.openMinute, _session.timezone)
+
+// @function isSessionFirstBar                  - Reports whether the current bar contains the session open.
+// @param    _session      (SessionInfo)        - Session descriptor.
+// @param    _dayOffsetMs  (int)                - Nominal-day token from barDayBoundaryOffsetMs() or a manual whole-day shift.
+// @returns                (bool)               - True when the session opens inside this bar.
+export isSessionFirstBar(SessionInfo _session, int _dayOffsetMs = 0) =>
+    int sessionStart = getSessionStartTime(_session, _dayOffsetMs)
+    sessionStart >= time and sessionStart < time_close
+
+// @function isSessionBoundaryInBar             - Reports whether a session open or close falls inside a bar interval.
+// @param    _isStart        (bool)             - True tests the session open, false tests the session close.
+// @param    _session        (SessionInfo)      - Session descriptor.
+// @param    _barStartTime   (int)              - Bar start UNIX time.
+// @param    _barEndTime     (int)              - Bar end UNIX time.
+// @param    _dayOffsetMs    (int)              - Nominal-day token from barDayBoundaryOffsetMs() or a manual whole-day shift.
+// @returns                  (bool)             - True when the requested boundary falls strictly inside the bar.
+export isSessionBoundaryInBar(bool _isStart, SessionInfo _session, int _barStartTime, int _barEndTime,
+     int _dayOffsetMs = 0) =>
+    int sessionStart = getSessionStartTime(_session, _dayOffsetMs)
+    int openMinutes  = _session.openHour * 60 + _session.openMinute
+    int closeMinutes = _session.closeHour * 60 + _session.closeMinute
+    int closeDay     = (closeMinutes <= openMinutes ? 1 : 0)
+    int closeDate    = shiftCalendarDays(sessionStart, closeDay, _session.timezone)
+    int sessionEnd   = wallClockTimestamp(closeDate, _session.closeHour, _session.closeMinute, _session.timezone)
+    int boundary     = (_isStart ? sessionStart : sessionEnd)
+    boundary > _barStartTime and boundary < _barEndTime
+
+// #endregion Session Query Functions
+
+// #region Intrabar Functions *****************************
+
+// @function needsSessionIntrabars - Tests whether either session boundary falls strictly inside the current chart candle.
+// @param _session (SessionInfo) - Resolved session descriptor.
+// @returns (bool) - True when one-minute filtering is needed. False on one-minute or smaller charts.
+export needsSessionIntrabars(SessionInfo _session) =>
+    bool needed = false
+    if timeframe.isintraday and timeframe.in_seconds() > 60 and not na(_session)
+        int openOffset = barDayBoundaryOffsetMs(_session.timezone, _session.openHour, _session.openMinute)
+        int closeOffset = barDayBoundaryOffsetMs(_session.timezone, _session.closeHour, _session.closeMinute)
+        int openDate = shiftCalendarDays(time, int(openOffset / MS_PER_DAY), _session.timezone)
+        int closeDate = shiftCalendarDays(time, int(closeOffset / MS_PER_DAY), _session.timezone)
+        int openBoundary = wallClockTimestamp(openDate, _session.openHour, _session.openMinute, _session.timezone)
+        int closeBoundary = wallClockTimestamp(closeDate, _session.closeHour, _session.closeMinute, _session.timezone)
+        needed := (openBoundary > time and openBoundary < time_close) or (
+             closeBoundary > time and closeBoundary < time_close)
+    needed
+
+// @function requestIntrabarData               - Requests one shared set of one-minute arrays for the current chart bar.
+// @param    _historyDays    (simple int)       - Calendar days of one-minute history the host may need.
+// @param    _required       (bool)             - Whether this candle needs filtering. Call every bar; the request runs conditionally inside.
+// @returns                  (IntrabarData)      - Shared one-minute OHLC arrays, empty when skipped. Initializes the dataset on the last confirmed historical bar for realtime use.
+export requestIntrabarData(simple int _historyDays, bool _required = true) =>
+    int daysBudget = math.max(nz(_historyDays), 0) + 1
+    int minuteHistoryLimit = math.min(daysBudget * MINUTES_PER_DAY, 100000)
+    IntrabarData result = IntrabarData.new(array.new<int>(), array.new<float>(),
+         array.new<float>(), array.new<float>(), array.new<float>())
+    if timeframe.isintraday and timeframe.in_seconds() > 60 and (_required or barstate.islastconfirmedhistory)
+        [minuteTimes, minuteOpens, minuteHighs, minuteLows, minuteCloses] = request.security_lower_tf(
+             syminfo.tickerid, "1", [time, open, high, low, close],
+             ignore_invalid_timeframe = true, calc_bars_count = minuteHistoryLimit)
+        result := IntrabarData.new(minuteTimes, minuteOpens, minuteHighs, minuteLows, minuteCloses)
+    result
+
+// @function scanIntrabarRange                  - Aggregates one-minute data inside a time range of the current chart bar.
+// @param    _intrabarData   (IntrabarData)      - Shared one-minute arrays returned by requestIntrabarData().
+// @param    _startTime      (int)              - Inclusive range start UNIX time.
+// @param    _endTime        (int)              - Exclusive range end UNIX time.
+// @param    _seedHigh       (float)            - Existing high to beat. Pass na to take the first value found.
+// @param    _seedLow        (float)            - Existing low to beat. Pass na to take the first value found.
+// @param    _seedHighTime   (int)              - High timestamp kept when no new high is found.
+// @param    _seedLowTime    (int)              - Low timestamp kept when no new low is found.
+// @returns                  (IntrabarScan)     - Aggregated open, high, low, close, extreme times, and a data flag.
+export scanIntrabarRange(IntrabarData _intrabarData, int _startTime, int _endTime, float _seedHigh, float _seedLow,
+     int _seedHighTime, int _seedLowTime) =>
+    IntrabarScan scan = IntrabarScan.new(na, _seedHigh, _seedLow, na, _seedHighTime, _seedLowTime, false)
+
+    for [index, minuteTime] in _intrabarData.times
+        if minuteTime >= _startTime and minuteTime < _endTime
+            float minuteHigh = array.get(_intrabarData.highs, index)
+            float minuteLow  = array.get(_intrabarData.lows, index)
+            if not scan.hasData
+                scan.openPrice := array.get(_intrabarData.opens, index)
+                scan.hasData   := true
+            scan.closePrice := array.get(_intrabarData.closes, index)
+            if na(scan.highPrice) or minuteHigh > scan.highPrice
+                scan.highPrice := minuteHigh
+                scan.highTime  := minuteTime
+            if na(scan.lowPrice) or minuteLow < scan.lowPrice
+                scan.lowPrice := minuteLow
+                scan.lowTime  := minuteTime
+    scan
+
+// #endregion Intrabar Functions
+
+// #region Session Engine Functions ***********************
+
+// #region Session Engine Helpers //
+
+shiftWallClockDays(int _time, int _dayCount, string _timezone) =>
+    int dayReference = shiftCalendarDays(_time, _dayCount, _timezone)
+    wallClockTimestamp(dayReference, hour(_time, _timezone), minute(_time, _timezone), _timezone)
+
+advanceWallClockPastGap(int _targetTime, int _gapStart, int _gapEnd, string _timezone) =>
+    int result = _targetTime
+    if not na(result) and result > _gapStart and result < _gapEnd
+        // Preserve the intended extension by adding the whole observed closure,
+        // rather than just moving to the first matching clock time after reopening.
+        // Compare local calendar dates in UTC so DST does not turn a two-day gap into three.
+        int gapStartDate = timestamp("UTC", year(_gapStart, _timezone), month(_gapStart, _timezone), dayofmonth(_gapStart, _timezone), 0, 0)
+        int gapEndDate = timestamp("UTC", year(_gapEnd, _timezone), month(_gapEnd, _timezone), dayofmonth(_gapEnd, _timezone), 0, 0)
+        int daysToAdvance = math.max(int((gapEndDate - gapStartDate) / MS_PER_DAY), 1)
+        result := shiftWallClockDays(result, daysToAdvance, _timezone)
+        while result < _gapEnd
+            result := shiftWallClockDays(result, 1, _timezone)
+    result
+
+sessionEndTimeFromStart(SessionInfo _session, int _sessionStartTime) =>
+    int openMinutes  = _session.openHour * 60 + _session.openMinute
+    int closeMinutes = _session.closeHour * 60 + _session.closeMinute
+    int closeDay     = (closeMinutes <= openMinutes ? 1 : 0)
+    int closeDate    = shiftCalendarDays(_sessionStartTime, closeDay, _session.timezone)
+    wallClockTimestamp(closeDate, _session.closeHour, _session.closeMinute, _session.timezone) - 1
+
+resolveLineEndTime(SessionInfo _session, SessionConfig _config, int _sessionEndTime) =>
+    string lineEndTimezone = (na(_config.lineEndTimezone) ? _session.timezone : _config.lineEndTimezone)
+    int    lineEndTime     = _sessionEndTime
+
+    if not na(_config.lineEndHour)
+        int sessionEndBoundary = _sessionEndTime + 1
+        lineEndTime := wallClockTimestamp(
+             sessionEndBoundary, _config.lineEndHour, nz(_config.lineEndMinute, 0), lineEndTimezone)
+
+    while lineEndTime < _sessionEndTime
+        lineEndTime := shiftWallClockDays(lineEndTime, 1, lineEndTimezone)
+
+    if _config.addExtraLineDay
+        lineEndTime := shiftWallClockDays(lineEndTime, 1, lineEndTimezone)
+
+    lineEndTime
+
+createSessionState(SessionConfig _config, SessionInfo _session, int _dayOffsetMs) =>
+    int sessionStartTime = getSessionStartTime(_session, _dayOffsetMs)
+    int sessionEndTime   = sessionEndTimeFromStart(_session, sessionStartTime)
+
+    // Scheduled boundaries can exist before the session starts. Prices must wait for data.
+    SessionState.new(
+         float(na),            sessionStartTime,
+         float(na),            int(na),
+         float(na),            int(na),
+         float(na),            sessionEndTime + 1,
+         _session.labelText,   sessionStartTime,
+         sessionEndTime,       sessionStartTime,
+         sessionStartTime,     resolveLineEndTime(_session, _config, sessionEndTime),
+         time,                 int(na))
+
+adjustSessionStateForGap(SessionState _state, SessionInfo _session, SessionConfig _config,
+     int _gapStart, int _gapEnd) =>
+    string lineEndTimezone = (na(_config.lineEndTimezone) ? _session.timezone : _config.lineEndTimezone)
+    _state.lineEndTime := advanceWallClockPastGap(
+         _state.lineEndTime, _gapStart, _gapEnd, lineEndTimezone)
+    // Resume only a session already underway when trading stopped, whose close fell
+    // inside the closure. Preserve its start identity and accumulated OHLC.
+    int closeBoundary = _state.sessEndTime + 1
+    if _state.sessStartTime < _gapStart and closeBoundary > _gapStart and closeBoundary < _gapEnd
+        int resumedClose = advanceWallClockPastGap(closeBoundary, _gapStart, _gapEnd, _session.timezone)
+        _state.sessEndTime := resumedClose - 1
+        _state.closeTime := resumedClose
+        _state.lineEndTime := math.max(_state.lineEndTime, resolveLineEndTime(_session, _config, _state.sessEndTime))
+
+applySessionAnchors(SessionState _state, bool _highChanged, bool _lowChanged,
+     SessionAnchor _anchor, int _evalTime) =>
+    if _anchor == SessionAnchor.SessionEnd
+        int sessionEndBoundary = _state.sessEndTime + 1
+        int activeAnchorTime   = (_evalTime < sessionEndBoundary ? time : sessionEndBoundary)
+        _state.highLineStartTime := activeAnchorTime
+        _state.lowLineStartTime  := activeAnchorTime
+    if _anchor != SessionAnchor.SessionEnd and _highChanged
+        _state.highLineStartTime := (_anchor == SessionAnchor.ExtremeTime ? _state.highTime : _state.sessStartTime)
+    if _anchor != SessionAnchor.SessionEnd and _lowChanged
+        _state.lowLineStartTime := (_anchor == SessionAnchor.ExtremeTime ? _state.lowTime : _state.sessStartTime)
+
+isLateSessionStart(SessionInfo _session, array<SessionState> _states, int _timeNow) =>
+    bool result = false
+    if isInSession(_session.session, _session.timezone)
+        // Membership tests the candle's opening time. On the final session candle,
+        // its closing clock is already beyond our inclusive end (-1 ms), but this
+        // is still the same session and must not create a second record.
+        int membershipTime = math.min(time, _timeNow)
+        result := (array.size(_states) == 0 ? true : array.get(_states, 0).sessEndTime < membershipTime)
+    result
+
+lateStartOffsetMs(SessionInfo _session, int _dayOffsetMs) =>
+    int candidateStart = getSessionStartTime(_session, _dayOffsetMs)
+    (candidateStart > time ? _dayOffsetMs - MS_PER_DAY : _dayOffsetMs)
+
+updateSessionState(SessionState _state, SessionConfig _config, IntrabarData _intrabarData) =>
+    // Bar replay reports isrealtime on historical bars, so fall back to bar close when timenow runs far ahead.
+    bool isReplayLikeRealtime = barstate.isrealtime and timenow > time_close + MS_PER_DAY
+    int  evalTime             = (barstate.isrealtime and not isReplayLikeRealtime ? timenow : time_close)
+
+    // Session prices depend only on session boundaries, never on drawing expiry.
+    int  sessionEndBoundary = _state.sessEndTime + 1
+    bool isStartInBar    = _state.sessStartTime >= time and _state.sessStartTime < time_close
+    bool isEndInBar      = sessionEndBoundary > time and sessionEndBoundary < time_close
+    bool isStartIntrabar = isStartInBar and _state.sessStartTime > time and (barstate.isconfirmed or evalTime >= _state.sessStartTime)
+    bool isEndIntrabar   = isEndInBar and (barstate.isconfirmed or evalTime >= _state.sessEndTime)
+
+    if evalTime >= _state.sessStartTime and (time < _state.sessEndTime or isEndIntrabar)
+        if isStartIntrabar or isEndIntrabar
+            float seedHigh  = (isStartInBar ? float(na) : _state.highPrice)
+            float seedLow   = (isStartInBar ? float(na) : _state.lowPrice)
+            int   scanStart = (isStartIntrabar ? _state.sessStartTime : time)
+            int   scanEnd   = math.min(math.min(sessionEndBoundary, time_close), evalTime)
+
+            IntrabarScan scan = scanIntrabarRange(
+                 _intrabarData,
+                 scanStart,          scanEnd,
+                 seedHigh,           seedLow,
+                 _state.highTime,    _state.lowTime)
+
+            if scan.hasData
+                if na(_state.openPrice)
+                    _state.openPrice := scan.openPrice
+                _state.closePrice := scan.closePrice
+                _state.highPrice  := scan.highPrice
+                _state.lowPrice   := scan.lowPrice
+                _state.highTime   := scan.highTime
+                _state.lowTime    := scan.lowTime
+                applySessionAnchors(_state, true, true, _config.anchor, evalTime)
+            // An empty scan leaves prices unchanged; full-candle prices may be outside the session.
+        else
+            if na(_state.openPrice)
+                _state.openPrice := open
+            int  barStampTime = time
+            bool isNewHigh    = na(_state.highPrice) or high > _state.highPrice
+            bool isNewLow     = na(_state.lowPrice) or low < _state.lowPrice
+            if isNewHigh
+                _state.highPrice := high
+                _state.highTime  := barStampTime
+            if isNewLow
+                _state.lowPrice := low
+                _state.lowTime  := barStampTime
+            applySessionAnchors(_state, isNewHigh, isNewLow, _config.anchor, evalTime)
+            _state.closePrice := close
+
+    // Session-end anchors follow the current candle while the range is forming, then
+    // lock to the scheduled close even when the last update contained no intrabar data.
+    if _config.anchor == SessionAnchor.SessionEnd
+        applySessionAnchors(_state, false, false, _config.anchor, evalTime)
+
+    int renderEndTime = _state.sessEndTime - 1
+    if renderEndTime >= time and renderEndTime < time_close and na(_state.sessEndBarTime)
+        _state.sessEndBarTime := time
+
+// #endregion Session Engine Helpers
+
+// @function runSessionEngine                   - Creates and maintains session lifecycle state for one configured session.
+// @param    _config       (SessionConfig)      - Session configuration supplied by the host script.
+// @param    _states       (array<SessionState>) - State storage for this session. Newest state is index 0.
+// @param    _intrabarData (IntrabarData)       - Shared one-minute arrays returned by requestIntrabarData().
+// @param    _timeNow      (int)                - Current UNIX timestamp supplied by the host.
+// @param    _daysLimit    (int)                - Calendar days of history to process. Pass na to process all loaded bars and let the host retain records by count.
+// @returns                (SessionInfo)        - Resolved descriptor including its timezone, or na when the configuration cannot be resolved.
+export runSessionEngine(SessionConfig _config, array<SessionState> _states, IntrabarData _intrabarData,
+     int _timeNow, int _daysLimit = 5) =>
+    SessionInfo sessionInfo = na
+
+    if _config.isEnabled
+        sessionInfo := resolveSessionInfo(
+             _config.preset, _config.customSession, _config.customLabel, _config.timezone)
+
+    if timeframe.isintraday and not na(sessionInfo)
+        int  extraHistoryDays = (sessionInfo.isDaily ? 2 : 1)
+        bool isWithinHistory  = na(_daysLimit) or isWithinHistoryWindow(_daysLimit, last_bar_time, extraHistoryDays)
+
+        if isWithinHistory
+            [hasLongGap, gapStart, gapEnd, _] = getObservedLongGap(LONG_GAP_MIN_MS)
+            if hasLongGap and array.size(_states) > 0
+                for state in _states
+                    adjustSessionStateForGap(state, sessionInfo, _config, gapStart, gapEnd)
+
+            int  dayOffsetMs = barDayBoundaryOffsetMs(
+                 sessionInfo.timezone, sessionInfo.openHour, sessionInfo.openMinute)
+            bool isFirstBar  = isSessionFirstBar(sessionInfo, dayOffsetMs)
+            bool isLateStart = false
+
+            // A chart loaded mid-session, or refreshed inside a session, must still open state.
+            if not isFirstBar and not sessionInfo.isDaily
+                isLateStart := isLateSessionStart(sessionInfo, _states, _timeNow)
+                if isLateStart
+                    dayOffsetMs := lateStartOffsetMs(sessionInfo, dayOffsetMs)
+
+            if isFirstBar or isLateStart
+                int candidateStart = getSessionStartTime(sessionInfo, dayOffsetMs)
+                // A resumed session may cover the next scheduled opening as well.
+                // Do not split it into another record before its extended close.
+                bool alreadyStored = array.size(_states) > 0 and (
+                     array.get(_states, 0).sessStartTime == candidateStart or
+                     (array.get(_states, 0).sessStartTime < candidateStart and array.get(_states, 0).sessEndTime >= candidateStart))
+                if not alreadyStored
+                    array.unshift(_states, createSessionState(_config, sessionInfo, dayOffsetMs))
+
+            if array.size(_states) > 0
+                updateSessionState(array.get(_states, 0), _config, _intrabarData)
+
+    sessionInfo
+
+// @function getActiveSession                   - Returns the session that is currently in progress.
+// @param    _states       (array<SessionState>) - Session state storage.
+// @param    _timeNow      (int)                - Current UNIX timestamp.
+// @returns                (SessionState)       - In-progress session state, or na when no session is open.
+export getActiveSession(array<SessionState> _states, int _timeNow) =>
+    SessionState result = na
+    if array.size(_states) > 0
+        SessionState newest = array.get(_states, 0)
+        if newest.sessStartTime <= _timeNow and newest.sessEndTime >= _timeNow
+            result := newest
+    result
+
+// @function getCompletedSession                - Returns a completed session counted back from the most recent one.
+// @param    _states       (array<SessionState>) - Session state storage.
+// @param    _sessionsBack (int)                - Zero-based offset. 0 is the most recently completed session.
+// @param    _timeNow      (int)                - Current UNIX timestamp used to exclude in-progress sessions.
+// @returns                (SessionState)       - Requested completed session state, or na when unavailable.
+export getCompletedSession(array<SessionState> _states, int _sessionsBack, int _timeNow) =>
+    int          requestedOffset = math.max(_sessionsBack, 0)
+    int          completedCount  = 0
+    SessionState result          = na
+    for state in _states
+        if state.sessEndTime < _timeNow
+            if completedCount == requestedOffset
+                result := state
+                break
+            completedCount += 1
+    result
+
+// @function trimSessionStates                  - Drops the oldest session states so storage stays bounded.
+// @param    _states       (array<SessionState>) - Session state storage.
+// @param    _maxSessions  (int)                - Maximum number of sessions to retain.
+// @returns                (int)                - Number of states remaining after trimming.
+export trimSessionStates(array<SessionState> _states, int _maxSessions) =>
+    int retainLimit = math.max(_maxSessions, 1)
+    while array.size(_states) > retainLimit
+        array.pop(_states)
+    array.size(_states)
+
+// @function planTradeWindow                    - Computes scheduled trade-window boundaries with realtime gating.
+// @param    _session          (string)         - Window session string in "HHMM-HHMM" format.
+// @param    _timezone         (string)         - IANA timezone the window is expressed in.
+// @param    _daysLimit        (int)            - Calendar days of history the host may draw.
+// @param    _timeNow          (int)            - Current UNIX timestamp.
+// @param    _lastDrawnStart   (int)            - Start timestamp the host most recently drew, or na.
+// @returns                    (TradeWindowPlan) - Window boundaries plus in-window, already-drawn, and should-draw flags.
+export planTradeWindow(string _session, string _timezone, int _daysLimit, int _timeNow, int _lastDrawnStart) =>
+    SessionInfo     windowInfo = resolveSessionInfo(SessionPreset.Custom, _session, "Trade Window", _timezone)
+    TradeWindowPlan plan       = TradeWindowPlan.new()
+
+    if not na(windowInfo)
+        int  boundaryOffset = barDayBoundaryOffsetMs(
+             _timezone, windowInfo.openHour, windowInfo.openMinute)
+        int  startTime  = getSessionStartTime(windowInfo, boundaryOffset)
+        bool isInWindow = isInSession(_session, _timezone)
+        if isInWindow and startTime > time
+            startTime := shiftWallClockDays(startTime, -1, _timezone)
+
+        int  endTime      = sessionEndTimeFromStart(windowInfo, startTime) + 1
+        bool alreadyDrawn = not na(_lastDrawnStart) and _lastDrawnStart == startTime
+        bool shouldDraw   = false
+
+        if not alreadyDrawn and isWithinHistoryWindow(_daysLimit, last_bar_time)
+            bool isRealtimeReady = not barstate.isrealtime or _timeNow >= startTime
+            shouldDraw := isRealtimeReady and (
+                 isSessionFirstBar(windowInfo, boundaryOffset) or isInWindow)
+
+        plan := TradeWindowPlan.new(startTime, endTime, isInWindow, alreadyDrawn, shouldDraw)
+
+    plan
+
+// #endregion Session Engine Functions
+
+// #endregion Functions

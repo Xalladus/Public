@@ -31,7 +31,7 @@ Pine Script v6 example consumer for fixed and recurring volume profiles. The ind
 3. **Volume guard**: Track whether any usable volume has appeared and raise on the last bar when none exists.
 4. **Config assembly**: Build persistent `ProfileStyle` and `ProfileConfig` objects from inputs.
 5. **Core update**: Call `VP.update()` once per bar and read retained POC/VA levels.
-6. **Data exposure**: Publish POC, VAH, and VAL only to the Data Window.
+6. **Data exposure**: Publish POC, VAH, VAL, POC Buy Volume, and POC Sell Volume only to the Data Window.
 7. **Debug rendering**: Write retained statistics and the whole-session drawing plan on the last bar.
 
 ## Function Map
@@ -48,7 +48,7 @@ Pine Script v6 example consumer for fixed and recurring volume profiles. The ind
 |----------|-----------|---------|---------|
 | `writeDebugRow` | `_table`, `_row`, `_label`, `_value` | `int` | Writes one styled label/value row. |
 | `formatSessionPlan` | `_fullSessions`, `_requestedSessions` | `string` | Formats whole counts as `full/requested`. |
-| `renderDebugTable` | `_table`, `_state`, `_cfg` | `int` | Writes Bars, Total Volume, POC, VAH, VAL, and Full Sessions / Requested. |
+| `renderDebugTable` | `_table`, `_state`, `_cfg` | `int` | Writes Bars, Total Volume, POC Buy Volume, POC Sell Volume, POC, VAH, VAL, and Full Sessions / Requested. |
 
 ## Call Hierarchy
 
@@ -69,6 +69,7 @@ FixedRangeVolumeProfile
 +-- Core Orchestration
 |   +-- VP.update(...)
 |   +-- VP.getMostRecentLevels(...)
+|   +-- VP.getMostRecentPocVolumes(...)
 |   +-- plot(...) -> Data Window only
 |
 +-- Debug
@@ -101,6 +102,6 @@ FixedRangeVolumeProfile
 | Persistent config | `profileStyle` and `profileConfig` use `var`; input changes restart the script and rebuild them. |
 | Input layout | Keep input calls compact. Align tooltip continuation operators at or beyond the tooltip declaration `=` column. Within a shared `inline` row, align each `group` argument and leave one blank line after the inline block. Name input-activity gates `a_` plus a three-letter abbreviation, align their declaration `=` with the surrounding input declarations, define them immediately after their parent inputs, and reuse them for dependent controls. Do not wrap only one or two trailing arguments onto a new line; when wrapping is necessary, indent continuation content beyond the declaration's `=`. |
 | Input order | Profile is Value Area %, Rows, Width %; Display begins with Show Profile Visuals; Appearance begins with Split Buy/Sell. |
-| Invisible outputs | Keep the three latest-level `plot()` calls at global scope with `display.data_window`. |
+| Invisible outputs | Keep the latest-level and POC volume `plot()` calls at global scope with `display.data_window`. |
 | Whole session diagnostics | Display `_state.effectiveHistoryCount/_cfg.historyCount`; do not expose fractional capacity or gradient-band counts in the table. |
 | Publication preservation | Add release/update sections to `publication-document.txt`; do not replace its existing description. |

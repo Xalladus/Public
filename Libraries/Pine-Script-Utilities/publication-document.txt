@@ -1,0 +1,80 @@
+[b]Pine Script Utilities[/b]
+
+Building a Pine script often means writing the same supporting code again: setting up timezone choices, converting prices to ticks or pips, updating chart drawings, or working out which candles belong to a trading session.
+
+Pine Script Utilities brings these everyday tasks into one reusable toolbox. Its purpose is to help script authors spend more time on what makes their indicator useful and less time rebuilding common tools.
+
+This is a library for Pine Script v6. You use it inside your own indicator or strategy; adding the library alone does not produce a chart display. You can use a single helper or combine several parts of the library as your script grows.
+
+[b]Consistent choices for your settings[/b]
+
+Give users familiar choices without recreating the same lists in every script. The library supplies reusable options for:
+[list]
+[*]Timezones, including the symbol's exchange timezone.
+[*]Hours, minutes, quarter-hour times and common durations.
+[*]Line styles, thickness, extension direction and label styles.
+[*]Text size and horizontal or vertical alignment.
+[*]Session presets and the starting points for session high and low lines.
+[/list]
+
+It also turns these selections into the values Pine needs to use them. Your script still decides which settings to offer and how to arrange them.
+
+[b]Time and timezone tools[/b]
+
+Work with clock times, session schedules and chart timing without repeatedly writing the conversion code yourself. Helpers let you build and read time values, convert between clock times and minutes, calculate durations, check session membership and limit processing to a chosen history window.
+
+For example, you can define a session in New York time even when the symbol uses a different exchange timezone. Named timezones allow session boundaries to follow local daylight-saving changes. Overnight schedules are supported, so a session can start in the afternoon and finish the following morning.
+
+[b]Everyday price and quantity conversions[/b]
+
+Use the same conversion tools across different scripts:
+[list]
+[*]Convert a price movement into ticks or pips, or convert those distances back into price.
+[*]Override the pip size when a broker's price feed needs a different convention.
+[*]Read the symbol's price precision, tick value and asset category.
+[*]Round quantities down to a chosen increment.
+[*]Calculate a position's notional value from quantity, price and the symbol's point value.
+[/list]
+
+For example, a candle-range display could show its size in ticks instead of a raw price difference. These are general conversions; account-risk sizing and risk/reward calculations belong in a separate risk library.
+
+[b]Easier drawing maintenance[/b]
+
+Once your script has created a drawing, the library can help keep it up to date. Change the position, appearance or text of lines, labels and boxes, and update existing table cells. Supply the properties you want to change and leave the others as they are.
+
+Cleanup helpers remove groups of lines, labels, boxes or connected-line drawings called polylines. You can also keep a line collection within a chosen size and turn lists of times and prices into points for chart drawings. This gives scripts a common way to manage their chart objects as new data arrives.
+
+[b]Session tracking beyond simple clock checks[/b]
+
+For scripts that need session ranges, the library can track the opening price, high, low and latest closing price, along with the times of the highs and lows. Use a preset schedule or define your own, track multiple sessions separately, and retrieve the current session or earlier completed sessions.
+
+It also handles several details that can otherwise produce confusing chart results:
+[list]
+[*]A session can start or finish partway through a candle. Where needed, available one-minute data helps exclude prices from outside the session. For example, a 09:10 start on a 15-minute chart should not include the earlier prices from the 09:00 candle.
+[*]Session prices and displayed line lengths stay separate. You can collect prices until noon and keep the resulting levels visible later without changing the session's high or low.
+[*]High and low lines can start from the session opening, the session end, or the time each extreme occurred.
+[*]When trading reopens after a long closure, eligible line endpoints can carry forward across the missed days. An overnight session interrupted by the closure can resume as the same session, preserving its earlier prices.
+[*]Stored sessions can be kept by record count, so a script can retain actual observations instead of treating empty weekend dates as trading sessions.
+[/list]
+
+The session tools use ordinary chart candles where those candles are sufficient. They can request one-minute data for candles that contain a session boundary, and several sessions can share that data.
+
+[b]Building blocks for your own indicators[/b]
+
+You could use these tools for a session-range overlay, a candle-size display, a dashboard with consistent text and styles, or an indicator that marks a chosen time window. Time-window helpers provide the opening and closing times and help your script decide when to draw the window.
+
+The companion session example demonstrates how these pieces fit together. It keeps a chosen number of session records, draws the retained history, and updates the current session as prices arrive. Its complete appearance and additional features are choices made in the example; you can build a different display using the same utilities.
+
+[b]Getting started[/b]
+
+Import the library into a Pine v6 script and start with the helpers you need. Simple conversions and drawing helpers can be used independently. Session tracking needs a little more setup because your script keeps the session records and decides how to display them. The full guide explains that workflow, while the API reference lists the available functions and their arguments.
+
+[b]A few things to know[/b]
+[list]
+[*]Session tracking is intended for standard intraday time-based charts. Its one-minute boundary checks apply to chart timeframes above one minute.
+[*]Custom session tracking uses one start and end time, such as 1600-0400. Presets describe regular clock schedules, not complete holiday or lunch-break calendars.
+[*]Weekend and closure adjustments happen when reopening data arrives. The library does not predict future market closures.
+[*]Accurate ranges depend on available price history. If required one-minute data is missing, the library does not replace it with a whole candle that could contain out-of-session prices; the resulting range may be incomplete.
+[*]Pip sizes, quantity increments and contract values can differ between feeds and instruments. Use the appropriate values for your symbol.
+[*]Your script controls its drawings, alerts and history limits. TradingView's data and drawing limits still apply.
+[/list]

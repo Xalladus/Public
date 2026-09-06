@@ -53,7 +53,7 @@ Create the state once with `VP.createState()` and retain it with `var`. The stat
 - `effectiveHistoryCount`: Whole completed-session capacity for full profile drawings.
 - `levelOnlyHistoryCount`: Requested completed sessions assigned to the lower tier.
 - `resolvedFillBands`: Polyline ribbons per region: `0`, `1`, or `3-8`.
-- Retained POC, VAH, VAL, bar count, and total-volume values.
+- Retained POC, VAH, VAL, POC total volume, POC buy volume, POC sell volume, bar count, and total-volume values.
 
 The consumer should read diagnostic and latest-value fields but should not mutate the engine-owned lifecycle fields or `Profile` objects.
 
@@ -61,7 +61,7 @@ The consumer should read diagnostic and latest-value fields but should not mutat
 
 `ProfileConfig` combines range, calculation, display, history, and appearance settings. Important relationships include:
 
-- `rowCount` drives the statistics and every renderer.
+- `rowCount` drives the statistics and every renderer (1–200).
 - `valueAreaPercent` controls the target volume share used for VAH and VAL.
 - `splitBuySell` changes the number of box rows or polyline regions per profile.
 - `showVisuals` hides chart objects without stopping calculations.
@@ -69,10 +69,11 @@ The consumer should read diagnostic and latest-value fields but should not mutat
 - `polylineFill` selects no fill, a solid fill, or an adaptive gradient.
 - `historyCount` requests completed recurring sessions. The active session is additional.
 - `showRangeBox` reserves and draws a range box for every represented session.
-- POC and Value Area lines and labels have separate visibility and style settings.
+- `maxBoxBudget` and `maxPolylineBudget` configure custom drawing ceilings when sharing resources with other indicators.
+- POC and Value Area lines, labels, custom prefixes, date visibility, and date format have dedicated settings.
 - `extendLevelsExtraSession` extends completed recurring levels through their successor.
 
-The shared `MAX_ROW_COUNT` is `49`. This is a library design limit shared by boxes and polylines so one Rows setting controls the complete profile. It is not the point limit of an individual Pine polyline.
+The shared `MAX_ROW_COUNT` is `200`. This is a library design limit shared by boxes and polylines so one Rows setting controls the complete profile. It is not the point limit of an individual Pine polyline.
 
 ## Processing Pipeline
 
@@ -155,7 +156,7 @@ indicator("Volume Profile Consumer", overlay = true,
 The library intentionally leaves the lower-timeframe request in the consumer. Request the chart timeframe at or below one minute to avoid requesting a timeframe that is not lower than the chart:
 
 ```pine
-import OneCleverGuy/VolumeProfileLibraryTESTB/3 as VP
+import OneCleverGuy/VolumeProfileLibrary/<version>
 
 var VP.ProfileState profileState = VP.createState()
 var VP.ProfileStyle profileStyle = VP.ProfileStyle.new()
@@ -170,6 +171,7 @@ profileState := VP.update(
     ltfHighs, ltfLows, ltfCloses, ltfVolumes)
 
 [poc, vaHigh, vaLow] = VP.getMostRecentLevels(profileState)
+[pocVol, pocBuyVol, pocSellVol] = VP.getMostRecentPocVolumes(profileState)
 ```
 
 If lower-timeframe use is disabled or the arrays contain no entries for a chart bar, `update()` falls back to that chart bar's OHLCV data. The consumer should still stop or suppress execution on symbols that provide no usable volume.

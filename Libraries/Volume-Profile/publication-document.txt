@@ -22,7 +22,7 @@ To use this library effectively, the consuming indicator or strategy must handle
 
 [b]Example Integration[/b]
 [pine]
-import OneCleverGuy/VolumeProfileLibraryTESTA/8 as VP
+import OneCleverGuy/VolumeProfileLibrary/4
 
 // 1. Declare persistent state and assemble config
 var VP.ProfileState profileState = VP.createState()
@@ -93,3 +93,17 @@ profileState := VP.update(
 
 [poc, vaHigh, vaLow] = VP.getMostRecentLevels(profileState)
 [/pine]
+
+[b]Update - Extended Row Limit, POC Volume Metrics, Custom Label Prefixes & Formats[/b]
+
+This update expands the library's row capacity, adds POC volume calculations and programmatic access, and introduces customizable level label prefixes and date formats.
+
+[b]What Changed[/b]
+[list]
+[*][b]Increased Row Capacity[/b]: `MAX_ROW_COUNT` is now `200`, offering significantly higher price resolution for single and fixed profiles.
+[*][b]POC Buy & Sell Volume Analytics[/b]: The engine now calculates `pocVolume`, `pocBuyVolume`, and `pocSellVolume` on every profile and retains them across session gaps.
+[*][b]Programmatic POC Volume Access[/b]: Added `VP.getMostRecentPocVolumes(ProfileState)` returning `[totalVolume, buyVolume, sellVolume]` for easy consumption in external scripts, Data Window plots, and debug tables.
+[*][b]Custom Label Prefixes & Date Visibility[/b]: `ProfileStyle` now includes configurable prefixes (`pocLabelPrefix`, `vahLabelPrefix`, `valLabelPrefix`) and individual date toggles (`showPocDate`, `showValueAreaDate`).
+[*][b]Flexible Date Formatting[/b]: Added exported `DateFormat` enum supporting `DayMonth` (e.g. Mon Aug 31), `FullDay` (Monday), `ShortDay` (Mon), `DayMonthNum` (31/08), `MonthDayNum` (08/31), and `IsoDate` (2026-08-31).
+[*][b]Customizable Drawing Budgets[/b]: Added `maxBoxBudget` and `maxPolylineBudget` to `ProfileConfig`, allowing consumer indicators and strategies sharing chart resources to specify custom drawing limits.
+[/list]

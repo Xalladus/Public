@@ -57,3 +57,16 @@ This update expands the indicator's session-history and appearance controls whil
 [*]Show Profile Visuals hides chart drawings without disabling calculations or Data Window outputs.
 [*]Reducing Rows, disabling Split Buy/Sell, or selecting a lighter polyline fill allows more sessions to remain fully drawn.
 [/list]
+
+[b]Update - 200 Row Limit, POC Buy/Sell Volumes, Custom Label Prefixes & Date Formats[/b]
+
+This update introduces higher row resolution, POC volume metrics in both the Data Window and statistics table, and customizable level labels.
+
+[b]New and Updated Features[/b]
+[list]
+[*][b]Higher Row Ceiling[/b]: Rows setting now supports up to 200 rows for ultra-high-resolution profiles.
+[*][b]POC Volume in Statistics Table[/b]: The table now displays POC Buy Volume and POC Sell Volume directly beneath Total Volume.
+[*][b]Data Window POC Volume Plots[/b]: Most Recent POC Buy Volume and Most Recent POC Sell Volume are now plotted to the Data Window for alerts and downstream indicator/strategy integration.
+[*][b]Customizable Level Labels[/b]: Set custom prefix text for POC, VAH, and VAL labels, and toggle origin date visibility on or off.
+[*][b]Date Format Selection[/b]: Choose between multiple date formats for origin labels, including Day/Month names (e.g. "Monday", "Mon Aug 31"), numerical formats (e.g. "31/08", "08/31"), and ISO standard ("yyyy-MM-dd").
+[/list]

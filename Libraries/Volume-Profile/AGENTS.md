@@ -3,7 +3,7 @@
 Pine Script v6 state, calculation, and rendering library for fixed and recurring volume profiles. The library owns range membership, volume distribution, POC/Value Area statistics, drawing-budget resolution, history lifecycle, and chart objects. Consumers own inputs, persistent state/config declarations, drawing limits, missing-volume handling, and lower-timeframe requests. Published as:
 
 ```pine
-import OneCleverGuy/VolumeProfileLibraryTESTB/3 as VP
+import OneCleverGuy/VolumeProfileLibrary/4 as VP
 ```
 
 The library has no imported dependencies. A consumer may use `InputLibrary` to build compatible enum, timezone, line-style, and text-size values.
@@ -16,6 +16,7 @@ The library has no imported dependencies. A consumer may use `InputLibrary` to b
 VP.createState() -> ProfileState
 VP.getMostRecentPoc(ProfileState _state) -> float
 VP.getMostRecentLevels(ProfileState _state) -> [float, float, float]
+VP.getMostRecentPocVolumes(ProfileState _state) -> [float, float, float]
 VP.update(ProfileState _state, ProfileConfig _cfg, bool _useIntrabar,
     array<float> _ltfHighs, array<float> _ltfLows,
     array<float> _ltfCloses, array<float> _ltfVolumes) -> ProfileState
@@ -26,8 +27,12 @@ Exported limits:
 | Constant | Value | Meaning |
 |----------|------:|---------|
 | `MIN_ROW_COUNT` | `1` | Minimum accepted price-row count. |
-| `MAX_ROW_COUNT` | `49` | Maximum shared row count for box and polyline renderers. |
+| `MAX_ROW_COUNT` | `200` | Maximum shared row count for box and polyline renderers. |
 | `MAX_HISTORY_COUNT` | `100` | Maximum requested completed-session history. |
+| `DRAWING_LIMIT_BOXES` | `500` | Maximum box drawing allocation. |
+| `DRAWING_LIMIT_POLYLINES` | `100` | Maximum polyline drawing allocation. |
+| `MIN_GRADIENT_FILL_BANDS` | `3` | Minimum adaptive gradient fill bands. |
+| `MAX_GRADIENT_FILL_BANDS` | `8` | Maximum adaptive gradient fill bands. |
 
 ---
 
@@ -58,6 +63,17 @@ Exported limits:
 | `Solid` | Draw one filled ribbon per region. |
 | `Gradient` | Draw three to eight adaptive ribbons per region. |
 
+### `DateFormat`
+
+| Value | Pattern | Meaning |
+|-------|---------|---------|
+| `DayMonth` | `"EEE MMM dd"` | Formatted day of week and month day (e.g. `Mon Aug 31`). |
+| `FullDay` | `"EEEE"` | Full day of week (e.g. `Monday`). |
+| `ShortDay` | `"EEE"` | 3-letter day of week (e.g. `Mon`). |
+| `DayMonthNum` | `"dd/MM"` | Day/Month numbers (e.g. `31/08`). |
+| `MonthDayNum` | `"MM/dd"` | Month/Day numbers (e.g. `08/31`). |
+| `IsoDate` | `"yyyy-MM-dd"` | ISO date (e.g. `2026-08-31`). |
+
 ---
 
 ## Exported Types
@@ -81,8 +97,17 @@ Visual styling passed through `ProfileConfig.style`.
 | `valueAreaColor` | `color` | `#2962ff` | VAH/VAL line color. |
 | `valueAreaWidth` | `int` | `1` | VAH/VAL line width. |
 | `valueAreaStyle` | `string` | `line.style_solid` | VAH/VAL line style. |
+| `pocLabelPrefix` | `string` | `"POC"` | POC origin label text prefix. |
+| `showPocDate` | `bool` | `true` | Include origin date on POC label. |
+| `valueAreaColor` | `color` | `#2962ff` | VAH/VAL line color. |
+| `valueAreaWidth` | `int` | `1` | VAH/VAL line width. |
+| `valueAreaStyle` | `string` | `line.style_solid` | VAH/VAL line style. |
 | `valueAreaTextColor` | `color` | `#2962ff` | VAH/VAL-label text color. |
 | `valueAreaTextSize` | `string` | `size.small` | VAH/VAL-label text size. |
+| `vahLabelPrefix` | `string` | `"VAH"` | Value Area High origin label text prefix. |
+| `valLabelPrefix` | `string` | `"VAL"` | Value Area Low origin label text prefix. |
+| `showValueAreaDate` | `bool` | `true` | Include origin date on VAH/VAL labels. |
+| `dateFormat` | `DateFormat` | `DateFormat.DayMonth` | Date format applied to level labels. |
 
 ### `ProfileConfig`
 
@@ -111,6 +136,8 @@ Consumer-owned configuration sanitized in place by `update()`.
 | `showValueAreaLines` | `bool` | `false` | Draw VAH and VAL lines. |
 | `showValueAreaLabels` | `bool` | `true` | Draw VAH and VAL origin labels. |
 | `extendLevelsExtraSession` | `bool` | `false` | Extend completed recurring levels through the next session. |
+| `maxBoxBudget` | `int` | `500` | Maximum box budget allocated to the profile engine. |
+| `maxPolylineBudget` | `int` | `100` | Maximum polyline budget allocated to the profile engine. |
 | `style` | `ProfileStyle` | `na` | Visual styling; replaced with defaults when `na`. |
 
 ### `ProfileState`
@@ -134,6 +161,9 @@ Persistent engine state. Declare once with `var`; read diagnostic and latest-val
 | `mostRecentValueAreaLow` | `float` | Latest VAL retained across session gaps. |
 | `mostRecentBarCount` | `int` | Bar count of the active or latest profile. |
 | `mostRecentTotalVolume` | `float` | Total volume of the active or latest profile. |
+| `mostRecentPocVolume` | `float` | Latest POC total volume retained across session gaps. |
+| `mostRecentPocBuyVolume` | `float` | Latest POC buy volume retained across session gaps. |
+| `mostRecentPocSellVolume` | `float` | Latest POC sell volume retained across session gaps. |
 
 ### `Profile`
 
@@ -148,6 +178,7 @@ Exported because it is stored inside `ProfileState`, but operationally engine-ow
 | `createState` | None | `ProfileState` | Creates empty persistent history arrays and state. |
 | `getMostRecentPoc` | `_state` | `float` | Returns the retained latest POC, or `na` before calculation. |
 | `getMostRecentLevels` | `_state` | `[float, float, float]` | Returns retained POC, VAH, and VAL. |
+| `getMostRecentPocVolumes` | `_state` | `[float, float, float]` | Returns retained POC total volume, POC buy volume, and POC sell volume. |
 | `update` | `_state`, `_cfg`, `_useIntrabar`, `_ltfHighs`, `_ltfLows`, `_ltfCloses`, `_ltfVolumes` | `ProfileState` | Sanitizes config, advances range/profile state, accumulates volume, computes statistics, resolves budgets, and renders. Mutates `_state` and `_cfg`. |
 
 ---

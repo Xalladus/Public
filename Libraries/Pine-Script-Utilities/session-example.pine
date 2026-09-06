@@ -1,0 +1,1440 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © OneCleverGuy
+
+//@version=6
+
+//+-------------------------------------------------------+
+//                       INFORMATION                      |
+//+-------------------------------------------------------+
+// #region Information
+
+// U-Sessions plots up to four sessions plus a daily session with boxes, high/low lines, labels,
+// vertical trade-window lines, daily dividers, and psychological level grids.
+//
+// Presets resolve in their native timezone. Custom sessions, trade windows, and line end times
+// use the timezone selected by the user. When the first bar after a long weekend or holiday gap
+// arrives, the utility library adjusts affected session and line lifecycle times from the gap
+// actually present in the chart data.
+//
+// Session lifecycle state is owned by UtilityLibrary1CG. This script owns inputs, visuals,
+// and alert policy.
+
+// #endregion Information
+
+indicator("New Ultra-Session Levels", shorttitle = "U-Sessions", precision = 5,
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, overlay = true)
+
+import OneCleverGuy/UtilityLibrary1CG/1 as UTIL
+import OneCleverGuy/RoundNumberLibrary/3 as RNL
+
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
+
+// #region Input Enums ************************************
+
+enum AlertMode
+    off      = "No Alerts"
+    onBreak  = "On Break"
+    closeOut = "Close Out"
+    closeIn  = "Close In (Sweep)"
+
+enum RoundGranularity
+    whole   = "Whole"
+    half    = "Half"
+    quarter = "Quarter"
+    fifth   = "Fifth"
+    eighth  = "Eighth"
+    tenth   = "Tenth"
+    eighty  = "80/20"
+
+// #endregion Input Enums
+
+// #region Tooltips ***************************************
+
+string tt_keepAhead    = "The number of bars the line stays in front of price, stopping at line end time."
+string tt_nextDay      = "Time the line ends, in your selected timezone. Check the box to extend it another day."
+string tt_colors       = "Major Color: session text, lines, and box outline.\nMinor Color: box fill and background."
+string tt_highLow      = "Style of the high and low lines. Disabled for daily sessions."
+string tt_box          = "Style of the session box. Disabled for daily sessions."
+string tt_boxText      = "Display the session label inside the box."
+string tt_history      = "Display previous sessions as styled above."
+string tt_zero         = "Auto-detected round-number grid based on price magnitude and tick size."
+string tt_vLines       = "Vertical lines marking the start and finish of the selected window, in your selected timezone."
+string tt_custom       = "Custom times are in your selected timezone. Presets use their own market timezone."
+                       + "\nIdentical open and close times create a 24-hour session."
+string tt_day          = "FX Close runs 17:00 to 17:00 New York.\nUTC, Exchange, and New York daily sessions run midnight to midnight."
+string tt_divider      = "Vertical line drawn at the start of each daily session."
+string tt_dayLabels    = "Bubble for the day of the week.\nColor 1: background\nColor 2: text."
+string tt_timezone     = "Applied to custom sessions, trade windows, and line end times."
+string tt_alertSession = "Alerts fire after the session closes, when its high or low is taken."
+                       + " With trade windows enabled, only breaks inside those windows alert."
+                       + "\nOn Break: first touch of the level."
+                       + "\nClose Out: candle closes beyond the level."
+                       + "\nClose In (Sweep): candle pierces the level and closes back inside."
+
+// #endregion Tooltips
+
+// #region Timezone ***************************************
+
+var string iGroupTimezone = "Timezone"
+i_timeZone = input.enum(UTIL.Timezones.ny, "Select Time Zone", group = iGroupTimezone, tooltip = tt_timezone, display = display.none)
+
+// #endregion Timezone
+
+// #region Session 01 *************************************
+
+var string iGroupSess01 = "SESSION 01"
+i_showAll01       = input.bool(true, "", group = iGroupSess01, inline = "D6", display = display.none)
+i_session01       = input.enum(UTIL.SessionPreset.Custom, "Session", group = iGroupSess01, inline = "D6", display = display.none, active = i_showAll01)
+bool a_custom01   = i_showAll01 and i_session01 == UTIL.SessionPreset.Custom
+i_customLabel01   = input.string("Asia", "Label", group = iGroupSess01, inline = "D6", active = a_custom01, display = display.none)
+i_customSession01 = input.session("1600-0000", "Custom Session", group = iGroupSess01, tooltip = tt_custom, display = display.none, active = a_custom01)
+
+i_primeColor01    = input.color(color.new(#4caf50, 0), "Major Color", group = iGroupSess01, inline = "D1", active = i_showAll01, display = display.none)
+i_subColor01      = input.color(color.new(#4caf50, 90), "Minor Color", group = iGroupSess01, inline = "D1", active = i_showAll01, display = display.none)
+i_sessionBg01     = input.bool(false, "Background", group = iGroupSess01, inline = "D1", tooltip = tt_colors, active = i_showAll01, display = display.none)
+
+i_showBox01       = input.bool(true, "Session Box", group = iGroupSess01, inline = "D3", active = i_showAll01, display = display.none)
+bool a_box01      = i_showAll01 and i_showBox01
+i_boxStyle01      = input.enum(UTIL.LineStyle.dashed, "", group = iGroupSess01, inline = "D3", display = display.none, active = a_box01)
+i_boxSize01       = input.enum(UTIL.LineSize.thin, "", group = iGroupSess01, inline = "D3", display = display.none, tooltip = tt_box, active = a_box01)
+i_showBoxHist01   = input.bool(true, "History", group = iGroupSess01, inline = "D3", tooltip = tt_history, display = display.none, active = a_box01)
+
+i_showBoxText01   = input.bool(false, "Box Text", group = iGroupSess01, inline = "D7", display = display.none, active = a_box01)
+bool a_boxText01  = a_box01 and i_showBoxText01
+i_boxTextColor01  = input.color(color.new(#FFFFFF, 0), " ", group = iGroupSess01, inline = "D7", display = display.none, active = a_boxText01)
+i_boxTextSize01   = input.enum(UTIL.TextSize.tiny, "Size", group = iGroupSess01, inline = "D7", display = display.none, active = a_boxText01)
+i_boxTextHAlign01 = input.enum(UTIL.HorizontalAlign.left, "H Align:", group = iGroupSess01, inline = "D7b", display = display.none, active = a_boxText01)
+i_boxTextVAlign01 = input.enum(UTIL.VerticalAlign.top, "V Align:", group = iGroupSess01, inline = "D7b", display = display.none, tooltip = tt_boxText, active = a_boxText01)
+
+i_showHiLo01      = input.bool(true, "Highs/Lows", group = iGroupSess01, inline = "D2", active = i_showAll01, display = display.none)
+bool a_hiLo01     = i_showAll01 and i_showHiLo01
+i_hiLoStyle01     = input.enum(UTIL.LineStyle.dotted, "", group = iGroupSess01, inline = "D2", display = display.none, active = a_hiLo01)
+i_hiLoSize01      = input.enum(UTIL.LineSize.thin, "", group = iGroupSess01, inline = "D2", display = display.none, active = a_hiLo01)
+i_showLineHist01  = input.bool(true, "History", group = iGroupSess01, inline = "D2", tooltip = tt_history, display = display.none, active = a_hiLo01)
+
+i_lineAnchor01    = input.enum(UTIL.SessionAnchor.SessionEnd, "Line Starts:", group = iGroupSess01, inline = "D4", display = display.none, active = a_hiLo01)
+i_aheadTime01     = input.int(10, "Frontrun", minval = 1, maxval = 50, group = iGroupSess01, inline = "D4", tooltip = tt_keepAhead, display = display.none, active = a_hiLo01)
+i_lineEndHour01   = input.enum(UTIL.Hours.h17, "Line Ends", group = iGroupSess01, inline = "D5", display = display.none, active = a_hiLo01)
+i_lineEndMinute01 = input.enum(UTIL.Minutes.m0, ":", group = iGroupSess01, inline = "D5", display = display.none, active = a_hiLo01)
+i_lineExtraDay01  = input.bool(false, "+1 Day", tt_nextDay, inline = "D5", group = iGroupSess01, display = display.none, active = a_hiLo01)
+i_showLabel01     = input.bool(true, "Line Labels", group = iGroupSess01, inline = "D9", tooltip = tt_highLow, active = a_hiLo01, display = display.none)
+
+i_alertMode01     = input.enum(AlertMode.off, "Alert Mode", group = iGroupSess01, inline = "D8", tooltip = tt_alertSession, active = i_showAll01, display = display.none)
+
+// #endregion Session 01
+
+// #region Session 02 *************************************
+
+var string iGroupSess02 = "SESSION 02"
+i_showAll02       = input.bool(true, "", group = iGroupSess02, inline = "A6", display = display.none)
+i_session02       = input.enum(UTIL.SessionPreset.FxLondon, "Session", group = iGroupSess02, inline = "A6", display = display.none, active = i_showAll02)
+bool a_custom02   = i_showAll02 and i_session02 == UTIL.SessionPreset.Custom
+i_customLabel02   = input.string("London", "Label", group = iGroupSess02, inline = "A6", active = a_custom02, display = display.none)
+i_customSession02 = input.session("0800-1700", "Custom Session", group = iGroupSess02, tooltip = tt_custom, display = display.none, active = a_custom02)
+
+i_primeColor02    = input.color(color.new(#5b9cf6, 0), "Major Color", group = iGroupSess02, inline = "A1", active = i_showAll02, display = display.none)
+i_subColor02      = input.color(color.new(#5b9cf6, 90), "Minor Color", group = iGroupSess02, inline = "A1", active = i_showAll02, display = display.none)
+i_sessionBg02     = input.bool(false, "Background", group = iGroupSess02, inline = "A1", tooltip = tt_colors, active = i_showAll02, display = display.none)
+
+i_showBox02       = input.bool(true, "Session Box", group = iGroupSess02, inline = "A3", active = i_showAll02, display = display.none)
+bool a_box02      = i_showAll02 and i_showBox02
+i_boxStyle02      = input.enum(UTIL.LineStyle.dashed, "", group = iGroupSess02, inline = "A3", display = display.none, active = a_box02)
+i_boxSize02       = input.enum(UTIL.LineSize.thin, "", group = iGroupSess02, inline = "A3", display = display.none, tooltip = tt_box, active = a_box02)
+i_showBoxHist02   = input.bool(true, "History", group = iGroupSess02, inline = "A3", tooltip = tt_history, display = display.none, active = a_box02)
+
+i_showBoxText02   = input.bool(false, "Box Text", group = iGroupSess02, inline = "A7", display = display.none, active = a_box02)
+bool a_boxText02  = a_box02 and i_showBoxText02
+i_boxTextColor02  = input.color(color.new(#FFFFFF, 0), " ", group = iGroupSess02, inline = "A7", display = display.none, active = a_boxText02)
+i_boxTextSize02   = input.enum(UTIL.TextSize.tiny, "Size", group = iGroupSess02, inline = "A7", display = display.none, active = a_boxText02)
+i_boxTextHAlign02 = input.enum(UTIL.HorizontalAlign.left, "H Align:", group = iGroupSess02, inline = "A7b", display = display.none, active = a_boxText02)
+i_boxTextVAlign02 = input.enum(UTIL.VerticalAlign.top, "V Align:", group = iGroupSess02, inline = "A7b", display = display.none, tooltip = tt_boxText, active = a_boxText02)
+
+i_showHiLo02      = input.bool(true, "Highs/Lows", group = iGroupSess02, inline = "A2", active = i_showAll02, display = display.none)
+bool a_hiLo02     = i_showAll02 and i_showHiLo02
+i_hiLoStyle02     = input.enum(UTIL.LineStyle.dotted, "", group = iGroupSess02, inline = "A2", display = display.none, active = a_hiLo02)
+i_hiLoSize02      = input.enum(UTIL.LineSize.thin, "", group = iGroupSess02, inline = "A2", display = display.none, active = a_hiLo02)
+i_showLineHist02  = input.bool(true, "History", group = iGroupSess02, inline = "A2", tooltip = tt_history, display = display.none, active = a_hiLo02)
+
+i_lineAnchor02    = input.enum(UTIL.SessionAnchor.SessionEnd, "Line Starts:", group = iGroupSess02, inline = "A4", display = display.none, active = a_hiLo02)
+i_aheadTime02     = input.int(10, "Frontrun", minval = 1, maxval = 50, group = iGroupSess02, inline = "A4", tooltip = tt_keepAhead, display = display.none, active = a_hiLo02)
+i_lineEndHour02   = input.enum(UTIL.Hours.h17, "Line Ends", group = iGroupSess02, inline = "A5", display = display.none, active = a_hiLo02)
+i_lineEndMinute02 = input.enum(UTIL.Minutes.m0, ":", group = iGroupSess02, inline = "A5", display = display.none, active = a_hiLo02)
+i_lineExtraDay02  = input.bool(false, "+1 Day", tt_nextDay, inline = "A5", group = iGroupSess02, display = display.none, active = a_hiLo02)
+i_showLabel02     = input.bool(true, "Line Labels", group = iGroupSess02, inline = "A9", tooltip = tt_highLow, active = a_hiLo02, display = display.none)
+
+i_alertMode02     = input.enum(AlertMode.off, "Alert Mode", group = iGroupSess02, inline = "A8", tooltip = tt_alertSession, active = i_showAll02, display = display.none)
+
+// #endregion Session 02
+
+// #region Session 03 *************************************
+
+var string iGroupSess03 = "SESSION 03"
+i_showAll03       = input.bool(true, "", group = iGroupSess03, inline = "B6", display = display.none)
+i_session03       = input.enum(UTIL.SessionPreset.FxNewYork, "Session", group = iGroupSess03, inline = "B6", display = display.none, active = i_showAll03)
+bool a_custom03   = i_showAll03 and i_session03 == UTIL.SessionPreset.Custom
+i_customLabel03   = input.string("New York", "Label", group = iGroupSess03, inline = "B6", active = a_custom03, display = display.none)
+i_customSession03 = input.session("0800-1700", "Custom Session", group = iGroupSess03, tooltip = tt_custom, display = display.none, active = a_custom03)
+
+i_primeColor03    = input.color(color.new(#b2b5be, 0), "Major Color", group = iGroupSess03, inline = "B1", active = i_showAll03, display = display.none)
+i_subColor03      = input.color(color.new(#b2b5be, 90), "Minor Color", group = iGroupSess03, inline = "B1", active = i_showAll03, display = display.none)
+i_sessionBg03     = input.bool(false, "Background", group = iGroupSess03, inline = "B1", tooltip = tt_colors, active = i_showAll03, display = display.none)
+
+i_showBox03       = input.bool(true, "Session Box", group = iGroupSess03, inline = "B3", active = i_showAll03, display = display.none)
+bool a_box03      = i_showAll03 and i_showBox03
+i_boxStyle03      = input.enum(UTIL.LineStyle.dashed, "", group = iGroupSess03, inline = "B3", display = display.none, active = a_box03)
+i_boxSize03       = input.enum(UTIL.LineSize.thin, "", group = iGroupSess03, inline = "B3", display = display.none, tooltip = tt_box, active = a_box03)
+i_showBoxHist03   = input.bool(true, "History", group = iGroupSess03, inline = "B3", tooltip = tt_history, display = display.none, active = a_box03)
+
+i_showBoxText03   = input.bool(false, "Box Text", group = iGroupSess03, inline = "B7", display = display.none, active = a_box03)
+bool a_boxText03  = a_box03 and i_showBoxText03
+i_boxTextColor03  = input.color(color.new(#FFFFFF, 0), " ", group = iGroupSess03, inline = "B7", display = display.none, active = a_boxText03)
+i_boxTextSize03   = input.enum(UTIL.TextSize.tiny, "Size", group = iGroupSess03, inline = "B7", display = display.none, active = a_boxText03)
+i_boxTextHAlign03 = input.enum(UTIL.HorizontalAlign.left, "H Align:", group = iGroupSess03, inline = "B7b", display = display.none, active = a_boxText03)
+i_boxTextVAlign03 = input.enum(UTIL.VerticalAlign.top, "V Align:", group = iGroupSess03, inline = "B7b", display = display.none, tooltip = tt_boxText, active = a_boxText03)
+
+i_showHiLo03      = input.bool(true, "Highs/Lows", group = iGroupSess03, inline = "B2", active = i_showAll03, display = display.none)
+bool a_hiLo03     = i_showAll03 and i_showHiLo03
+i_hiLoStyle03     = input.enum(UTIL.LineStyle.dotted, "", group = iGroupSess03, inline = "B2", display = display.none, active = a_hiLo03)
+i_hiLoSize03      = input.enum(UTIL.LineSize.thin, "", group = iGroupSess03, inline = "B2", display = display.none, active = a_hiLo03)
+i_showLineHist03  = input.bool(true, "History", group = iGroupSess03, inline = "B2", tooltip = tt_history, display = display.none, active = a_hiLo03)
+
+i_lineAnchor03    = input.enum(UTIL.SessionAnchor.SessionEnd, "Line Starts:", group = iGroupSess03, inline = "B4", display = display.none, active = a_hiLo03)
+i_aheadTime03     = input.int(10, "Frontrun", minval = 1, maxval = 50, group = iGroupSess03, inline = "B4", tooltip = tt_keepAhead, display = display.none, active = a_hiLo03)
+i_lineEndHour03   = input.enum(UTIL.Hours.h17, "Line Ends", group = iGroupSess03, inline = "B5", display = display.none, active = a_hiLo03)
+i_lineEndMinute03 = input.enum(UTIL.Minutes.m0, ":", group = iGroupSess03, inline = "B5", display = display.none, active = a_hiLo03)
+i_lineExtraDay03  = input.bool(false, "+1 Day", tt_nextDay, inline = "B5", group = iGroupSess03, display = display.none, active = a_hiLo03)
+i_showLabel03     = input.bool(true, "Line Labels", group = iGroupSess03, inline = "B9", tooltip = tt_highLow, active = a_hiLo03, display = display.none)
+
+i_alertMode03     = input.enum(AlertMode.off, "Alert Mode", group = iGroupSess03, inline = "B8", tooltip = tt_alertSession, active = i_showAll03, display = display.none)
+
+// #endregion Session 03
+
+// #region Session 04 *************************************
+
+var string iGroupSess04 = "SESSION 04"
+i_showAll04       = input.bool(false, "", group = iGroupSess04, inline = "C6", display = display.none)
+i_session04       = input.enum(UTIL.SessionPreset.Custom, "Session", group = iGroupSess04, inline = "C6", display = display.none, active = i_showAll04)
+bool a_custom04   = i_showAll04 and i_session04 == UTIL.SessionPreset.Custom
+i_customLabel04   = input.string("Custom", "Label", group = iGroupSess04, inline = "C6", active = a_custom04, display = display.none)
+i_customSession04 = input.session("1100-1200", "Custom Session", group = iGroupSess04, tooltip = tt_custom, display = display.none, active = a_custom04)
+
+i_primeColor04    = input.color(color.new(#f69c5b, 0), "Major Color", group = iGroupSess04, inline = "C1", active = i_showAll04, display = display.none)
+i_subColor04      = input.color(color.new(#f69c5b, 90), "Minor Color", group = iGroupSess04, inline = "C1", active = i_showAll04, display = display.none)
+i_sessionBg04     = input.bool(false, "Background", group = iGroupSess04, inline = "C1", tooltip = tt_colors, active = i_showAll04, display = display.none)
+
+i_showBox04       = input.bool(true, "Session Box", group = iGroupSess04, inline = "C3", active = i_showAll04, display = display.none)
+bool a_box04      = i_showAll04 and i_showBox04
+i_boxStyle04      = input.enum(UTIL.LineStyle.dashed, "", group = iGroupSess04, inline = "C3", display = display.none, active = a_box04)
+i_boxSize04       = input.enum(UTIL.LineSize.thin, "", group = iGroupSess04, inline = "C3", display = display.none, tooltip = tt_box, active = a_box04)
+i_showBoxHist04   = input.bool(true, "History", group = iGroupSess04, inline = "C3", tooltip = tt_history, display = display.none, active = a_box04)
+
+i_showBoxText04   = input.bool(false, "Box Text", group = iGroupSess04, inline = "C7", display = display.none, active = a_box04)
+bool a_boxText04  = a_box04 and i_showBoxText04
+i_boxTextColor04  = input.color(color.new(#FFFFFF, 0), " ", group = iGroupSess04, inline = "C7", display = display.none, active = a_boxText04)
+i_boxTextSize04   = input.enum(UTIL.TextSize.tiny, "Size", group = iGroupSess04, inline = "C7", display = display.none, active = a_boxText04)
+i_boxTextHAlign04 = input.enum(UTIL.HorizontalAlign.left, "H Align:", group = iGroupSess04, inline = "C7b", display = display.none, active = a_boxText04)
+i_boxTextVAlign04 = input.enum(UTIL.VerticalAlign.top, "V Align:", group = iGroupSess04, inline = "C7b", display = display.none, tooltip = tt_boxText, active = a_boxText04)
+
+i_showHiLo04      = input.bool(true, "Highs/Lows", group = iGroupSess04, inline = "C2", active = i_showAll04, display = display.none)
+bool a_hiLo04     = i_showAll04 and i_showHiLo04
+i_hiLoStyle04     = input.enum(UTIL.LineStyle.dotted, "", group = iGroupSess04, inline = "C2", display = display.none, active = a_hiLo04)
+i_hiLoSize04      = input.enum(UTIL.LineSize.thin, "", group = iGroupSess04, inline = "C2", display = display.none, active = a_hiLo04)
+i_showLineHist04  = input.bool(true, "History", group = iGroupSess04, inline = "C2", tooltip = tt_history, display = display.none, active = a_hiLo04)
+
+i_lineAnchor04    = input.enum(UTIL.SessionAnchor.SessionEnd, "Line Starts:", group = iGroupSess04, inline = "C4", display = display.none, active = a_hiLo04)
+i_aheadTime04     = input.int(10, "Frontrun", minval = 1, maxval = 50, group = iGroupSess04, inline = "C4", tooltip = tt_keepAhead, display = display.none, active = a_hiLo04)
+i_lineEndHour04   = input.enum(UTIL.Hours.h19, "Line Ends", group = iGroupSess04, inline = "C5", display = display.none, active = a_hiLo04)
+i_lineEndMinute04 = input.enum(UTIL.Minutes.m0, ":", group = iGroupSess04, inline = "C5", display = display.none, active = a_hiLo04)
+i_lineExtraDay04  = input.bool(false, "+1 Day", tt_nextDay, inline = "C5", group = iGroupSess04, display = display.none, active = a_hiLo04)
+i_showLabel04     = input.bool(true, "Line Labels", group = iGroupSess04, inline = "C9", tooltip = tt_highLow, active = a_hiLo04, display = display.none)
+
+i_alertMode04     = input.enum(AlertMode.off, "Alert Mode", group = iGroupSess04, inline = "C8", tooltip = tt_alertSession, active = i_showAll04, display = display.none)
+
+// #endregion Session 04
+
+// #region History ****************************************
+
+var string iGroupHistory = "History"
+i_showHistory = input.bool(true, "History.", group = iGroupHistory, inline = "H1", display = display.none)
+i_daysInput   = input.int(5, "Previous sessions:", 1, 90, 1,
+     "Previous occurrences retained per session, in addition to the current occurrence. Gaps do not consume this count. Available chart data and drawing limits can reduce it. Daily identifiers count actual daily bars; trade-window history still uses calendar days.",
+     group = iGroupHistory, inline = "H1", display = display.none)
+i_debugHistory = input.bool(false, "Diagnose history in Pine Logs", group = iGroupHistory,
+     tooltip = "Lists retained session dates, price availability, and box coordinates once after history loads.", display = display.none)
+
+// #endregion History
+
+// #region Session Day ************************************
+
+var string iGroupSessDay = "Session Day"
+i_sessionDay       = input.enum(UTIL.SessionPreset.DailyFxClose, "Session Timing",
+     options = [UTIL.SessionPreset.DailyFxClose, UTIL.SessionPreset.DailyUtc,
+         UTIL.SessionPreset.DailyExchange, UTIL.SessionPreset.DailyNewYork],
+     group = iGroupSessDay, tooltip = tt_day, display = display.none)
+
+i_showHiLoDay      = input.bool(false, "Daily Hi/Low Lines", group = iGroupSessDay, inline = "E1", display = display.none)
+i_showLabelDay     = input.bool(false, "Line Labels", group = iGroupSessDay, inline = "E1", display = display.none, active = i_showHiLoDay)
+i_primeColorDay    = input.color(color.new(#b2b5be, 0), "Major Color", group = iGroupSessDay, inline = "E2", active = i_showHiLoDay, display = display.none)
+i_hiLoStyleDay     = input.enum(UTIL.LineStyle.dotted, "", group = iGroupSessDay, inline = "E2", display = display.none, active = i_showHiLoDay)
+i_hiLoSizeDay      = input.enum(UTIL.LineSize.thin, "", group = iGroupSessDay, inline = "E2", display = display.none, active = i_showHiLoDay)
+i_lineAnchorDay    = input.enum(UTIL.SessionAnchor.SessionEnd, "Line Starts:", group = iGroupSessDay, inline = "E3", display = display.none, active = i_showHiLoDay)
+i_aheadTimeDay     = input.int(10, "Frontrun", minval = 1, maxval = 50, group = iGroupSessDay, inline = "E3", tooltip = tt_keepAhead, display = display.none, active = i_showHiLoDay)
+i_lineEndHourDay   = input.enum(UTIL.Hours.h17, "Line Ends", group = iGroupSessDay, inline = "E4", display = display.none, active = i_showHiLoDay)
+i_lineEndMinuteDay = input.enum(UTIL.Minutes.m0, ":", group = iGroupSessDay, inline = "E4", display = display.none, active = i_showHiLoDay)
+i_alertModeDay     = input.enum(AlertMode.off, "Alert Mode", group = iGroupSessDay, inline = "E5", tooltip = tt_alertSession, active = i_showHiLoDay, display = display.none)
+
+i_showDivide       = input.bool(true, "Daily Divider", group = iGroupSessDay, inline = "E6", display = display.none)
+i_divideStyle      = input.enum(UTIL.LineStyle.dashed, "", group = iGroupSessDay, inline = "E6", display = display.none, active = i_showDivide)
+i_divideSize       = input.enum(UTIL.LineSize.thin, "", group = iGroupSessDay, inline = "E6", display = display.none, active = i_showDivide)
+i_divideColor      = input.color(color.new(#FFFFFF, 0), "", group = iGroupSessDay, inline = "E6", display = display.none, tooltip = tt_divider, active = i_showDivide)
+
+i_showDivideLabels = input.bool(true, "Day Labels", group = iGroupSessDay, inline = "E7", display = display.none, active = i_showDivide)
+bool a_dayLbl      = i_showDivide and i_showDivideLabels
+i_divideLabelColor = input.color(color.new(#5b9cf6, 0), "", group = iGroupSessDay, inline = "E7", display = display.none, active = a_dayLbl)
+i_divideTextColor  = input.color(color.new(#FFFFFF, 0), "", group = iGroupSessDay, inline = "E7", display = display.none, tooltip = tt_dayLabels, active = a_dayLbl)
+
+// #endregion Session Day
+
+// #region Trade Windows **********************************
+
+var string iGroupTradeWindows = "Trade Windows"
+i_showWindow01  = input.bool(true, "", group = iGroupTradeWindows, inline = "V", display = display.none)
+i_window01      = input.session("1000-1100", "Trade Window 1", group = iGroupTradeWindows, inline = "V", tooltip = tt_vLines, display = display.none, active = i_showWindow01)
+i_windowColor01 = input.color(color.new(#b22833, 0), "", group = iGroupTradeWindows, inline = "V1", display = display.none, active = i_showWindow01)
+i_windowStyle01 = input.enum(UTIL.LineStyle.solid, "", group = iGroupTradeWindows, inline = "V1", display = display.none, active = i_showWindow01)
+i_windowSize01  = input.enum(UTIL.LineSize.thin, "", group = iGroupTradeWindows, inline = "V1", display = display.none, active = i_showWindow01)
+i_windowHist01  = input.bool(false, "Show History", group = iGroupTradeWindows, inline = "V1", display = display.none, active = i_showWindow01)
+
+i_showWindow02  = input.bool(true, "", group = iGroupTradeWindows, inline = "X", display = display.none)
+i_window02      = input.session("1400-1500", "Trade Window 2", group = iGroupTradeWindows, inline = "X", tooltip = tt_vLines, display = display.none, active = i_showWindow02)
+i_windowColor02 = input.color(color.new(#f69c5b, 0), "", group = iGroupTradeWindows, inline = "X1", display = display.none, active = i_showWindow02)
+i_windowStyle02 = input.enum(UTIL.LineStyle.solid, "", group = iGroupTradeWindows, inline = "X1", display = display.none, active = i_showWindow02)
+i_windowSize02  = input.enum(UTIL.LineSize.thin, "", group = iGroupTradeWindows, inline = "X1", display = display.none, active = i_showWindow02)
+i_windowHist02  = input.bool(false, "Show History", group = iGroupTradeWindows, inline = "X1", display = display.none, active = i_showWindow02)
+
+// #endregion Trade Windows
+
+// #region Psychological Levels ***************************
+
+var string iGroupPsychLevels = "Psychological Levels"
+i_showRoundMajor  = input.bool(true, "Round Major", group = iGroupPsychLevels, inline = "RN1", tooltip = tt_zero, display = display.none)
+i_roundGranMajor  = input.enum(RoundGranularity.whole, "Gran.", group = iGroupPsychLevels, inline = "RN1", active = i_showRoundMajor, display = display.none)
+i_roundCountMajor = input.int(3, "Levels +/-", minval = 1, maxval = 50, group = iGroupPsychLevels, inline = "RN1", active = i_showRoundMajor, display = display.none)
+i_roundColorMajor = input.color(color.new(#434651, 40), "Color / Style / Width", group = iGroupPsychLevels, inline = "RN1A", active = i_showRoundMajor, display = display.none)
+i_roundStyleMajor = input.enum(UTIL.LineStyle.solid, "", group = iGroupPsychLevels, inline = "RN1A", display = display.none, active = i_showRoundMajor)
+i_roundSizeMajor  = input.enum(UTIL.LineSize.normal, "", group = iGroupPsychLevels, inline = "RN1A", display = display.none, active = i_showRoundMajor)
+
+i_showRoundMinor  = input.bool(true, "Round Minor", group = iGroupPsychLevels, inline = "RN2", tooltip = tt_zero, display = display.none)
+i_roundGranMinor  = input.enum(RoundGranularity.tenth, "Gran.", group = iGroupPsychLevels, inline = "RN2", active = i_showRoundMinor, display = display.none)
+i_roundCountMinor = input.int(10, "Levels +/-", minval = 1, maxval = 50, group = iGroupPsychLevels, inline = "RN2", active = i_showRoundMinor, display = display.none)
+i_roundColorMinor = input.color(color.new(#434651, 65), "Color / Style / Width", group = iGroupPsychLevels, inline = "RN2A", active = i_showRoundMinor, display = display.none)
+i_roundStyleMinor = input.enum(UTIL.LineStyle.dotted, "", group = iGroupPsychLevels, inline = "RN2A", display = display.none, active = i_showRoundMinor)
+i_roundSizeMinor  = input.enum(UTIL.LineSize.thin, "", group = iGroupPsychLevels, inline = "RN2A", display = display.none, active = i_showRoundMinor)
+
+// #endregion Psychological Levels
+
+// #endregion Inputs
+
+//+-------------------------------------------------------+
+//                           UDT'S                        |
+//+-------------------------------------------------------+
+// #region UDT's
+
+// #region Helper UDTs ************************************
+
+type BarTracker
+    int sessBar = na
+    int hiBar   = na
+    int loBar   = na
+    int hiTime  = na
+    int loTime  = na
+    int endBar  = na
+
+type BreakTracker
+    int  sessStartTime = na
+    bool highBroken    = false
+    bool lowBroken     = false
+    bool highAlerted   = false
+    bool lowAlerted    = false
+
+// Styling is stored as resolved Pine constants so the render path never converts enums per bar.
+type SessionVisualConfig
+    bool   isEnabled       = false
+    color  primeColor      = na
+    color  backgroundColor = na
+    bool   showBackground  = false
+    bool   showHiLo        = false
+    string lineStyle       = line.style_dotted
+    int    lineWidth       = 1
+    bool   showLabel       = false
+    bool   showBox         = false
+    string boxStyle        = line.style_dashed
+    int    boxWidth        = 1
+    int    aheadBars       = 10
+    bool   showLineHistory = false
+    bool   showBoxHistory  = false
+    bool   showBoxText     = false
+    color  boxTextColor    = #FFFFFF
+    string boxTextSize     = size.tiny
+    string boxTextHAlign   = text.align_left
+    string boxTextVAlign   = text.align_top
+    UTIL.SessionAnchor anchor = UTIL.SessionAnchor.SessionEnd
+
+type SessionVisualState
+    line  highLine  = na
+    label highLabel = na
+    line  lowLine   = na
+    label lowLabel  = na
+    box   square    = na
+
+type RoundLevelConfig
+    bool   isEnabled = false
+    int    count     = 1
+    color  lineColor = na
+    string lineStyle = line.style_solid
+    int    lineWidth = 1
+
+type SessionExecMeta
+    string    mapKey    = na
+    bool      isEnabled = false
+    AlertMode alertMode = AlertMode.off
+    string    labelText = na
+
+type TradeWindowState
+    int  lastDrawnStart = na
+    bool endAdjusted    = false
+
+// #endregion Helper UDTs
+
+// #endregion UDT's
+
+//+-------------------------------------------------------+
+//                     GLOBAL VARIABLES                   |
+//+-------------------------------------------------------+
+// #region Global Variables
+
+// #region Helper Globals *********************************
+
+// #region Runtime Context //
+
+var string USER_TIMEZONE = i_timeZone.toTimezone()
+
+// Realtime calculations use the current clock. Historical bars and replay use the bar close,
+// which prevents the machine clock from making old bars appear to be far in the future.
+bool isReplayLikeRealtime = barstate.isrealtime and not na(time_close) and timenow > time_close + UTIL.durationMs(UTIL.Duration.Day)
+int  TIMENOW = (barstate.isrealtime and not isReplayLikeRealtime ? timenow : nz(time_close, time))
+
+// Retention is resolved once from a shared budget so independently configured features cannot
+// collectively exceed TradingView's 500-ID limits. A small reserve absorbs transient rollover objects.
+const int MANAGED_DRAWING_BUDGET = 480
+int requestedHistoryDays = (i_showHistory ? i_daysInput : 0)
+
+int liveSessionLineSlots = (
+     (i_showAll01 and i_showHiLo01 ? 1 : 0) + (i_showAll02 and i_showHiLo02 ? 1 : 0)
+     + (i_showAll03 and i_showHiLo03 ? 1 : 0) + (i_showAll04 and i_showHiLo04 ? 1 : 0)
+     + (i_showHiLoDay ? 1 : 0))
+int historySessionLineSlots = (
+     (i_showAll01 and i_showHiLo01 and i_showLineHist01 ? 1 : 0)
+     + (i_showAll02 and i_showHiLo02 and i_showLineHist02 ? 1 : 0)
+     + (i_showAll03 and i_showHiLo03 and i_showLineHist03 ? 1 : 0)
+     + (i_showAll04 and i_showHiLo04 and i_showLineHist04 ? 1 : 0)
+     + (i_showHiLoDay ? 1 : 0))
+int liveLabelSlots = (
+     (i_showAll01 and i_showHiLo01 and i_showLabel01 ? 1 : 0)
+     + (i_showAll02 and i_showHiLo02 and i_showLabel02 ? 1 : 0)
+     + (i_showAll03 and i_showHiLo03 and i_showLabel03 ? 1 : 0)
+     + (i_showAll04 and i_showHiLo04 and i_showLabel04 ? 1 : 0)
+     + (i_showHiLoDay and i_showLabelDay ? 1 : 0))
+int historyLabelSlots = (
+     (i_showAll01 and i_showHiLo01 and i_showLabel01 and i_showLineHist01 ? 1 : 0)
+     + (i_showAll02 and i_showHiLo02 and i_showLabel02 and i_showLineHist02 ? 1 : 0)
+     + (i_showAll03 and i_showHiLo03 and i_showLabel03 and i_showLineHist03 ? 1 : 0)
+     + (i_showAll04 and i_showHiLo04 and i_showLabel04 and i_showLineHist04 ? 1 : 0)
+     + (i_showHiLoDay and i_showLabelDay ? 1 : 0))
+int liveBoxSlots = (
+     (i_showAll01 and i_showBox01 ? 1 : 0) + (i_showAll02 and i_showBox02 ? 1 : 0)
+     + (i_showAll03 and i_showBox03 ? 1 : 0) + (i_showAll04 and i_showBox04 ? 1 : 0))
+int historyBoxSlots = (
+     (i_showAll01 and i_showBox01 and i_showBoxHist01 ? 1 : 0)
+     + (i_showAll02 and i_showBox02 and i_showBoxHist02 ? 1 : 0)
+     + (i_showAll03 and i_showBox03 and i_showBoxHist03 ? 1 : 0)
+     + (i_showAll04 and i_showBox04 and i_showBoxHist04 ? 1 : 0))
+int liveWindowSlots = (i_showWindow01 ? 1 : 0) + (i_showWindow02 ? 1 : 0)
+int historyWindowSlots = (
+     (i_showWindow01 and i_windowHist01 ? 1 : 0) + (i_showWindow02 and i_windowHist02 ? 1 : 0))
+int roundLineReserve = (
+     (i_showRoundMajor ? i_roundCountMajor * 2 + 1 : 0)
+     + (i_showRoundMinor ? i_roundCountMinor * 2 + 1 : 0))
+int dividerSlot = (i_showDivide ? 1 : 0)
+
+int lineBaseCost   = liveSessionLineSlots * 2 + liveWindowSlots * 2 + roundLineReserve + dividerSlot
+int linePerDayCost = historySessionLineSlots * 2 + historyWindowSlots * 2 + dividerSlot
+int labelBaseCost  = liveLabelSlots * 2
+int labelPerDayCost = historyLabelSlots * 2
+int boxBaseCost    = liveBoxSlots
+int boxPerDayCost  = historyBoxSlots
+
+int lineBudgetDays = (linePerDayCost > 0
+     ? math.max(int(math.floor((MANAGED_DRAWING_BUDGET - lineBaseCost) / float(linePerDayCost))), 0)
+     : requestedHistoryDays)
+int labelBudgetDays = (labelPerDayCost > 0
+     ? math.max(int(math.floor((MANAGED_DRAWING_BUDGET - labelBaseCost) / float(labelPerDayCost))), 0)
+     : requestedHistoryDays)
+int boxBudgetDays = (boxPerDayCost > 0
+     ? math.max(int(math.floor((MANAGED_DRAWING_BUDGET - boxBaseCost) / float(boxPerDayCost))), 0)
+     : requestedHistoryDays)
+int daysLimit = math.min(requestedHistoryDays,
+     math.min(lineBudgetDays, math.min(labelBudgetDays, boxBudgetDays)))
+bool historyWasCapped = daysLimit < requestedHistoryDays
+var bool historyCapNoticeSent = false
+
+// Day labels sit thirteen hours into the daily session so they land mid-morning on either daily mode.
+int DAY_LABEL_OFFSET_MS = UTIL.durationMs(UTIL.Duration.Hour) * 13
+
+bool isWithinHistory = UTIL.isWithinHistoryWindow(daysLimit, last_bar_time)
+
+// Daily identifiers count observed trading days, not elapsed calendar days.
+// This display-only mask uses daily bar indexes; no prices or future OHLC are requested.
+// lookahead_on applies the day's visibility from its opening candle, preserving top-of-chart plotshapes.
+bool isWithinIdentifierHistory = request.security(syminfo.tickerid, "1D",
+     last_bar_index - bar_index <= daysLimit, gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+
+// #endregion Runtime Context
+
+// #region Session State Stores //
+
+var array<UTIL.SessionState> sessionStates01  = array.new<UTIL.SessionState>()
+var array<UTIL.SessionState> sessionStates02  = array.new<UTIL.SessionState>()
+var array<UTIL.SessionState> sessionStates03  = array.new<UTIL.SessionState>()
+var array<UTIL.SessionState> sessionStates04  = array.new<UTIL.SessionState>()
+var array<UTIL.SessionState> sessionStatesDay = array.new<UTIL.SessionState>()
+
+// #endregion Session State Stores
+
+// #region Trade Window State //
+
+var array<line> windowStartLines01 = array.new<line>()
+var array<line> windowEndLines01   = array.new<line>()
+var array<line> windowStartLines02 = array.new<line>()
+var array<line> windowEndLines02   = array.new<line>()
+var array<line> dailyDividerLines  = array.new<line>()
+
+var TradeWindowState windowState01 = TradeWindowState.new()
+var TradeWindowState windowState02 = TradeWindowState.new()
+
+// #endregion Trade Window State
+
+// #region Round Number Line Stores //
+
+var array<line> roundLinesMajor = array.new<line>()
+var array<line> roundLinesMinor = array.new<line>()
+
+// #endregion Round Number Line Stores
+
+// #region Session Config Holders //
+
+var UTIL.SessionConfig sessionConfig01 = UTIL.SessionConfig.new(
+     isEnabled = i_showAll01,                     preset = i_session01,
+     customLabel = i_customLabel01,               customSession = i_customSession01,
+     timezone = USER_TIMEZONE,                    anchor = i_lineAnchor01,
+     lineEndHour = i_lineEndHour01.toHourInt(),   lineEndMinute = i_lineEndMinute01.toMinuteInt(),
+     lineEndTimezone = USER_TIMEZONE,             addExtraLineDay = i_lineExtraDay01)
+var UTIL.SessionConfig sessionConfig02 = UTIL.SessionConfig.new(
+     isEnabled = i_showAll02,                     preset = i_session02,
+     customLabel = i_customLabel02,               customSession = i_customSession02,
+     timezone = USER_TIMEZONE,                    anchor = i_lineAnchor02,
+     lineEndHour = i_lineEndHour02.toHourInt(),   lineEndMinute = i_lineEndMinute02.toMinuteInt(),
+     lineEndTimezone = USER_TIMEZONE,             addExtraLineDay = i_lineExtraDay02)
+var UTIL.SessionConfig sessionConfig03 = UTIL.SessionConfig.new(
+     isEnabled = i_showAll03,                     preset = i_session03,
+     customLabel = i_customLabel03,               customSession = i_customSession03,
+     timezone = USER_TIMEZONE,                    anchor = i_lineAnchor03,
+     lineEndHour = i_lineEndHour03.toHourInt(),   lineEndMinute = i_lineEndMinute03.toMinuteInt(),
+     lineEndTimezone = USER_TIMEZONE,             addExtraLineDay = i_lineExtraDay03)
+var UTIL.SessionConfig sessionConfig04 = UTIL.SessionConfig.new(
+     isEnabled = i_showAll04,                     preset = i_session04,
+     customLabel = i_customLabel04,               customSession = i_customSession04,
+     timezone = USER_TIMEZONE,                    anchor = i_lineAnchor04,
+     lineEndHour = i_lineEndHour04.toHourInt(),   lineEndMinute = i_lineEndMinute04.toMinuteInt(),
+     lineEndTimezone = USER_TIMEZONE,             addExtraLineDay = i_lineExtraDay04)
+var UTIL.SessionConfig sessionConfigDay = UTIL.SessionConfig.new(
+     isEnabled = i_showHiLoDay,                   preset = i_sessionDay,
+     anchor = i_lineAnchorDay,
+     lineEndHour = i_lineEndHourDay.toHourInt(),  lineEndMinute = i_lineEndMinuteDay.toMinuteInt(),
+     lineEndTimezone = USER_TIMEZONE,             addExtraLineDay = true)
+
+var SessionVisualConfig visualConfig01 = SessionVisualConfig.new(
+     i_showAll01,                    i_primeColor01,                   i_subColor01,
+     i_sessionBg01,                  i_showHiLo01,                     i_hiLoStyle01.toLineStyle(),
+     i_hiLoSize01.toLineWidth(),     i_showLabel01,                    i_showBox01,
+     i_boxStyle01.toLineStyle(),     i_boxSize01.toLineWidth(),        i_aheadTime01,
+     i_showHistory and i_showLineHist01, i_showHistory and i_showBoxHist01, i_showBoxText01,
+     i_boxTextColor01,               i_boxTextSize01.toTextSizeString(),
+     i_boxTextHAlign01.toHorizontalAlign(),                            i_boxTextVAlign01.toVerticalAlign(),
+     i_lineAnchor01)
+var SessionVisualConfig visualConfig02 = SessionVisualConfig.new(
+     i_showAll02,                    i_primeColor02,                   i_subColor02,
+     i_sessionBg02,                  i_showHiLo02,                     i_hiLoStyle02.toLineStyle(),
+     i_hiLoSize02.toLineWidth(),     i_showLabel02,                    i_showBox02,
+     i_boxStyle02.toLineStyle(),     i_boxSize02.toLineWidth(),        i_aheadTime02,
+     i_showHistory and i_showLineHist02, i_showHistory and i_showBoxHist02, i_showBoxText02,
+     i_boxTextColor02,               i_boxTextSize02.toTextSizeString(),
+     i_boxTextHAlign02.toHorizontalAlign(),                            i_boxTextVAlign02.toVerticalAlign(),
+     i_lineAnchor02)
+var SessionVisualConfig visualConfig03 = SessionVisualConfig.new(
+     i_showAll03,                    i_primeColor03,                   i_subColor03,
+     i_sessionBg03,                  i_showHiLo03,                     i_hiLoStyle03.toLineStyle(),
+     i_hiLoSize03.toLineWidth(),     i_showLabel03,                    i_showBox03,
+     i_boxStyle03.toLineStyle(),     i_boxSize03.toLineWidth(),        i_aheadTime03,
+     i_showHistory and i_showLineHist03, i_showHistory and i_showBoxHist03, i_showBoxText03,
+     i_boxTextColor03,               i_boxTextSize03.toTextSizeString(),
+     i_boxTextHAlign03.toHorizontalAlign(),                            i_boxTextVAlign03.toVerticalAlign(),
+     i_lineAnchor03)
+var SessionVisualConfig visualConfig04 = SessionVisualConfig.new(
+     i_showAll04,                    i_primeColor04,                   i_subColor04,
+     i_sessionBg04,                  i_showHiLo04,                     i_hiLoStyle04.toLineStyle(),
+     i_hiLoSize04.toLineWidth(),     i_showLabel04,                    i_showBox04,
+     i_boxStyle04.toLineStyle(),     i_boxSize04.toLineWidth(),        i_aheadTime04,
+     i_showHistory and i_showLineHist04, i_showHistory and i_showBoxHist04, i_showBoxText04,
+     i_boxTextColor04,               i_boxTextSize04.toTextSizeString(),
+     i_boxTextHAlign04.toHorizontalAlign(),                            i_boxTextVAlign04.toVerticalAlign(),
+     i_lineAnchor04)
+var SessionVisualConfig visualConfigDay = SessionVisualConfig.new(
+     i_showHiLoDay,                  i_primeColorDay,                  color.new(#000000, 100),
+     false,                          i_showHiLoDay,                    i_hiLoStyleDay.toLineStyle(),
+     i_hiLoSizeDay.toLineWidth(),    i_showLabelDay,                   false,
+     line.style_solid,               1,                                i_aheadTimeDay,
+     i_showHistory,                  false,                            false,
+     #FFFFFF,                        size.tiny,                        text.align_left,
+     text.align_top,                 i_lineAnchorDay)
+
+// #endregion Session Config Holders
+
+// #region Config Maps //
+
+var map<string, UTIL.SessionConfig>  sessionConfigMap = map.new<string, UTIL.SessionConfig>()
+var map<string, SessionVisualConfig> visualConfigMap  = map.new<string, SessionVisualConfig>()
+
+if barstate.isfirst
+    map.put(sessionConfigMap, "sess01", sessionConfig01)
+    map.put(sessionConfigMap, "sess02", sessionConfig02)
+    map.put(sessionConfigMap, "sess03", sessionConfig03)
+    map.put(sessionConfigMap, "sess04", sessionConfig04)
+    map.put(sessionConfigMap, "sess05", sessionConfigDay)
+    map.put(visualConfigMap, "sess01", visualConfig01)
+    map.put(visualConfigMap, "sess02", visualConfig02)
+    map.put(visualConfigMap, "sess03", visualConfig03)
+    map.put(visualConfigMap, "sess04", visualConfig04)
+    map.put(visualConfigMap, "sess05", visualConfigDay)
+
+// #endregion Config Maps
+
+// #region Tracking Maps //
+
+var map<string, BarTracker>         barTrackerMap   = map.new<string, BarTracker>()
+var map<string, SessionVisualState> visualStateMap  = map.new<string, SessionVisualState>()
+var map<string, BreakTracker>       breakTrackerMap = map.new<string, BreakTracker>()
+
+// #endregion Tracking Maps
+
+// #endregion Helper Globals
+
+// #endregion Global Variables
+
+//+-------------------------------------------------------+
+//                        FUNCTIONS                       |
+//+-------------------------------------------------------+
+// #region Functions
+
+// #region Shared Helper Functions ************************
+
+getSessionExecMeta(int _sessionIndex) =>
+    switch _sessionIndex
+        1 => SessionExecMeta.new("sess01", i_showAll01,   i_alertMode01,  i_customLabel01)
+        2 => SessionExecMeta.new("sess02", i_showAll02,   i_alertMode02,  i_customLabel02)
+        3 => SessionExecMeta.new("sess03", i_showAll03,   i_alertMode03,  i_customLabel03)
+        4 => SessionExecMeta.new("sess04", i_showAll04,   i_alertMode04,  i_customLabel04)
+        => SessionExecMeta.new("sess05", i_showHiLoDay, i_alertModeDay, "Daily")
+
+getSessionStateArray(int _sessionIndex) =>
+    switch _sessionIndex
+        1 => sessionStates01
+        2 => sessionStates02
+        3 => sessionStates03
+        4 => sessionStates04
+        => sessionStatesDay
+
+sessionInstanceKey(string _slotKey, int _sessStartTime) =>
+    _slotKey + ":" + str.tostring(_sessStartTime)
+
+getOrCreateVisualState(string _instanceKey) =>
+    if not map.contains(visualStateMap, _instanceKey)
+        map.put(visualStateMap, _instanceKey, SessionVisualState.new())
+    map.get(visualStateMap, _instanceKey)
+
+renderSessionEnd(UTIL.SessionState _state) =>
+    _state.sessEndTime - 1
+
+// #endregion Shared Helper Functions
+
+// #region Trade Window Functions *************************
+
+// @function drawTradeWindow                        - Draws or repositions the vertical lines for one trade window.
+// @param    _startLines   (array<line>)            - Window start line pool, newest first.
+// @param    _endLines     (array<line>)            - Window end line pool, newest first.
+// @param    _windowState  (TradeWindowState)       - Persistent draw state for this window.
+// @param    _session      (string)                 - Window session string in the user's timezone.
+// @param    _showHistory  (bool)                   - True keeps one line pair per day.
+// @param    _lineColor    (color)                  - Line color.
+// @param    _lineStyle    (string)                 - Resolved line style constant.
+// @param    _lineWidth    (int)                    - Line width in pixels.
+// @param    _daysLimit    (int)                    - Days of history allowed.
+// @param    _timeNow      (int)                    - Current timestamp.
+// @returns                (TradeWindowState)       - Updated draw state.
+drawTradeWindow(array<line> _startLines, array<line> _endLines, TradeWindowState _windowState,
+     string _session, bool _showHistory, color _lineColor, string _lineStyle, int _lineWidth,
+     int _daysLimit, int _timeNow) =>
+    UTIL.TradeWindowPlan plan = UTIL.planTradeWindow(_session, USER_TIMEZONE, _daysLimit, _timeNow, _windowState.lastDrawnStart)
+
+    if plan.shouldDraw
+        int startLineTime = plan.startTime
+        if array.size(_startLines) == 0 or _showHistory
+            array.unshift(_startLines, line.new(startLineTime, open, startLineTime, close,
+                 xloc.bar_time, extend.both, _lineColor, _lineStyle, _lineWidth))
+            array.unshift(_endLines, line.new(plan.endTime, open, plan.endTime, close,
+                 xloc.bar_time, extend.both, _lineColor, _lineStyle, _lineWidth))
+            UTIL.trimPool(_daysLimit + 1, lines = _startLines)
+            UTIL.trimPool(_daysLimit + 1, lines = _endLines)
+        if not _showHistory and array.size(_startLines) == 1
+            array.get(_startLines, 0).updateLine(_x1 = startLineTime, _x2 = startLineTime)
+            array.get(_endLines, 0).updateLine(_x1 = plan.endTime, _x2 = plan.endTime)
+        _windowState.lastDrawnStart := plan.startTime
+        _windowState.endAdjusted    := false
+
+    // Pin the end line to the bar that actually closed the window when no bar printed at the planned end.
+    if not _windowState.endAdjusted and not plan.isInWindow and plan.alreadyDrawn and array.size(_endLines) > 0
+        line endLine     = array.get(_endLines, 0)
+        int  currentEndX = line.get_x1(endLine)
+        if currentEndX > nz(time_close[1], 0) and currentEndX < time
+            endLine.updateLine(_x1 = time, _x2 = time)
+        _windowState.endAdjusted := true
+
+    _windowState
+
+// @function clearTradeWindow                       - Deletes both line pools for one trade window.
+// @param    _startLines   (array<line>)            - Window start line pool.
+// @param    _endLines     (array<line>)            - Window end line pool.
+// @returns                (TradeWindowState)       - Reset draw state.
+clearTradeWindow(array<line> _startLines, array<line> _endLines) =>
+    UTIL.clearDrawings(lines = _startLines)
+    UTIL.clearDrawings(lines = _endLines)
+    TradeWindowState.new()
+
+// #endregion Trade Window Functions
+
+// #region Round Number Functions *************************
+
+// #region Round Number Helpers //
+
+drawRoundLevels(array<float> _levels, array<line> _lines, RoundLevelConfig _config, int _time1, int _time2) =>
+    if not _config.isEnabled
+        UTIL.clearDrawings(lines = _lines)
+
+    if _config.isEnabled
+        while array.size(_lines) > array.size(_levels)
+            line.delete(array.pop(_lines))
+        for [index, level] in _levels
+            bool hasExistingLine = index < array.size(_lines)
+            if hasExistingLine
+                array.get(_lines, index).updateLine(
+                     _x1 = _time1, _y1 = level, _x2 = _time2, _y2 = level,
+                     _color = _config.lineColor, _style = _config.lineStyle, _width = _config.lineWidth)
+            if not hasExistingLine
+                line createdLine = line.new(
+                     _time1, level, _time2, level,
+                     xloc   = xloc.bar_time,
+                     extend = extend.both,
+                     color  = _config.lineColor,
+                     style  = _config.lineStyle,
+                     width  = _config.lineWidth)
+                array.push(_lines, createdLine)
+
+    array.size(_lines)
+
+// #endregion Round Number Helpers
+
+// @function buildRoundLevelConfig                  - Resolves round-number appearance inputs into drawing constants.
+// @param    _isEnabled    (bool)                   - Master toggle for this grid.
+// @param    _count        (int)                    - Levels above and below price.
+// @param    _lineColor    (color)                  - Line color.
+// @param    _style        (UTIL.LineStyle)         - Style selection.
+// @param    _size         (UTIL.LineSize)          - Width selection.
+// @returns                (RoundLevelConfig)       - Resolved configuration.
+buildRoundLevelConfig(bool _isEnabled, int _count, color _lineColor, UTIL.LineStyle _style, UTIL.LineSize _size) =>
+    RoundLevelConfig.new(_isEnabled, _count, _lineColor, _style.toLineStyle(), _size.toLineWidth())
+
+// #endregion Round Number Functions
+
+// #region Session Visual Functions ***********************
+
+// #region Session Visual Helpers //
+
+createHiLoLine(bool _isHigh, color _lineColor, string _lineStyle, int _lineWidth) =>
+    float anchorPrice = (_isHigh ? high : low)
+    line.new(time, anchorPrice, time + UTIL.barDurationMs(), anchorPrice,
+         xloc.bar_time, extend.none, _lineColor, _lineStyle, _lineWidth)
+
+createHiLoLabel(bool _isHigh, string _labelText, color _textColor, bool _isBoxShown) =>
+    color  transparent = color.new(#000000, 100)
+    float  anchorPrice = (_isHigh ? high : low)
+    string labelStyle  = (_isBoxShown
+        ? (_isHigh ? label.style_label_lower_left : label.style_label_upper_left)
+        : label.style_label_left
+        )
+    label.new(time + UTIL.barDurationMs(), anchorPrice, _labelText,
+         xloc = xloc.bar_time, color = transparent, textcolor = _textColor,
+         yloc = yloc.price, style = labelStyle)
+
+createSessionBox(int _rightTime, SessionVisualConfig _config, string _boxText) =>
+    box created = box.new(time, high, _rightTime, low,
+         _config.primeColor, _config.boxWidth, _config.boxStyle,
+         extend.none, xloc.bar_time, _config.backgroundColor)
+    created.updateBox(
+         _text       = (_config.showBoxText ? _boxText : ""),
+         _textSize   = _config.boxTextSize,
+         _textHAlign = _config.boxTextHAlign,
+         _textVAlign = _config.boxTextVAlign,
+         _textColor  = (_config.showBoxText ? _config.boxTextColor : _config.primeColor))
+    created
+
+clearVisualState(SessionVisualState _visualState, bool _clearLines, bool _clearLabels, bool _clearBoxes) =>
+    if _clearLines
+        line.delete(_visualState.highLine)
+        line.delete(_visualState.lowLine)
+        _visualState.highLine := na
+        _visualState.lowLine  := na
+    if _clearLabels
+        label.delete(_visualState.highLabel)
+        label.delete(_visualState.lowLabel)
+        _visualState.highLabel := na
+        _visualState.lowLabel  := na
+    if _clearBoxes
+        box.delete(_visualState.square)
+        _visualState.square := na
+
+applyLabelOffsetStyle(SessionVisualState _visualState, bool _isOffset) =>
+    if not na(_visualState.highLabel)
+        string highStyle = (_isOffset ? label.style_label_lower_left : label.style_label_left)
+        string lowStyle  = (_isOffset ? label.style_label_upper_left : label.style_label_left)
+        _visualState.highLabel.updateLabel(_style = highStyle)
+        _visualState.lowLabel.updateLabel(_style = lowStyle)
+
+advanceHiLoLines(UTIL.SessionState _state, SessionVisualState _visualState, SessionVisualConfig _config,
+     bool _isDaily, int _timeNow, string _instanceKey) =>
+    int  renderEnd          = renderSessionEnd(_state)
+    bool isSingleBarSession = (
+        not na(_state.sessStartBarTime) and not na(_state.sessEndBarTime)
+    ) and _state.sessStartBarTime == _state.sessEndBarTime
+
+    if not na(_visualState.highLine) and not na(_visualState.lowLine) and map.contains(barTrackerMap, _instanceKey)
+        BarTracker tracker = map.get(barTrackerMap, _instanceKey)
+
+        if time >= _state.lineEndTime and na(tracker.endBar)
+            tracker.endBar := bar_index
+
+        // Keep every coordinate in UNIX time. Converting timestamp anchors to bar indexes can
+        // collapse a line when a session boundary falls inside a chart candle.
+        int projectedRightTime = time + UTIL.barDurationMs() * _config.aheadBars
+        int rightTime = (not na(tracker.endBar)
+             ? _state.lineEndTime
+             : math.min(projectedRightTime, _state.lineEndTime))
+        int lineStartHigh = _state.highLineStartTime
+        int lineStartLow  = _state.lowLineStartTime
+        if _config.anchor == UTIL.SessionAnchor.SessionEnd and _timeNow > renderEnd
+            int endAnchor = nz(_state.sessEndBarTime, renderEnd)
+            lineStartHigh := endAnchor
+            lineStartLow  := endAnchor
+
+        line.set_xloc(
+             _visualState.highLine, lineStartHigh, rightTime, xloc.bar_time)
+        line.set_xloc(
+             _visualState.lowLine, lineStartLow, rightTime, xloc.bar_time)
+        if _config.showLabel and not na(_visualState.highLabel) and not na(_visualState.lowLabel)
+            label.set_xloc(_visualState.highLabel, rightTime, xloc.bar_time)
+            label.set_xloc(_visualState.lowLabel, rightTime, xloc.bar_time)
+
+    if _timeNow <= renderEnd and _config.showBox and not _isDaily
+        applyLabelOffsetStyle(_visualState, not isSingleBarSession)
+    if _timeNow > renderEnd and not _isDaily
+        applyLabelOffsetStyle(_visualState, false)
+
+ensureCurrentSessionShapes(UTIL.SessionState _state, SessionVisualConfig _config, bool _isDaily,
+     string _instanceKey) =>
+    if not _isDaily
+        SessionVisualState visualState = getOrCreateVisualState(_instanceKey)
+        int                boxRight    = renderSessionEnd(_state)
+
+        if _config.showHiLo
+            if na(visualState.highLine)
+                visualState.highLine := createHiLoLine(true, _config.primeColor, _config.lineStyle, _config.lineWidth)
+            if na(visualState.lowLine)
+                visualState.lowLine := createHiLoLine(false, _config.primeColor, _config.lineStyle, _config.lineWidth)
+            visualState.highLine.updateLine(_y1 = _state.highPrice, _y2 = _state.highPrice)
+            visualState.lowLine.updateLine(_y1 = _state.lowPrice, _y2 = _state.lowPrice)
+
+            if _config.showLabel
+                if na(visualState.highLabel)
+                    visualState.highLabel := createHiLoLabel(true, _state.labelText + " High", _config.primeColor, _config.showBox)
+                if na(visualState.lowLabel)
+                    visualState.lowLabel := createHiLoLabel(false, _state.labelText + " Low", _config.primeColor, _config.showBox)
+                visualState.highLabel.updateLabel(_y = _state.highPrice, _text = _state.labelText + " High")
+                visualState.lowLabel.updateLabel(_y = _state.lowPrice, _text = _state.labelText + " Low")
+            else
+                clearVisualState(visualState, false, true, false)
+        else
+            clearVisualState(visualState, true, true, false)
+
+        if _config.showBox
+            if na(visualState.square)
+                visualState.square := createSessionBox(boxRight, _config, _state.labelText)
+            int leftTime  = (na(_state.sessStartBarTime) ? _state.sessStartTime : _state.sessStartBarTime)
+            int rightTime = (na(_state.sessEndBarTime) ? boxRight : _state.sessEndBarTime)
+            visualState.square.updateBox(
+                 _left        = leftTime,           _top         = _state.highPrice,
+                 _right       = rightTime,          _bottom      = _state.lowPrice,
+                 _borderColor = _config.primeColor, _borderWidth = _config.boxWidth,
+                 _borderStyle = _config.boxStyle,   _bgColor     = _config.backgroundColor)
+        else
+            clearVisualState(visualState, false, false, true)
+
+        map.put(visualStateMap, _instanceKey, visualState)
+
+applyHistoryVisuals(UTIL.SessionState _state, SessionVisualConfig _config, bool _isDaily,
+     string _instanceKey) =>
+    SessionVisualState visualState = getOrCreateVisualState(_instanceKey)
+
+    if _isDaily
+        // Daily sessions never draw a live session, so the historical pass owns every shape.
+        if _config.showHiLo
+            int lineStartHigh = _state.highLineStartTime
+            int lineStartLow  = _state.lowLineStartTime
+            if _config.anchor == UTIL.SessionAnchor.SessionEnd
+                int endAnchor = nz(_state.sessEndBarTime, renderSessionEnd(_state))
+                lineStartHigh := endAnchor
+                lineStartLow  := endAnchor
+            if na(visualState.highLine)
+                visualState.highLine := createHiLoLine(true, _config.primeColor, _config.lineStyle, _config.lineWidth)
+            if na(visualState.lowLine)
+                visualState.lowLine := createHiLoLine(false, _config.primeColor, _config.lineStyle, _config.lineWidth)
+            visualState.highLine.updateLine(
+                 _x1 = lineStartHigh,      _y1 = _state.highPrice,
+                 _x2 = _state.lineEndTime, _y2 = _state.highPrice)
+            visualState.lowLine.updateLine(
+                 _x1 = lineStartLow,       _y1 = _state.lowPrice,
+                 _x2 = _state.lineEndTime, _y2 = _state.lowPrice)
+
+            if _config.showLabel
+                if na(visualState.highLabel)
+                    visualState.highLabel := createHiLoLabel(true, "PDH", _config.primeColor, false)
+                if na(visualState.lowLabel)
+                    visualState.lowLabel := createHiLoLabel(false, "PDL", _config.primeColor, false)
+                visualState.highLabel.updateLabel(_x = _state.lineEndTime, _y = _state.highPrice, _text = "PDH", _style = label.style_label_left)
+                visualState.lowLabel.updateLabel(_x = _state.lineEndTime, _y = _state.lowPrice, _text = "PDL", _style = label.style_label_left)
+            else
+                clearVisualState(visualState, false, true, false)
+        else
+            clearVisualState(visualState, true, true, false)
+    else
+        if _config.showHiLo and _config.showLineHistory and _config.showLabel
+            visualState.highLabel.updateLabel(_text = "H", _style = label.style_label_left)
+            visualState.lowLabel.updateLabel(_text = "L", _style = label.style_label_left)
+        if not (_config.showHiLo and _config.showLineHistory)
+            clearVisualState(visualState, true, true, false)
+        if not (_config.showBox and _config.showBoxHistory)
+            clearVisualState(visualState, false, false, true)
+
+    map.put(visualStateMap, _instanceKey, visualState)
+
+isNewSessionInstance(array<UTIL.SessionState> _states, bool _isDaily, bool _isFirstBarOfSession,
+     string _slotKey) =>
+    // A scheduled opening during a resumed weekend session is not a new instance.
+    bool isNewSession = _isFirstBarOfSession and array.size(_states) > 0 and (
+         array.get(_states, 0).sessStartTime >= time and array.get(_states, 0).sessStartTime < time_close)
+    if not isNewSession and not _isDaily and array.size(_states) > 0
+        string instanceKey = sessionInstanceKey(_slotKey, array.get(_states, 0).sessStartTime)
+        isNewSession := not map.contains(barTrackerMap, instanceKey)
+    isNewSession
+
+registerStateTracker(UTIL.SessionState _state, string _slotKey) =>
+    string instanceKey = sessionInstanceKey(_slotKey, _state.sessStartTime)
+    if not map.contains(barTrackerMap, instanceKey)
+        map.put(barTrackerMap, instanceKey, BarTracker.new(
+             bar_index, bar_index, bar_index, _state.highLineStartTime, _state.lowLineStartTime))
+    // Preserve the engine's original start-bar timestamp when rendering deferred history.
+    getOrCreateVisualState(instanceKey)
+
+registerSessionTracker(array<UTIL.SessionState> _states, string _slotKey) =>
+    if array.size(_states) > 0
+        registerStateTracker(array.get(_states, 0), _slotKey)
+
+pruneExpiredSession(array<UTIL.SessionState> _states, int _daysLimit, bool _isDaily,
+     string _slotKey) =>
+    // A scheduled record with no prices is not an observed historical session.
+    // Keep index 0 because it may be waiting for its first qualifying live data.
+    if array.size(_states) > 1
+        for index = array.size(_states) - 1 to 1
+            UTIL.SessionState candidate = array.get(_states, index)
+            if na(candidate.openPrice) and na(candidate.highPrice) and na(candidate.lowPrice) and na(candidate.closePrice)
+                string emptyKey = sessionInstanceKey(_slotKey, candidate.sessStartTime)
+                if map.contains(visualStateMap, emptyKey)
+                    clearVisualState(map.get(visualStateMap, emptyKey), true, true, true)
+                    map.remove(visualStateMap, emptyKey)
+                map.remove(barTrackerMap, emptyKey)
+                array.remove(_states, index)
+    int retainLimit = _daysLimit + (_isDaily ? 2 : 1)
+    while array.size(_states) > retainLimit
+        UTIL.SessionState removed = array.pop(_states)
+        string instanceKey        = sessionInstanceKey(_slotKey, removed.sessStartTime)
+        if map.contains(visualStateMap, instanceKey)
+            clearVisualState(map.get(visualStateMap, instanceKey), true, true, true)
+            map.remove(visualStateMap, instanceKey)
+        map.remove(barTrackerMap, instanceKey)
+
+trimDailyHistoryVisuals(array<UTIL.SessionState> _states, SessionVisualConfig _config, bool _isDaily,
+     string _slotKey) =>
+    if _isDaily and array.size(_states) > 2
+        for index = 2 to array.size(_states) - 1
+            UTIL.SessionState state        = array.get(_states, index)
+            string instanceKey             = sessionInstanceKey(_slotKey, state.sessStartTime)
+            SessionVisualState visualState = getOrCreateVisualState(instanceKey)
+            if not _config.showLineHistory
+                clearVisualState(visualState, true, true, false)
+            if not _config.showBoxHistory
+                clearVisualState(visualState, false, false, true)
+
+renderSessionStates(array<UTIL.SessionState> _states, SessionVisualConfig _config, bool _isDaily,
+     int _timeNow, string _slotKey) =>
+    for state in _states
+        int  renderEnd           = renderSessionEnd(state)
+        bool sessionIsLive       = _timeNow <= renderEnd
+        bool sessionEndInsideBar = renderEnd >= time and renderEnd < time_close
+        bool sessionEndsThisBar  = time > renderEnd and time[1] <= renderEnd
+        bool lineIsLive          = _config.showHiLo and _timeNow <= state.lineEndTime
+        bool lineEndsThisBar     = _config.showHiLo and time >= state.lineEndTime and time[1] < state.lineEndTime
+        bool needsVisualUpdate   = sessionIsLive or sessionEndInsideBar or sessionEndsThisBar or lineIsLive or lineEndsThisBar
+
+        if needsVisualUpdate
+            string instanceKey = sessionInstanceKey(_slotKey, state.sessStartTime)
+            // An observed gap can extend an endpoint that was previously frozen.
+            if map.contains(barTrackerMap, instanceKey) and time < state.lineEndTime
+                BarTracker resumedTracker = map.get(barTrackerMap, instanceKey)
+                resumedTracker.endBar := int(na)
+            bool isFrozen = (map.contains(barTrackerMap, instanceKey)
+                 ? not na(map.get(barTrackerMap, instanceKey).endBar)
+                 : false)
+            SessionVisualState visualState = getOrCreateVisualState(instanceKey)
+
+            // Historical objects are already created with the current input styles on each script run.
+            // Only the live lifecycle needs per-bar drawing updates.
+            if not isFrozen
+                if sessionEndInsideBar and na(state.sessEndBarTime)
+                    state.sessEndBarTime := time
+                if sessionIsLive or sessionEndInsideBar
+                    ensureCurrentSessionShapes(state, _config, _isDaily, instanceKey)
+                if _config.showHiLo
+                    advanceHiLoLines(state, visualState, _config, _isDaily, _timeNow, instanceKey)
+                if time > renderEnd and time[1] <= renderEnd
+                    applyLabelOffsetStyle(visualState, false)
+    true
+
+// Build only the retained drawings after the historical calculations have finished.
+// History visibility is applied before creation, avoiding create-then-delete work.
+renderRetainedSessionHistory(array<UTIL.SessionState> _states, SessionVisualConfig _config,
+     bool _isDaily, int _timeNow, string _slotKey) =>
+    for [index, state] in _states
+        bool isPrevious = index > 0
+        if not _isDaily or isPrevious
+            SessionVisualConfig appearance = _config.copy()
+            if isPrevious and (not _isDaily or index > 1)
+                appearance.showHiLo := _config.showHiLo and _config.showLineHistory
+                appearance.showBox := _config.showBox and _config.showBoxHistory
+            if appearance.showHiLo or (not _isDaily and appearance.showBox)
+                string instanceKey = sessionInstanceKey(_slotKey, state.sessStartTime)
+                SessionVisualState visualState = registerStateTracker(state, _slotKey)
+                if _isDaily
+                    applyHistoryVisuals(state, appearance, true, instanceKey)
+                else
+                    ensureCurrentSessionShapes(state, appearance, false, instanceKey)
+                advanceHiLoLines(state, visualState, appearance, _isDaily, _timeNow, instanceKey)
+                if isPrevious and not _isDaily
+                    applyHistoryVisuals(state, appearance, false, instanceKey)
+    // The current daily record has no drawings, but needs a tracker for live rollover.
+    if _isDaily and array.size(_states) > 0
+        registerSessionTracker(_states, _slotKey)
+    true
+
+// Log only on demand after the deferred draw pass; never on each historical candle.
+diagnoseSessionHistory(array<UTIL.SessionState> _states, UTIL.SessionInfo _sessionInfo,
+     SessionVisualConfig _config, int _historyLimit, string _slotKey) =>
+    log.info("History {0}: requested={1}, budget={2}, records={3}, boxes enabled={4}, box history={5}, timeframe={6}",
+         _slotKey, i_daysInput, _historyLimit, array.size(_states), _config.showBox, _config.showBoxHistory, timeframe.period)
+    for [index, state] in _states
+        string key = sessionInstanceKey(_slotKey, state.sessStartTime)
+        box drawnBox = na
+        if map.contains(visualStateMap, key)
+            drawnBox := map.get(visualStateMap, key).square
+        string boxSpan = "no box"
+        if not na(drawnBox)
+            boxSpan := str.format_time(box.get_left(drawnBox), "yyyy-MM-dd HH:mm", _sessionInfo.timezone) + " to " +
+                 str.format_time(box.get_right(drawnBox), "yyyy-MM-dd HH:mm", _sessionInfo.timezone)
+        log.info("{0} [{1}] session={2}, high={3}, low={4}, box={5}", _slotKey, index,
+             str.format_time(state.sessStartTime, "yyyy-MM-dd HH:mm", _sessionInfo.timezone),
+             state.highPrice, state.lowPrice, boxSpan)
+    true
+
+// #endregion Session Visual Helpers
+
+// @function syncSessionVisuals                     - Creates, updates, and prunes every drawing for one tracked session.
+// @param    _config       (UTIL.SessionConfig)     - Session configuration for this slot.
+// @param    _visualConfig (SessionVisualConfig)    - Resolved appearance settings for this slot.
+// @param    _sessionInfo  (UTIL.SessionInfo)       - Descriptor returned by the session engine, including its timezone.
+// @param    _states       (array<UTIL.SessionState>) - Session state storage for this slot.
+// @param    _timeNow      (int)                    - Current timestamp.
+// @param    _daysLimit    (int)                    - Days of history allowed.
+// @returns                (bool)                  - Whether session visuals are enabled. Rendering helpers return bool consistently across branches.
+syncSessionVisuals(UTIL.SessionConfig _config, SessionVisualConfig _visualConfig, UTIL.SessionInfo _sessionInfo,
+     array<UTIL.SessionState> _states, int _timeNow, int _daysLimit, string _slotKey) =>
+    if _config.isEnabled
+        // Retain lightweight records on every bar; ordinary historical bars create no session drawings.
+        pruneExpiredSession(_states, _daysLimit, _sessionInfo.isDaily, _slotKey)
+        if barstate.islastconfirmedhistory
+            renderRetainedSessionHistory(_states, _visualConfig, _sessionInfo.isDaily, _timeNow, _slotKey)
+            if i_debugHistory
+                diagnoseSessionHistory(_states, _sessionInfo, _visualConfig, _daysLimit, _slotKey)
+            true
+        else if barstate.isrealtime or barstate.islast
+            int boundaryOffset = UTIL.barDayBoundaryOffsetMs(
+                 _sessionInfo.timezone, _sessionInfo.openHour, _sessionInfo.openMinute)
+            bool isFirstBar = UTIL.isSessionFirstBar(_sessionInfo, boundaryOffset)
+            bool isNewSession = isNewSessionInstance(_states, _sessionInfo.isDaily, isFirstBar, _slotKey)
+            if isNewSession
+                registerSessionTracker(_states, _slotKey)
+                if array.size(_states) > 1
+                    UTIL.SessionState previous = array.get(_states, 1)
+                    applyHistoryVisuals(previous, _visualConfig, _sessionInfo.isDaily,
+                         sessionInstanceKey(_slotKey, previous.sessStartTime))
+                trimDailyHistoryVisuals(_states, _visualConfig, _sessionInfo.isDaily, _slotKey)
+            renderSessionStates(_states, _visualConfig, _sessionInfo.isDaily, _timeNow, _slotKey)
+    _config.isEnabled
+
+// #endregion Session Visual Functions
+
+// #region Alert Functions ********************************
+
+// #region Alert Helpers //
+
+registerBreak(BreakTracker _tracker, bool _isHigh, bool _hasBroken, bool _isInWindow, string _message) =>
+    bool didAlert = false
+    if _isHigh and _hasBroken and not _tracker.highBroken
+        _tracker.highBroken := true
+        if _isInWindow
+            _tracker.highAlerted := true
+            alert(_message, alert.freq_once_per_bar)
+            didAlert := true
+    if not _isHigh and _hasBroken and not _tracker.lowBroken
+        _tracker.lowBroken := true
+        if _isInWindow
+            _tracker.lowAlerted := true
+            alert(_message, alert.freq_once_per_bar)
+            didAlert := true
+    didAlert
+
+isInAnyTradeWindow() =>
+    // No configured window means every bar qualifies.
+    bool noWindowsEnabled = not i_showWindow01 and not i_showWindow02
+    noWindowsEnabled or (i_showWindow01 and UTIL.isInSession(i_window01, USER_TIMEZONE)) or
+         (i_showWindow02 and UTIL.isInSession(i_window02, USER_TIMEZONE))
+
+findAlertableSession(array<UTIL.SessionState> _states, int _timeNow) =>
+    UTIL.SessionState result = na
+    for state in _states
+        if _timeNow > renderSessionEnd(state) and _timeNow <= state.lineEndTime
+            result := state
+            break
+    result
+
+// #endregion Alert Helpers
+
+// @function processSessionBreakAlerts              - Evaluates break, close-out, and sweep alerts for one session slot.
+// @param    _states       (array<UTIL.SessionState>) - Session state storage for this slot.
+// @param    _alertMode    (AlertMode)              - Alert behavior selected by the user.
+// @param    _sessionLabel (string)                 - Label used in the alert message.
+// @param    _timeNow      (int)                    - Current timestamp.
+// @param    _slotKey      (string)                 - Stable session-slot identity used to namespace alert state.
+// @returns                ([bool, bool])           - High-break and low-break marker flags for this bar.
+processSessionBreakAlerts(array<UTIL.SessionState> _states, AlertMode _alertMode, string _sessionLabel,
+     int _timeNow, string _slotKey) =>
+    bool showHighMarker = false
+    bool showLowMarker  = false
+
+    if _alertMode != AlertMode.off
+        UTIL.SessionState state = findAlertableSession(_states, _timeNow)
+        if not na(state)
+            string trackerKey = sessionInstanceKey(_slotKey, state.sessStartTime)
+            if not map.contains(breakTrackerMap, trackerKey)
+                map.put(breakTrackerMap, trackerKey, BreakTracker.new(state.sessStartTime))
+            BreakTracker tracker    = map.get(breakTrackerMap, trackerKey)
+            bool         isInWindow = isInAnyTradeWindow()
+
+            switch _alertMode
+                AlertMode.onBreak =>
+                    showHighMarker := registerBreak(tracker, true, high > state.highPrice, isInWindow,
+                         "Price breaking " + _sessionLabel + " high.")
+                    showLowMarker := registerBreak(tracker, false, low < state.lowPrice, isInWindow,
+                         "Price breaking " + _sessionLabel + " low.")
+                AlertMode.closeOut =>
+                    if barstate.isconfirmed
+                        showHighMarker := registerBreak(tracker, true, close > state.highPrice, isInWindow,
+                             "Price closed above " + _sessionLabel + " high.")
+                        showLowMarker := registerBreak(tracker, false, close < state.lowPrice, isInWindow,
+                             "Price closed below " + _sessionLabel + " low.")
+                AlertMode.closeIn =>
+                    if barstate.isconfirmed
+                        bool sweptHigh = high > state.highPrice and close <= state.highPrice
+                        bool sweptLow  = low < state.lowPrice and close >= state.lowPrice
+                        showHighMarker := registerBreak(tracker, true, sweptHigh, isInWindow,
+                             "Price swept " + _sessionLabel + " high.")
+                        showLowMarker := registerBreak(tracker, false, sweptLow, isInWindow,
+                             "Price swept " + _sessionLabel + " low.")
+
+            map.put(breakTrackerMap, trackerKey, tracker)
+
+    [showHighMarker, showLowMarker]
+
+// @function pruneBreakTrackers                     - Removes break trackers whose session is no longer stored.
+// @returns                (void)
+pruneBreakTrackers() =>
+    array<string> liveKeys = array.new<string>()
+    for sessionIndex = 1 to 5
+        string slotKey = getSessionExecMeta(sessionIndex).mapKey
+        for state in getSessionStateArray(sessionIndex)
+            array.push(liveKeys, sessionInstanceKey(slotKey, state.sessStartTime))
+
+    array<string> staleKeys = array.new<string>()
+    for [trackerKey, _tracker] in breakTrackerMap
+        if array.indexof(liveKeys, trackerKey) == -1
+            array.push(staleKeys, trackerKey)
+    for staleKey in staleKeys
+        map.remove(breakTrackerMap, staleKey)
+
+// #endregion Alert Functions
+
+// #region Daily Divider Functions ************************
+
+// @function isCrossingTime                         - Reports whether the bar clock crossed a timestamp on this bar.
+// @param    _targetTime   (int)                    - Timestamp to test.
+// @param    _timeNow      (int)                    - Current bar clock.
+// @param    _timePrev     (int)                    - Previous bar clock.
+// @returns                (bool)                   - True on the first bar at or after the target.
+isCrossingTime(int _targetTime, int _timeNow, int _timePrev) =>
+    _timeNow >= _targetTime and _timePrev < _targetTime
+
+// #endregion Daily Divider Functions
+
+// #endregion Functions
+
+//+-------------------------------------------------------+
+//                        EXECUTION                       |
+//+-------------------------------------------------------+
+// #region Execution
+
+// #region Shared Runtime Context *************************
+
+[hasObservedLongGap, observedGapStart, observedGapEnd, _] = UTIL.getObservedLongGap()
+UTIL.SessionInfo dailyInfo = UTIL.resolveSessionInfo(i_sessionDay)
+bool needsIntrabarData = false
+if timeframe.isintraday and timeframe.in_seconds() > 60
+    for sessionIndex = 1 to 5
+        SessionExecMeta execMeta = getSessionExecMeta(sessionIndex)
+        UTIL.SessionConfig sessionCfg = map.get(sessionConfigMap, execMeta.mapKey)
+        if sessionCfg.isEnabled
+            UTIL.SessionInfo requestSession = UTIL.resolveSessionInfo(
+                 sessionCfg.preset, sessionCfg.customSession, sessionCfg.customLabel, sessionCfg.timezone)
+            if UTIL.needsSessionIntrabars(requestSession)
+                needsIntrabarData := true
+                break
+
+// One shared conditional request, including historical initialization for realtime use.
+UTIL.IntrabarData intrabarData = UTIL.requestIntrabarData(i_daysInput, needsIntrabarData)
+
+if barstate.islast and historyWasCapped and not historyCapNoticeSent
+    log.warning("History reduced from {0} to {1} previous sessions to remain within drawing limits.",
+         requestedHistoryDays, daysLimit)
+    historyCapNoticeSent := true
+
+// #endregion Shared Runtime Context
+
+// #region Session Execution ******************************
+
+array<bool>  highBreakFlags = array.new<bool>(5, false)
+array<bool>  lowBreakFlags  = array.new<bool>(5, false)
+array<color> backgroundTint = array.new<color>(4, na)
+
+for sessionIndex = 1 to 5
+    SessionExecMeta          execMeta   = getSessionExecMeta(sessionIndex)
+    array<UTIL.SessionState> states     = getSessionStateArray(sessionIndex)
+    UTIL.SessionConfig       sessionCfg = map.get(sessionConfigMap, execMeta.mapKey)
+    SessionVisualConfig      visualCfg  = map.get(visualConfigMap, execMeta.mapKey)
+
+    // Keep the history-bearing engine call in the loop's unconditional scope. The library
+    // returns na immediately for disabled configurations, so those slots remain inexpensive.
+    // No calendar-day cutoff: retain actual session records in syncSessionVisuals().
+    UTIL.SessionInfo sessionInfo = UTIL.runSessionEngine(sessionCfg, states, intrabarData, TIMENOW, int(na))
+
+    if not na(sessionInfo)
+        syncSessionVisuals(sessionCfg, visualCfg, sessionInfo, states, TIMENOW, daysLimit, execMeta.mapKey)
+
+        string alertLabel = (sessionCfg.preset == UTIL.SessionPreset.Custom ? execMeta.labelText : sessionInfo.labelText)
+        [showHighBreak, showLowBreak] = processSessionBreakAlerts(
+             states, execMeta.alertMode, alertLabel, TIMENOW, execMeta.mapKey)
+        array.set(highBreakFlags, sessionIndex - 1, showHighBreak)
+        array.set(lowBreakFlags, sessionIndex - 1, showLowBreak)
+
+        if sessionIndex < 5
+            bool tintBar = not na(UTIL.getActiveSession(states, TIMENOW)) and
+                 visualCfg.isEnabled and visualCfg.showBackground and isWithinHistory
+            array.set(backgroundTint, sessionIndex - 1, (tintBar ? visualCfg.backgroundColor : na))
+
+// #endregion Session Execution
+
+// #region Trade Window Execution *************************
+
+if i_showWindow01
+    windowState01 := drawTradeWindow(windowStartLines01, windowEndLines01, windowState01,
+         i_window01, i_windowHist01, i_windowColor01, i_windowStyle01.toLineStyle(),
+         i_windowSize01.toLineWidth(), daysLimit, TIMENOW)
+else
+    windowState01 := clearTradeWindow(windowStartLines01, windowEndLines01)
+
+if i_showWindow02
+    windowState02 := drawTradeWindow(windowStartLines02, windowEndLines02, windowState02,
+         i_window02, i_windowHist02, i_windowColor02, i_windowStyle02.toLineStyle(),
+         i_windowSize02.toLineWidth(), daysLimit, TIMENOW)
+else
+    windowState02 := clearTradeWindow(windowStartLines02, windowEndLines02)
+
+// #endregion Trade Window Execution
+
+// #region Psychological Level Execution ******************
+
+if barstate.islast
+    float roundBaseInterval = RNL.detectBaseInterval(close, syminfo.mintick)
+    RoundLevelConfig roundCfgMajor = buildRoundLevelConfig(
+         i_showRoundMajor, i_roundCountMajor, i_roundColorMajor, i_roundStyleMajor, i_roundSizeMajor)
+    RoundLevelConfig roundCfgMinor = buildRoundLevelConfig(
+         i_showRoundMinor, i_roundCountMinor, i_roundColorMinor, i_roundStyleMinor, i_roundSizeMinor)
+
+    if roundCfgMajor.isEnabled
+        array<float> majorLevels = RNL.getLevelsByGranularity(
+             close, str.tostring(i_roundGranMajor), roundCfgMajor.count, roundBaseInterval, syminfo.mintick)
+        drawRoundLevels(majorLevels, roundLinesMajor, roundCfgMajor, time[1], time)
+    if not roundCfgMajor.isEnabled
+        UTIL.clearDrawings(lines = roundLinesMajor)
+
+    if roundCfgMinor.isEnabled
+        array<float> minorLevels = RNL.getLevelsByGranularity(
+             close, str.tostring(i_roundGranMinor), roundCfgMinor.count, roundBaseInterval, syminfo.mintick)
+        drawRoundLevels(minorLevels, roundLinesMinor, roundCfgMinor, time[1], time)
+    if not roundCfgMinor.isEnabled
+        UTIL.clearDrawings(lines = roundLinesMinor)
+
+// #endregion Psychological Level Execution
+
+// #region Daily Divider Execution ************************
+
+int dailyBoundaryOffset = UTIL.barDayBoundaryOffsetMs(
+     dailyInfo.timezone, dailyInfo.openHour, dailyInfo.openMinute)
+int dailyStartTime = UTIL.getSessionStartTime(dailyInfo, dailyBoundaryOffset)
+
+// A divider that fell inside the observed closure has no bar to sit on, so skip it on reopen.
+if isWithinIdentifierHistory and timeframe.isminutes and i_showDivide
+    bool dividerInsideGap = hasObservedLongGap and dailyStartTime > observedGapStart and dailyStartTime < observedGapEnd
+    if isCrossingTime(dailyStartTime, time, time[1]) and not dividerInsideGap
+        line divider = line.new(
+             dailyStartTime, open, dailyStartTime, open + syminfo.mintick,
+             xloc.bar_time, extend.both, i_divideColor,
+             i_divideStyle.toLineStyle(), i_divideSize.toLineWidth())
+        array.unshift(dailyDividerLines, divider)
+        UTIL.trimPool(math.max(daysLimit + 1, 1), lines = dailyDividerLines)
+
+// The label time is tested against both today's and yesterday's daily start so it resolves
+// correctly whether the daily session begins before or after midnight.
+int  labelTimeToday     = dailyStartTime + DAY_LABEL_OFFSET_MS
+int  dailyStartYesterday = UTIL.getSessionStartTime(
+     dailyInfo, dailyBoundaryOffset - UTIL.durationMs(UTIL.Duration.Day))
+int  labelTimeYesterday = dailyStartYesterday + DAY_LABEL_OFFSET_MS
+bool todayInsideGap     = hasObservedLongGap and labelTimeToday > observedGapStart and labelTimeToday < observedGapEnd
+bool yesterdayInsideGap = hasObservedLongGap and labelTimeYesterday > observedGapStart and labelTimeYesterday < observedGapEnd
+bool crossedToday       = isCrossingTime(labelTimeToday, TIMENOW, TIMENOW[1]) and not todayInsideGap
+bool crossedYesterday   = isCrossingTime(labelTimeYesterday, TIMENOW, TIMENOW[1]) and not yesterdayInsideGap
+bool isDayLabelBar      = crossedToday or crossedYesterday
+
+bool plotDaySun = false, bool plotDayMon = false, bool plotDayTue = false, bool plotDayWed = false,
+bool plotDayThu = false, bool plotDayFri = false, bool plotDaySat = false
+
+if isDayLabelBar and isWithinIdentifierHistory and i_showDivideLabels
+    int labelDayOfWeek = dayofweek(
+         crossedToday ? labelTimeToday : labelTimeYesterday, dailyInfo.timezone)
+    switch labelDayOfWeek
+        dayofweek.sunday    => plotDaySun := true
+        dayofweek.monday    => plotDayMon := true
+        dayofweek.tuesday   => plotDayTue := true
+        dayofweek.wednesday => plotDayWed := true
+        dayofweek.thursday  => plotDayThu := true
+        dayofweek.friday    => plotDayFri := true
+        dayofweek.saturday  => plotDaySat := true
+
+// #endregion Daily Divider Execution
+
+// #region Cleanup ****************************************
+
+if barstate.islast
+    pruneBreakTrackers()
+
+// #endregion Cleanup
+
+// #region Global Plots ***********************************
+
+bgcolor(array.get(backgroundTint, 0))
+bgcolor(array.get(backgroundTint, 1))
+bgcolor(array.get(backgroundTint, 2))
+bgcolor(array.get(backgroundTint, 3))
+
+plotshape(array.get(highBreakFlags, 0), "Session 1 High Break", shape.triangleup, location.abovebar, i_primeColor01, size = size.small, display = display.all - display.status_line)
+plotshape(array.get(highBreakFlags, 1), "Session 2 High Break", shape.triangleup, location.abovebar, i_primeColor02, size = size.small, display = display.all - display.status_line)
+plotshape(array.get(highBreakFlags, 2), "Session 3 High Break", shape.triangleup, location.abovebar, i_primeColor03, size = size.small, display = display.all - display.status_line)
+plotshape(array.get(highBreakFlags, 3), "Session 4 High Break", shape.triangleup, location.abovebar, i_primeColor04, size = size.small, display = display.all - display.status_line)
+plotshape(array.get(highBreakFlags, 4), "Daily High Break",     shape.triangleup, location.abovebar, i_primeColorDay, size = size.small, display = display.all - display.status_line)
+
+plotshape(array.get(lowBreakFlags, 0), "Session 1 Low Break", shape.triangledown, location.belowbar, i_primeColor01, size = size.small, display = display.all - display.status_line)
+plotshape(array.get(lowBreakFlags, 1), "Session 2 Low Break", shape.triangledown, location.belowbar, i_primeColor02, size = size.small, display = display.all - display.status_line)
+plotshape(array.get(lowBreakFlags, 2), "Session 3 Low Break", shape.triangledown, location.belowbar, i_primeColor03, size = size.small, display = display.all - display.status_line)
+plotshape(array.get(lowBreakFlags, 3), "Session 4 Low Break", shape.triangledown, location.belowbar, i_primeColor04, size = size.small, display = display.all - display.status_line)
+plotshape(array.get(lowBreakFlags, 4), "Daily Low Break",     shape.triangledown, location.belowbar, i_primeColorDay, size = size.small, display = display.all - display.status_line)
+
+int dayLabelOffset = (timeframe.isminutes and timeframe.multiplier <= 120 ? 0 : -1)
+
+plotshape(plotDaySun, "Day of Week", shape.labeldown, location.top, i_divideLabelColor, dayLabelOffset, "Sunday",    i_divideTextColor, false, size = size.large, display = display.pane)
+plotshape(plotDayMon, "Day of Week", shape.labeldown, location.top, i_divideLabelColor, dayLabelOffset, "Monday",    i_divideTextColor, false, size = size.large, display = display.pane)
+plotshape(plotDayTue, "Day of Week", shape.labeldown, location.top, i_divideLabelColor, dayLabelOffset, "Tuesday",   i_divideTextColor, false, size = size.large, display = display.pane)
+plotshape(plotDayWed, "Day of Week", shape.labeldown, location.top, i_divideLabelColor, dayLabelOffset, "Wednesday", i_divideTextColor, false, size = size.large, display = display.pane)
+plotshape(plotDayThu, "Day of Week", shape.labeldown, location.top, i_divideLabelColor, dayLabelOffset, "Thursday",  i_divideTextColor, false, size = size.large, display = display.pane)
+plotshape(plotDayFri, "Day of Week", shape.labeldown, location.top, i_divideLabelColor, dayLabelOffset, "Friday",    i_divideTextColor, false, size = size.large, display = display.pane)
+plotshape(plotDaySat, "Day of Week", shape.labeldown, location.top, i_divideLabelColor, dayLabelOffset, "Saturday",  i_divideTextColor, false, size = size.large, display = display.pane)
+
+// #endregion Global Plots
+
+// #endregion Execution
