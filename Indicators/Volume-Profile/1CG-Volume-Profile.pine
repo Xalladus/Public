@@ -8,7 +8,7 @@
 // FixedRangeVolumeProfile
 //
 // Example consumer of VolumeProfileLibrary. Gathers all user inputs, resolves
-// recurring-range timezones through InputLibrary, passes fixed picker timestamps
+// recurring-range timezones through UtilityLibrary1CG, passes fixed picker timestamps
 // through unchanged, requests 1-minute intrabar data for volume accuracy, and
 // hands the per-bar work to VP.update(). The library owns the profile
 // drawings; this script owns inputs, the request.security_lower_tf() call,
@@ -20,7 +20,7 @@
 indicator("Volume Profile Fixed/Range/Session", "VolProfile", overlay = true, max_boxes_count = 500, max_lines_count = 500,
     max_labels_count = 500, max_polylines_count = 100)
 
-import OneCleverGuy/InputLibrary/4 as iLib
+import OneCleverGuy/UtilityLibrary1CG/1 as UTIL
 import OneCleverGuy/VolumeProfileLibrary/4 as VP
 
 //+-------------------------------------------------------+
@@ -70,7 +70,7 @@ string tt_debug           = "Show the current session statistics, retaining the 
 // #region Timezone ***************************************
 
 var string iGroupTimezone = "Timezone"
-i_timezone = input.enum(iLib.Timezones.ny, "Timezone", group = iGroupTimezone, tooltip = tt_timezone)
+i_timezone = input.enum(UTIL.Timezones.ny, "Timezone", group = iGroupTimezone, tooltip = tt_timezone)
 
 // #endregion Timezone
 
@@ -93,7 +93,7 @@ i_rangeEnd   = input.time(timestamp("2024-02-01 00:00 +0000"), "Range End",   gr
 // #region Recurring Anchors ******************************
 
 var string iGroupRecurring = "Recurring Anchors"
-i_anchorQuarter = input.enum(iLib.quarterHours.t1600, "Daily Anchor", group = iGroupRecurring, tooltip = tt_dailyAnchor, active = i_rangeMode == VP.RangeMode.DailyAnchor)
+i_anchorQuarter = input.enum(UTIL.QuarterHours.t1600, "Daily Anchor", group = iGroupRecurring, tooltip = tt_dailyAnchor, active = i_rangeMode == VP.RangeMode.DailyAnchor)
 i_session       = input.session("0930-1600", "Session",              group = iGroupRecurring, tooltip = tt_session,     active = i_rangeMode == VP.RangeMode.DailySession)
 i_historyCount  = input.int(2, "Previous Sessions", minval = 0, maxval = VP.MAX_HISTORY_COUNT, group = iGroupRecurring, tooltip = tt_historyCount, display = display.none, active = a_rec)
 
@@ -138,26 +138,26 @@ i_rangeFill           = input.color(#2962ff12, " ",         group = iGroupAppear
 i_showPoc             = input.bool(true,    "Point of Control", group = iGroupAppearance, inline = "PC", tooltip = tt_poc, display = display.none, active = i_showVisuals)
 bool a_poc            = i_showVisuals and i_showPoc
 i_pocColor            = input.color(#ff0000,             " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
-i_pocWidth            = input.enum(iLib.LineSize.normal, " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
-i_pocStyle            = input.enum(iLib.LineStyle.solid, " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
+i_pocWidth            = input.enum(UTIL.LineSize.normal, " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
+i_pocStyle            = input.enum(UTIL.LineStyle.solid, " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
 
 i_showPocLabel        = input.bool(true, "POC Label",        group = iGroupAppearance, inline = "PL", tooltip = tt_pocLabel, display = display.none, active = a_poc)
 bool a_pcl            = a_poc and i_showPocLabel
 i_pocTextColor        = input.color(#ffffff,          " ",   group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
-i_pocTextSize         = input.enum(iLib.TextSize.small, " ", group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
+i_pocTextSize         = input.enum(UTIL.TextSize.small, " ", group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
 i_pocPrefix           = input.string("POC", "Prefix",        group = iGroupAppearance, inline = "PLT", display = display.none, active = a_pcl)
 i_showPocDate         = input.bool(true, "Show Date",        group = iGroupAppearance, inline = "PLT", display = display.none, active = a_pcl)
 
 i_showValueAreaLines  = input.bool(false, "Value Area Lines", group = iGroupAppearance, inline = "VL", tooltip = tt_valueAreaLines, display = display.none, active = i_showVisuals)
 bool a_val            = i_showVisuals and i_showValueAreaLines
 i_valueAreaColor      = input.color(#2962ff, " ",             group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
-i_valueAreaWidth      = input.enum(iLib.LineSize.normal, " ", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
-i_valueAreaStyle      = input.enum(iLib.LineStyle.solid, " ", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
+i_valueAreaWidth      = input.enum(UTIL.LineSize.normal, " ", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
+i_valueAreaStyle      = input.enum(UTIL.LineStyle.solid, " ", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
 
 i_showValueAreaLabels = input.bool(true, "VA Labels",        group = iGroupAppearance, inline = "VB", tooltip = tt_valueAreaLabels, display = display.none, active = a_val)
 bool a_vlb            = a_val and i_showValueAreaLabels
 i_valueAreaTextColor  = input.color(#ffffff, " ",            group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
-i_valueAreaTextSize   = input.enum(iLib.TextSize.small, " ", group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
+i_valueAreaTextSize   = input.enum(UTIL.TextSize.small, " ", group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
 i_vahPrefix           = input.string("VAH", "VAH Prefix",    group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
 i_valPrefix           = input.string("VAL", "VAL Prefix",    group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
 i_showVaDate          = input.bool(true, "Show Date",        group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
@@ -252,8 +252,8 @@ renderDebugTable(table _table, VP.ProfileState _state, VP.ProfileConfig _cfg) =>
 
 // #region Shared Runtime Context *************************
 
-string globalTimezone = i_timezone.getOfficialTimezone()
-string anchorHHMM     = i_anchorQuarter.toHHMMString()
+string globalTimezone = i_timezone.toTimezone()
+string anchorHHMM     = i_anchorQuarter.toHhmm()
 
 int rangeStartTime = i_rangeStart
 int rangeEndTime   = i_rangeEnd
@@ -280,17 +280,17 @@ if barstate.islast and not hasSeenVolume
 // #region Component Config Assembly **********************
 
 var VP.ProfileStyle profileStyle = VP.ProfileStyle.new(
-    buyColor                     = i_buyColor,                   sellColor            = i_sellColor,
-    totalColor                   = i_totalColor,                 rangeBackgroundColor = i_rangeFill,
+    buyColor                     = i_buyColor,                            sellColor            = i_sellColor,
+    totalColor                   = i_totalColor,                          rangeBackgroundColor = i_rangeFill,
     outsideValueAreaTransparency = i_outTransparency,
-    pocColor                     = i_pocColor,                   pocWidth             = i_pocWidth.lineSize(),
-    pocStyle                     = i_pocStyle.lineStyle(),       pocTextColor         = i_pocTextColor,
-    pocTextSize                  = i_pocTextSize.textSize(),     pocLabelPrefix       = i_pocPrefix,
+    pocColor                     = i_pocColor,                            pocWidth             = i_pocWidth.toLineWidth(),
+    pocStyle                     = i_pocStyle.toLineStyle(),              pocTextColor         = i_pocTextColor,
+    pocTextSize                  = i_pocTextSize.toTextSizeString(),      pocLabelPrefix       = i_pocPrefix,
     showPocDate                  = i_showPocDate,
-    valueAreaColor               = i_valueAreaColor,             valueAreaWidth       = i_valueAreaWidth.lineSize(),
-    valueAreaStyle               = i_valueAreaStyle.lineStyle(), valueAreaTextColor   = i_valueAreaTextColor,
-    valueAreaTextSize            = i_valueAreaTextSize.textSize(), vahLabelPrefix     = i_vahPrefix,
-    valLabelPrefix               = i_valPrefix,                  showValueAreaDate    = i_showVaDate,
+    valueAreaColor               = i_valueAreaColor,                      valueAreaWidth       = i_valueAreaWidth.toLineWidth(),
+    valueAreaStyle               = i_valueAreaStyle.toLineStyle(),        valueAreaTextColor   = i_valueAreaTextColor,
+    valueAreaTextSize            = i_valueAreaTextSize.toTextSizeString(),vahLabelPrefix     = i_vahPrefix,
+    valLabelPrefix               = i_valPrefix,                           showValueAreaDate    = i_showVaDate,
     dateFormat                   = i_dateFormat
 )
 

@@ -9,7 +9,7 @@ rendering, alerts, and any strategy logic built on top of the returned data.
 Published as:
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/6 as CPL
+import OneCleverGuy/CandlePatternLibrary/<version> as CPL
 ```
 
 Dependency note: this library has no imported-library dependencies.

@@ -1,1110 +1,877 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © OneCleverGuy
 
-//+-----------------------------------------------------+
-//                 INDICATOR DESCRIPTION                |
-//+-----------------------------------------------------+
-//#region INDICATOR DESCRIPTION
-
-// Ultra-Single-Session-2026: A single-session indicator following the Ultra-Sessions architecture.
-// Uses local session functions for session computation and local functions for rendering.
-// Features: session box with optional text, high/low lines, labels, 3-mode alerts,
-// trade window gating, and configurable history.
-
 //@version=6
-indicator("Single Session", shorttitle="SingleSess", precision = 5, max_lines_count=500, max_labels_count=500, max_boxes_count = 500, overlay=true)
-//----------------------Imports------------------------
-import OneCleverGuy/InputLibrary/1 as iLib
-// (Session library functions are embedded below for the public release.)
 
-//#endregion INDICATOR DESCRIPTION
+//+-------------------------------------------------------+
+//                       INFORMATION                      |
+//+-------------------------------------------------------+
+// #region Information
 
-//+-----------------------------------------------------+
-//                       INPUTS                         |
-//+-----------------------------------------------------+
-//#region INPUTS
+// Single Session plots one configurable session with a box, high/low lines, labels,
+// break alerts, and a trade window that can gate those alerts.
+//
+// Presets resolve in their native timezone. Custom sessions, the trade window, and line end
+// times use the timezone selected by the user. When the first bar after a long weekend or
+// holiday gap arrives, the utility library adjusts affected session and line lifecycle times
+// from the gap actually present in the chart data.
+//
+// Daily presets (24-hour sessions) draw nothing for the developing day. The completed previous
+// day receives its box and high/low lines; older days follow the history toggles.
+//
+// Session lifecycle state is owned by UtilityLibrary1CG. This script owns inputs, visuals,
+// retention policy, and alert policy.
 
-//#region Tooltips***************************************
+// #endregion Information
 
-tt_tz     = "Use the local timezone so that all of your session times can make sense to you."
-tt_sess      = "Sessions have all the timings pre-set. Choose one and then modify how it will appear on the chart."
-tt_cust       = "Times are in your chosen timezone.\nSetting the same open and close times for the session will make it a previous day session and will not create drawing for current day."
-tt_clr       = "Major Color: Session text, lines, and box outline.\nMinor Color: Inside of the box and background."
-tt_hilo      = "Sets the style of the high and low lines. Disabled for Daily Sessions - Use history"
-tt_box          = "Sets the style of the box. Disabled for Daily Sessions - Use history"
-tt_boxTxt      = "Display the session label inside the box."
-tt_ahead    = "The number of bars the line will stay in front of price, stopping at line end time."
-tt_xDay      = "Enter the time that you want the line to end on the chart. Check the box to extend it another day."
-tt_hist      = "Display the previous days session information as you have styled it above.\nToggling the line and box setting will only effect the previous days sessions."
-tt_alrtSess = "Alert when this session's high or low is broken after the session closes."
-  + " If trade windows are enabled, alerts only fire when breaks occur within those windows."
-  + "\nOn Break: First touch of high/low."
-  + "\nClose Out: Candle closes beyond high/low."
-  + "\nClose In (Sweep): Price breaks high/low but candle closes back inside range."
-tt_vln       = "Vertical lines denoting the start and finish of the selected session.\nIf you do not trade immediately after your session end, use this to filter alerts."
+indicator("Single Session", shorttitle = "SingleSess", precision = 5,
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, overlay = true)
 
-//#endregion Tooltips
+import OneCleverGuy/UtilityLibrary1CG/1 as UTIL
 
-//#region Timezone**************************************
+//+-------------------------------------------------------+
+//                          INPUTS                        |
+//+-------------------------------------------------------+
+// #region Inputs
 
-var grpTz = "Timezone"
-i_tz = input.enum(iLib.Timezones.ny, "Select Time Zone",
-     group = grpTz, tooltip = tt_tz)
+// #region Input Enums ************************************
 
-//#endregion Timezone
+enum AlertMode
+    off      = "No Alerts"
+    onBreak  = "On Break"
+    closeOut = "Close Out"
+    closeIn  = "Close In (Sweep)"
 
-//#region Session 01 - Custom Session*******************
-var grpSess01 = "SESSION 01"
-i_show01             = input.bool(true, "", group = grpSess01, inline = "D6")
-i_sess01             = input.string("Custom", "Session", ["London", "London Lunch", "London -> NY Open", "New York", "London/NY Cross",
-                                         "Asia", "Asian Lunch", "Asia -> London Open", "Daily (Market)", "Daily (Midnight)", "Custom"],
-                                         group = grpSess01, inline = "D6", display = display.none, active = i_show01)
-i_custLbl01         = input.string("Asia", "Label", group = grpSess01, inline = "D6", active = i_show01)
-i_custSess01       = input.session("1600-0000", "Custom Session", group = grpSess01, tooltip = tt_cust, active = i_show01, display = display.none)
+// #endregion Input Enums
 
-i_priClr01          = input.color(color.new(#4caf50, 0), "Major Color", group = grpSess01, inline = "D1", active = i_show01)
-i_subClr01            = input.color(color.new(#4caf50, 90), "Minor Color", group = grpSess01, inline = "D1", active = i_show01)
-i_sessBg01           = input.bool(false, "Background", group = grpSess01, inline = "D1", tooltip = tt_clr, active = i_show01)
+// #region Tooltips ***************************************
 
-i_showBx01             = input.bool(true, "Session Box", group = grpSess01, inline = "D3", active = i_show01)
-i_bxStyle01            = input.string("dashed (╌)", "", options=["solid (─)", "dotted (┈)", "dashed (╌)"], group = grpSess01, inline = "D3", display = display.none, active = i_show01 and i_showBx01)
-i_bxSize01             = input.string("1px (thin)", "", options=["1px (thin)", "2px (normal)", "3px (heavy)", "4px (thick)"], group= grpSess01, inline = "D3", display = display.none, tooltip = tt_box, active = i_show01 and i_showBx01)
-i_showBxHist01         = input.bool(true, "History", group = grpSess01, inline = "D3", tooltip = tt_hist, display = display.none, active = i_show01 and i_showBx01)
+string tt_timezone     = "Applied to custom sessions, the trade window, and line end times."
+string tt_custom       = "Custom times are in your selected timezone. Presets use their own market timezone."
+                       + "\nIdentical open and close times create a 24-hour session."
+string tt_colors       = "Major Color: session text, lines, and box outline.\nMinor Color: box fill and background."
+string tt_box          = "Style of the session box. Daily presets draw the previous day only."
+string tt_boxText      = "Display the session label inside the box."
+string tt_highLow      = "Style of the high and low lines. Daily presets draw the previous day only."
+string tt_keepAhead    = "The number of bars the line stays in front of price, stopping at line end time."
+string tt_nextDay      = "Time the line ends, in your selected timezone. Check the box to extend it another day."
+string tt_history      = "Display previous sessions as styled above."
+string tt_historyDays  = "Previous occurrences retained, in addition to the current occurrence."
+                       + " Gaps do not consume this count. Available chart data can reduce it."
+string tt_vLines       = "Vertical lines marking the start and finish of the trade window, in your selected timezone."
+string tt_windowBg     = "Shades the chart background while the trade window is open."
+string tt_alertSession = "Alerts fire after the session closes, when its high or low is taken."
+                       + " With a trade window enabled, only breaks inside that window alert."
+                       + "\nOn Break: first touch of the level."
+                       + "\nClose Out: candle closes beyond the level."
+                       + "\nClose In (Sweep): candle pierces the level and closes back inside."
 
-i_showBxTxt01         = input.bool(false, "Box Text", group=grpSess01, inline="D7", display = display.none, active = i_show01 and i_showBx01)
-i_bxTxtClr01        = input.color(color.new(#FFFFFF, 0), " ", group=grpSess01, inline="D7", display = display.none, active = i_show01 and i_showBx01 and i_showBxTxt01)
-i_bxTxtSize01         = input.enum(iLib.TextSize.tiny, "Size", options=[iLib.TextSize.auto, iLib.TextSize.tiny, iLib.TextSize.small, iLib.TextSize.normal, iLib.TextSize.large, iLib.TextSize.huge], group=grpSess01, inline="D7", display = display.none, active = i_show01 and i_showBx01 and i_showBxTxt01)
-i_bxTxtHAlign01       = input.enum(iLib.BoxHAlign.left, "H Align:", options=[iLib.BoxHAlign.left, iLib.BoxHAlign.center, iLib.BoxHAlign.right], group=grpSess01, inline="D7b", display = display.none, active = i_show01 and i_showBx01 and i_showBxTxt01)
-i_bxTxtVAlign01       = input.enum(iLib.BoxVAlign.top, "V Align:", options=[iLib.BoxVAlign.top, iLib.BoxVAlign.center, iLib.BoxVAlign.bottom], group=grpSess01, inline="D7b", display = display.none, tooltip = tt_boxTxt, active = i_show01 and i_showBx01 and i_showBxTxt01)
+// #endregion Tooltips
 
-i_showHL01            = input.bool(true, "Highs/Lows", group=grpSess01, inline = "D2", active = i_show01)
-i_hlStyle01           = input.string("dotted (┈)", "", options=["solid (─)", "dotted (┈)", "dashed (╌)"], group = grpSess01, inline = "D2", display = display.none, active = i_show01 and i_showHL01)
-i_hlSize01            = input.string("1px (thin)", "", options=["1px (thin)", "2px (normal)", "3px (heavy)", "4px (thick)"], group= grpSess01, inline = "D2", display = display.none, active = i_show01 and i_showHL01)
-i_showLnHist01        = input.bool(true, "History", group=grpSess01, inline = "D2", tooltip = tt_hist, display = display.none, active = i_show01 and i_showHL01)
+// #region Timezone ***************************************
 
-i_lnStart01           = input.string("Price", "Line Starts:", ["Price", "Session Start"], group = grpSess01, inline = "D4", display = display.none, active = i_show01 and i_showHL01)
-i_ahead01           = input.int(10, "Frontrun", minval = 1, maxval = 50, step = 1, group=grpSess01, inline = "D4", tooltip=tt_ahead, display = display.none, active = i_show01 and i_showHL01)
+var string iGroupTimezone = "Timezone"
+i_timeZone = input.enum(UTIL.Timezones.ny, "Select Time Zone", group = iGroupTimezone, tooltip = tt_timezone, display = display.none)
 
-i_lnEndHr01         = input.string("17", "Line Ends", options=["00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23"],
-                             inline="D5", group=grpSess01, display = display.none, active = i_show01 and i_showHL01)
-i_lnEndMin01       = input.string("00", ":", options=["00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24",
-                                     "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53",
-                                     "54", "55", "56", "57", "58", "59"], inline="D5", group=grpSess01,  display = display.none, active = i_show01 and i_showHL01)
-i_lnEndTime01         = i_lnEndHr01 + ":" + i_lnEndMin01
-i_lnXDay01        = input.bool(false, "+1 Day", tt_xDay, inline="D5", group=grpSess01, display = display.none, active = i_show01 and i_showHL01)
+// #endregion Timezone
 
-i_showLbl01           = input.bool(true, "Line Labels", group=grpSess01, inline = "D9", tooltip = tt_hilo, active = i_show01 and i_showHL01)
+// #region Session ****************************************
 
-i_alrtSess01        = input.string("No Alerts", "Alert Mode", options=["No Alerts", "On Break", "Close Out", "Close In (Sweep)"], group = grpSess01, inline = "D8", tooltip = tt_alrtSess, active = i_show01)
+var string iGroupSession = "SESSION"
+i_showSession     = input.bool(true, "", group = iGroupSession, inline = "S6", display = display.none)
+i_sessionPreset   = input.enum(UTIL.SessionPreset.Custom, "Session", group = iGroupSession, inline = "S6", display = display.none, active = i_showSession)
+bool a_custom     = i_showSession and i_sessionPreset == UTIL.SessionPreset.Custom
+i_customLabel     = input.string("Asia", "Label", group = iGroupSession, inline = "S6", active = a_custom, display = display.none)
+i_customSession   = input.session("1600-0000", "Custom Session", group = iGroupSession, tooltip = tt_custom, display = display.none, active = a_custom)
 
-//#endregion Session 01
+i_primeColor      = input.color(color.new(#4caf50, 0), "Major Color", group = iGroupSession, inline = "S1", active = i_showSession, display = display.none)
+i_subColor        = input.color(color.new(#4caf50, 90), "Minor Color", group = iGroupSession, inline = "S1", active = i_showSession, display = display.none)
+i_sessionBg       = input.bool(false, "Background", group = iGroupSession, inline = "S1", tooltip = tt_colors, active = i_showSession, display = display.none)
 
-//#region Trade Window 01*******************************
+i_showBox         = input.bool(true, "Session Box", group = iGroupSession, inline = "S3", active = i_showSession, display = display.none)
+bool a_box        = i_showSession and i_showBox
+i_boxStyle        = input.enum(UTIL.LineStyle.dashed, "", group = iGroupSession, inline = "S3", display = display.none, active = a_box)
+i_boxSize         = input.enum(UTIL.LineSize.thin, "", group = iGroupSession, inline = "S3", display = display.none, tooltip = tt_box, active = a_box)
+i_showBoxHistory  = input.bool(true, "History", group = iGroupSession, inline = "S3", tooltip = tt_history, display = display.none, active = a_box)
 
-grpTW01 = "Trade Window 01"
-i_showTW01     = input.bool(true, "", group = grpTW01, inline = "V")
-i_tw01         = input.session("1000-1100", "Trade Window 1", group = grpTW01, inline = "V", tooltip = tt_vln, display = display.none, active = i_showTW01)
+i_showBoxText     = input.bool(false, "Box Text", group = iGroupSession, inline = "S7", display = display.none, active = a_box)
+bool a_boxText    = a_box and i_showBoxText
+i_boxTextColor    = input.color(color.new(#FFFFFF, 0), " ", group = iGroupSession, inline = "S7", display = display.none, active = a_boxText)
+i_boxTextSize     = input.enum(UTIL.TextSize.tiny, "Size", group = iGroupSession, inline = "S7", display = display.none, active = a_boxText)
+i_boxTextHAlign   = input.enum(UTIL.HorizontalAlign.left, "H Align:", group = iGroupSession, inline = "S7b", display = display.none, active = a_boxText)
+i_boxTextVAlign   = input.enum(UTIL.VerticalAlign.top, "V Align:", group = iGroupSession, inline = "S7b", display = display.none, tooltip = tt_boxText, active = a_boxText)
 
-i_showTwLn01      = input.bool(true, "V-Lines", group = grpTW01, inline = "V1", active = i_showTW01)
-i_twLnClr01        = input.color(color.new(#b22833, 0), "", group = grpTW01, inline = "V1", active = i_showTW01 and i_showTwLn01)
-i_twBgClr01  = input.color(color.new(#b22833, 90), "", group = grpTW01, inline = "V1", active = i_showTW01)
-i_twLnStyle01         = input.string("solid (─)", "", options=["solid (─)", "dotted (┈)", "dashed (╌)"], group = grpTW01, inline = "V1", display = display.none, active = i_showTW01 and i_showTwLn01)
-i_twLnSize01          = input.string("1px (thin)", "", options=["1px (thin)", "2px (normal)", "3px (heavy)", "4px (thick)"], group = grpTW01, inline = "V1", display = display.none, active = i_showTW01 and i_showTwLn01)
+i_showHiLo        = input.bool(true, "Highs/Lows", group = iGroupSession, inline = "S2", active = i_showSession, display = display.none)
+bool a_hiLo       = i_showSession and i_showHiLo
+i_hiLoStyle       = input.enum(UTIL.LineStyle.dotted, "", group = iGroupSession, inline = "S2", display = display.none, active = a_hiLo)
+i_hiLoSize        = input.enum(UTIL.LineSize.thin, "", group = iGroupSession, inline = "S2", display = display.none, active = a_hiLo)
+i_showLineHistory = input.bool(true, "History", group = iGroupSession, inline = "S2", tooltip = tt_history, display = display.none, active = a_hiLo)
 
-i_twHist01  = input.bool(false, "Show History", group = grpTW01, inline = "V2", display = display.none, active = i_showTW01 and i_showTwLn01)
-i_showTwBg01   = input.bool(false, "Background", group = grpTW01, inline = "V2", display = display.none, active = i_showTW01)
+i_lineAnchor      = input.enum(UTIL.SessionAnchor.ExtremeTime, "Line Starts:", group = iGroupSession, inline = "S4", display = display.none, active = a_hiLo)
+i_aheadTime       = input.int(10, "Frontrun", minval = 1, maxval = 50, group = iGroupSession, inline = "S4", tooltip = tt_keepAhead, display = display.none, active = a_hiLo)
 
-//#endregion Trade Window 01
+i_lineEndHour     = input.enum(UTIL.Hours.h17, "Line Ends", group = iGroupSession, inline = "S5", display = display.none, active = a_hiLo)
+i_lineEndMinute   = input.enum(UTIL.Minutes.m0, ":", group = iGroupSession, inline = "S5", display = display.none, active = a_hiLo)
+i_lineExtraDay    = input.bool(false, "+1 Day", tt_nextDay, inline = "S5", group = iGroupSession, display = display.none, active = a_hiLo)
 
-//#region History****************************************
+i_showLabel       = input.bool(true, "Line Labels", group = iGroupSession, inline = "S9", tooltip = tt_highLow, active = a_hiLo, display = display.none)
 
-grpHist = "History"
-i_showHist           = input.bool(true, "History.", group = grpHist, inline = "H1")
-i_daysLim             = input.int(5, "Days to show:", 1, 90, 1, "Sets the number of days into the history that should be displayed.", group = grpHist, display = display.none, inline = "H1")
+i_alertMode       = input.enum(AlertMode.off, "Alert Mode", group = iGroupSession, inline = "S8", tooltip = tt_alertSession, active = i_showSession, display = display.none)
 
-//#endregion History
+// #endregion Session
 
-//#endregion Inputs
+// #region Trade Window ***********************************
 
-//+-----------------------------------------------------+
-//                        UDT'S                         |
-//+-----------------------------------------------------+
-//#region UDT's
+var string iGroupTradeWindow = "Trade Window"
+i_showWindow       = input.bool(true, "", group = iGroupTradeWindow, inline = "V", display = display.none)
+i_window           = input.session("1000-1100", "Trade Window", group = iGroupTradeWindow, inline = "V", tooltip = tt_vLines, display = display.none, active = i_showWindow)
 
-type barTrk
-    int sBar
-    int hiBar
-    int loBar
-    int hiTm
-    int loTm
-    int endBar = na
+i_showWindowLines  = input.bool(true, "V-Lines", group = iGroupTradeWindow, inline = "V1", display = display.none, active = i_showWindow)
+bool a_windowLines = i_showWindow and i_showWindowLines
+i_windowColor      = input.color(color.new(#b22833, 0), "", group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
+i_windowStyle      = input.enum(UTIL.LineStyle.solid, "", group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
+i_windowSize       = input.enum(UTIL.LineSize.thin, "", group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
+i_windowHistory    = input.bool(false, "Show History", group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
 
-type brkTrk
-    int sessStart = na
-    bool hiBrk = false
-    bool loBrk = false
-    bool hiAlrt = false
-    bool loAlrt = false
+i_showWindowBg     = input.bool(false, "Background", group = iGroupTradeWindow, inline = "V2", display = display.none, active = i_showWindow)
+bool a_windowBg    = i_showWindow and i_showWindowBg
+i_windowBgColor    = input.color(color.new(#b22833, 90), "", group = iGroupTradeWindow, inline = "V2", display = display.none, tooltip = tt_windowBg, active = a_windowBg)
 
-//#endregion UDT's
+// #endregion Trade Window
 
-//+-----------------------------------------------------+
-//                    LIB FUNCTIONS                     |
-//+-----------------------------------------------------+
-//#region LIB FUNCTIONS
+// #region History ****************************************
 
-//#region Internal Helpers*******************************
+// Worst case per retained day: four lines, two labels, and one box, which keeps 90 days of
+// history inside TradingView's 500-ID limit for every object type.
+const int MAX_HISTORY_DAYS = 90
 
-timeSpan(string _timeSpan) =>
-    switch _timeSpan
-        "Minute"        => 60000
-        "Minutes"       => 60000
-        "Half Hour"     => 1800000
-        "Hour"          => 3600000
-        "Hours"         => 3600000
-        "4 Hours"       => 14400000
-        "8 Hours"       => 28800000
-        "12 Hours"      => 43200000
-        "Day"           => 86400000
-        "Week"          => 604800000
+var string iGroupHistory = "History"
+i_showHistory = input.bool(true, "History.", group = iGroupHistory, inline = "H1", display = display.none)
+i_daysInput   = input.int(5, "Previous sessions:", 1, MAX_HISTORY_DAYS, 1, tt_historyDays, group = iGroupHistory, inline = "H1", display = display.none)
 
-isWeekendBar() =>
-    dayofweek(time) == dayofweek.saturday or dayofweek(time) == dayofweek.sunday
+// #endregion History
 
-// Tracks whether this symbol/timeframe ever prints weekend bars.
-// If it does, do NOT apply weekend-skipping logic.
-var bool s_hasWeekendData = false
-if isWeekendBar()
-    s_hasWeekendData := true
+// #endregion Inputs
 
-shouldSkipWeekends() =>
-    not s_hasWeekendData
+//+-------------------------------------------------------+
+//                           UDT'S                        |
+//+-------------------------------------------------------+
+// #region UDT's
 
-sessToHoursMins(string _session) =>
-    startHour = math.round(str.tonumber(str.substring(_session, 0, 2)))
-    startMins = math.round(str.tonumber(str.substring(_session, 2, 4)))
-    endHour = math.round(str.tonumber(str.substring(_session, 5, 7)))
-    endMins = math.round(str.tonumber(str.substring(_session, 7, 9)))
-    [startHour, startMins, endHour, endMins]
+// #region Helper UDTs ************************************
 
-sessionDuration(string _session) =>
-    start = math.round(str.tonumber(str.substring(_session, 0, 4)))
-    end = math.round(str.tonumber(str.substring(_session, 5, 9)))
-    if start >= end
-        end += 2400
-    calcHours = (math.floor(end / 100) - math.floor(start / 100)) * timeSpan("Hour")
-    startMins = start % 100
-    endMins = end % 100
-    if startMins > 0
-        calcHours := calcHours - timeSpan("Hour")
-        startMins := 60 - startMins
-    calcMins = (startMins + endMins) * timeSpan("Minute")
-    calcHours + calcMins
+type BarTracker
+    int sessBar = na
+    int hiBar   = na
+    int loBar   = na
+    int hiTime  = na
+    int loTime  = na
+    int endBar  = na
 
-type SessionInfo
-    string labelText = na
-    string session = na
-    int openHour = na
-    int openMinute = na
-    int closeHour = na
-    int closeMinute = na
+type BreakTracker
+    int  sessStartTime = na
+    bool highBroken    = false
+    bool lowBroken     = false
+    bool highAlerted   = false
+    bool lowAlerted    = false
 
-var s_london = SessionInfo.new(
-    "London", "0300-1200", 03, 00, 12, 00
-)
-var s_londonLunch = SessionInfo.new(
-    "London Lunch", "0500-0800", 05, 00, 08, 00
-)
-var s_londonToNY = SessionInfo.new(
-    "London to NY", "0300-0800", 03, 00, 08, 00
-)
-var s_ny = SessionInfo.new(
-    "New York", "0800-1700", 08, 00, 17, 00
-)
-var s_nyCross = SessionInfo.new(
-    "NY Cross", "0800-1200", 08, 00, 12, 00
-)
-var s_asia = SessionInfo.new(
-    "Asia", "2000-0500", 20, 00, 05, 00
-)
-var s_asiaLunch = SessionInfo.new(
-    "Asia Lunch", "0000-0300", 00, 00, 03, 00
-)
-var s_asiaToLondon = SessionInfo.new(
-    "Asia to Lon", "2000-0300", 20, 00, 03, 00
-)
-var s_dailyMarket = SessionInfo.new(
-    "Daily", "1700-1700", 17, 00, 17, 00
-)
-var s_dailyMidnight = SessionInfo.new(
-    "Daily", "0000-0000", 00, 00, 00, 00
-)
+// Styling is stored as resolved Pine constants so the render path never converts enums per bar.
+type SessionVisualConfig
+    bool   isEnabled       = false
+    color  primeColor      = na
+    color  backgroundColor = na
+    bool   showBackground  = false
+    bool   showHiLo        = false
+    string lineStyle       = line.style_dotted
+    int    lineWidth       = 1
+    bool   showLabel       = false
+    bool   showBox         = false
+    string boxStyle        = line.style_dashed
+    int    boxWidth        = 1
+    int    aheadBars       = 10
+    bool   showLineHistory = false
+    bool   showBoxHistory  = false
+    bool   showBoxText     = false
+    color  boxTextColor    = #FFFFFF
+    string boxTextSize     = size.tiny
+    string boxTextHAlign   = text.align_left
+    string boxTextVAlign   = text.align_top
+    UTIL.SessionAnchor anchor = UTIL.SessionAnchor.SessionEnd
 
-getSessionInfo(string _sessName) =>
-    switch _sessName
-        "Asia"                  => s_asia
-        "Asian Lunch"           => s_asiaLunch
-        "Asia -> London Open"   => s_asiaToLondon
-        "London"                => s_london
-        "London Lunch"          => s_londonLunch
-        "London -> NY Open"     => s_londonToNY
-        "New York"              => s_ny
-        "London/NY Cross"       => s_nyCross
-        "Daily (Market)"        => s_dailyMarket
-        "Daily (Midnight)"      => s_dailyMidnight
+type SessionVisualState
+    line  highLine  = na
+    label highLabel = na
+    line  lowLine   = na
+    label lowLabel  = na
+    box   square    = na
 
-isSession(string _session, string _timeZone = "America/New_York") =>
-    not na(time(timeframe.period, _session, _timeZone))
+type TradeWindowState
+    int  lastDrawnStart = na
+    bool endAdjusted    = false
 
-getWeekClose() =>
-    dayClose = timestamp("America/New_York", year, month, dayofmonth, 17)
-    dayClose := dayofweek(dayClose) == 7 ? dayClose + timeSpan("Day") : dayClose
-    currentDay = dayofweek(dayClose)
-    int addedDays = 0
-    if currentDay < 6
-        addedDays := (6 - currentDay) * timeSpan("Day")
-    dayClose + addedDays
+// #endregion Helper UDTs
 
-//#endregion Internal Helpers
+// #endregion UDT's
 
-//#region Custom Types***********************************
+//+-------------------------------------------------------+
+//                     GLOBAL VARIABLES                   |
+//+-------------------------------------------------------+
+// #region Global Variables
 
-type sessionData
-    float highPrice
-    int highTime
-    line highLine
-    label highLabel
-    float lowPrice
-    int lowTime
-    line lowLine
-    label lowLabel
-    box square
-    string sessLabelText
-    int sessStartTime
-    int sessEndTime
-    int aheadTime
-    int highLineStartTime
-    int lowLineStartTime
-    int lineEndTime
-    int sessStartHour
-    int sessEndHour
-    int sessStartBarTime
-    int sessEndBarTime
+// #region Helper Globals *********************************
 
-type sessionInputs
-    bool showAll
-    string sessName
-    color primeColor
-    color subColor
-    bool showBg
-    bool showHiLo
-    string lineStyle
-    string lineSize
-    bool showLabel
-    bool showBox
-    string boxStyle
-    string boxSize
-    string startName
-    string lineEnd
-    bool xDay
-    int aheadTime
-    bool showLineHist
-    bool showBoxHist
-    string customLabel = na
-    string customSession = na
+// #region Runtime Context //
 
-//#endregion Custom Types
+const string SESSION_SLOT_KEY = "sess01"
 
-//#region Intrabar Operations****************************
+var string USER_TIMEZONE = i_timeZone.toTimezone()
 
-adjustHighLow(int _startTime, int _endTime, float _high, float _low, int _hiTime, int _lowTime, int _timeNow) =>
-    [oneMinTimeArray, oneMinHighArray, oneMinLowArray] = request.security_lower_tf(syminfo.tickerid, "1", [time, high, low], ignore_invalid_timeframe = true)
-    float returnValHi = _high, float returnValLo = _low
-    int returnHighTime = _hiTime, int returnLowTime = _lowTime
-    if array.size(oneMinTimeArray) > 0
-        for indx = 0 to array.size(oneMinTimeArray) -1
-            arrTime = array.get(oneMinTimeArray, indx)
-            if  arrTime >= _startTime and arrTime < _endTime
-                if array.get(oneMinHighArray, indx) > returnValHi
-                    returnValHi := array.get(oneMinHighArray, indx)
-                    returnHighTime := _timeNow
-                if array.get(oneMinLowArray, indx) < returnValLo
-                    returnValLo := array.get(oneMinLowArray, indx)
-                    returnLowTime := _timeNow
+// Bar replay still reports realtime bars while the replay cursor sits in the past, so the wall
+// clock would classify a developing replayed session as already finished. One bar of slack keeps
+// a genuinely live bar on the wall clock and sends every replayed bar back to its own bar clock.
+int  replayClockSlackMs   = math.max(nz(UTIL.barDurationMs()), UTIL.durationMs(UTIL.Duration.Minute))
+bool isReplayLikeRealtime = barstate.isrealtime and not na(time_close) and timenow > time_close + replayClockSlackMs
+int  TIMENOW              = (barstate.isrealtime and not isReplayLikeRealtime ? timenow : nz(time_close, time))
 
-    [returnValHi, returnValLo, returnHighTime, returnLowTime]
+bool isTradeWindowActive = i_showWindow and UTIL.isInSession(i_window, USER_TIMEZONE)
+// A disabled trade window means every bar qualifies for alerts.
+bool isAlertWindowOpen   = not i_showWindow or isTradeWindowActive
 
-isSessIntrabar(bool _isCheckingStart, SessionInfo _session, string _timeZone, int _barStart, int _barEnd, int _spanAdjust = 0) =>
-    adjMidnight = _session.closeHour == 0 and _session.closeMinute == 0 and _session.openHour == 0 and _session.openMinute == 0 ? timeSpan("Day") : 0
-    startTime = timestamp(_timeZone, year, month, dayofmonth, _session.openHour, _session.openMinute) + adjMidnight + _spanAdjust
-    endTime = startTime + sessionDuration(_session.session)
-    barStart = timestamp(syminfo.timezone, year(_barStart), month(_barStart), dayofmonth(_barStart), hour(_barStart), minute(_barStart))
-    barEnd = timestamp(syminfo.timezone, year(_barEnd), month(_barEnd), dayofmonth(_barEnd), hour(_barEnd), minute(_barEnd))
-    bool returnVal = false
-    if _isCheckingStart
-        returnVal := startTime > barStart and startTime < barEnd ? true : false
-    else if not _isCheckingStart
-        returnVal := endTime > barStart and endTime < barEnd ? true : false
-    returnVal
+int  daysLimit       = (i_showHistory ? i_daysInput : 0)
+bool isWithinHistory = UTIL.isWithinHistoryWindow(daysLimit, last_bar_time)
 
-//#endregion Intrabar Operations
+// #endregion Runtime Context
 
-//#region Run Time Functions ****************************
+// #region Session State Store //
 
-getRunTime(int _days, int _timeNow) =>
-    // If the symbol trades weekends, just count back _days directly.
-    if not shouldSkipWeekends()
-        _timeNow - _days * timeSpan("Day")
-    else
-        int currentDay = dayofweek(_timeNow)
-        int weekendDays = 0
-        for i = 0 to _days - 1
-            currentDay -= 1
-            if currentDay == 0
-                weekendDays += 2
-                currentDay := 6
-        int totalDays = _days + weekendDays
-        int returnVal = _timeNow - totalDays * timeSpan("Day")
-        returnVal
+var array<UTIL.SessionState> sessionStates = array.new<UTIL.SessionState>()
 
-isRunTime(int _daysHistory, bool _isNonArray = false, bool _isDay = false, int _timeNow) =>
-    int days = _daysHistory
-    if not _isNonArray
-        days := days == 0 ? 1 : days
-    if _isDay
-        days := days + 2
-    bool returnVal = false
-    int daysHistory =  getRunTime(days, _timeNow)
-    if _timeNow > daysHistory
-        if timeframe.isintraday
-            returnVal := true
+// #endregion Session State Store
+
+// #region Trade Window State //
+
+var array<line> windowStartLines = array.new<line>()
+var array<line> windowEndLines   = array.new<line>()
+var TradeWindowState windowState = TradeWindowState.new()
+
+// #endregion Trade Window State
+
+// #region Session Config Holders //
+
+var UTIL.SessionConfig sessionConfig = UTIL.SessionConfig.new(
+     isEnabled = i_showSession,                 preset = i_sessionPreset,
+     customLabel = i_customLabel,               customSession = i_customSession,
+     timezone = USER_TIMEZONE,                  anchor = i_lineAnchor,
+     lineEndHour = i_lineEndHour.toHourInt(),   lineEndMinute = i_lineEndMinute.toMinuteInt(),
+     lineEndTimezone = USER_TIMEZONE,           addExtraLineDay = i_lineExtraDay)
+
+var SessionVisualConfig visualConfig = SessionVisualConfig.new(
+     isEnabled       = i_showSession,                     primeColor     = i_primeColor,
+     backgroundColor = i_subColor,                        showBackground = i_sessionBg,
+     showHiLo        = i_showHiLo,                        lineStyle      = i_hiLoStyle.toLineStyle(),
+     lineWidth       = i_hiLoSize.toLineWidth(),          showLabel      = i_showLabel,
+     showBox         = i_showBox,                         boxStyle       = i_boxStyle.toLineStyle(),
+     boxWidth        = i_boxSize.toLineWidth(),           aheadBars      = i_aheadTime,
+     showLineHistory = i_showHistory and i_showLineHistory,
+     showBoxHistory  = i_showHistory and i_showBoxHistory,
+     showBoxText     = i_showBoxText,                     boxTextColor   = i_boxTextColor,
+     boxTextSize     = i_boxTextSize.toTextSizeString(),  boxTextHAlign  = i_boxTextHAlign.toHorizontalAlign(),
+     boxTextVAlign   = i_boxTextVAlign.toVerticalAlign(), anchor         = i_lineAnchor)
+
+// #endregion Session Config Holders
+
+// #region Tracking Maps //
+
+var map<string, BarTracker>         barTrackerMap   = map.new<string, BarTracker>()
+var map<string, SessionVisualState> visualStateMap = map.new<string, SessionVisualState>()
+var map<string, BreakTracker>       breakTrackerMap = map.new<string, BreakTracker>()
+
+// #endregion Tracking Maps
+
+// #endregion Helper Globals
+
+// #endregion Global Variables
+
+//+-------------------------------------------------------+
+//                        FUNCTIONS                       |
+//+-------------------------------------------------------+
+// #region Functions
+
+// #region Shared Helper Functions ************************
+
+sessionInstanceKey(string _slotKey, int _sessStartTime) =>
+    _slotKey + ":" + str.tostring(_sessStartTime)
+
+getOrCreateVisualState(string _instanceKey) =>
+    if not map.contains(visualStateMap, _instanceKey)
+        map.put(visualStateMap, _instanceKey, SessionVisualState.new())
+    map.get(visualStateMap, _instanceKey)
+
+renderSessionEnd(UTIL.SessionState _state) =>
+    _state.sessEndTime - 1
+
+// #endregion Shared Helper Functions
+
+// #region Trade Window Functions *************************
+
+// @function drawTradeWindow                        - Draws or repositions the vertical lines for the trade window.
+// @param    _startLines   (array<line>)            - Window start line pool, newest first.
+// @param    _endLines     (array<line>)            - Window end line pool, newest first.
+// @param    _windowState  (TradeWindowState)       - Persistent draw state for this window.
+// @param    _session      (string)                 - Window session string in the user's timezone.
+// @param    _showHistory  (bool)                   - True keeps one line pair per day.
+// @param    _lineColor    (color)                  - Line color.
+// @param    _lineStyle    (string)                 - Resolved line style constant.
+// @param    _lineWidth    (int)                    - Line width in pixels.
+// @param    _daysLimit    (int)                    - Days of history allowed.
+// @param    _timeNow      (int)                    - Current timestamp.
+// @returns                (TradeWindowState)       - Updated draw state.
+drawTradeWindow(array<line> _startLines, array<line> _endLines, TradeWindowState _windowState,
+     string _session, bool _showHistory, color _lineColor, string _lineStyle, int _lineWidth,
+     int _daysLimit, int _timeNow) =>
+    UTIL.TradeWindowPlan plan = UTIL.planTradeWindow(_session, USER_TIMEZONE, _daysLimit, _timeNow, _windowState.lastDrawnStart)
+    if plan.shouldDraw
+        int startLineTime = plan.startTime
+        if array.size(_startLines) == 0 or _showHistory
+            array.unshift(_startLines, line.new(startLineTime, open, startLineTime, close,
+                 xloc.bar_time, extend.both, _lineColor, _lineStyle, _lineWidth))
+            array.unshift(_endLines, line.new(plan.endTime, open, plan.endTime, close,
+                 xloc.bar_time, extend.both, _lineColor, _lineStyle, _lineWidth))
+            UTIL.trimPool(_daysLimit + 1, lines = _startLines)
+            UTIL.trimPool(_daysLimit + 1, lines = _endLines)
+        if not _showHistory and array.size(_startLines) == 1
+            array.get(_startLines, 0).updateLine(_x1 = startLineTime, _x2 = startLineTime)
+            array.get(_endLines, 0).updateLine(_x1 = plan.endTime, _x2 = plan.endTime)
+        _windowState.lastDrawnStart := plan.startTime
+        _windowState.endAdjusted    := false
+    // Pin the end line to the bar that actually closed the window when no bar printed at the planned end.
+    if not _windowState.endAdjusted and not plan.isInWindow and plan.alreadyDrawn and array.size(_endLines) > 0
+        line endLine     = array.get(_endLines, 0)
+        int  currentEndX = line.get_x1(endLine)
+        if currentEndX > nz(time_close[1], 0) and currentEndX < time
+            endLine.updateLine(_x1 = time, _x2 = time)
+        _windowState.endAdjusted := true
+    _windowState
+
+// @function clearTradeWindow                       - Deletes both line pools for the trade window.
+// @param    _startLines   (array<line>)            - Window start line pool.
+// @param    _endLines     (array<line>)            - Window end line pool.
+// @returns                (TradeWindowState)       - Reset draw state.
+clearTradeWindow(array<line> _startLines, array<line> _endLines) =>
+    UTIL.clearDrawings(lines = _startLines)
+    UTIL.clearDrawings(lines = _endLines)
+    TradeWindowState.new()
+
+// #endregion Trade Window Functions
+
+// #region Session Visual Functions ***********************
+
+// #region Session Visual Helpers //
+
+createHiLoLine(bool _isHigh, color _lineColor, string _lineStyle, int _lineWidth) =>
+    float anchorPrice = (_isHigh ? high : low)
+    line.new(time, anchorPrice, time + UTIL.barDurationMs(), anchorPrice,
+         xloc.bar_time, extend.none, _lineColor, _lineStyle, _lineWidth)
+
+createHiLoLabel(bool _isHigh, string _labelText, color _textColor, bool _isBoxShown) =>
+    color  transparent = color.new(#000000, 100)
+    float  anchorPrice = (_isHigh ? high : low)
+    string labelStyle  = (_isBoxShown
+        ? (_isHigh ? label.style_label_lower_left : label.style_label_upper_left)
+        : label.style_label_left
+        )
+    label.new(time + UTIL.barDurationMs(), anchorPrice, _labelText,
+         xloc = xloc.bar_time, color = transparent, textcolor = _textColor,
+         yloc = yloc.price, style = labelStyle)
+
+createSessionBox(int _rightTime, SessionVisualConfig _config, string _boxText) =>
+    box created = box.new(time, high, _rightTime, low,
+         _config.primeColor, _config.boxWidth, _config.boxStyle,
+         extend.none, xloc.bar_time, _config.backgroundColor)
+    created.updateBox(
+         _text       = (_config.showBoxText ? _boxText : ""),
+         _textSize   = _config.boxTextSize,
+         _textHAlign = _config.boxTextHAlign,
+         _textVAlign = _config.boxTextVAlign,
+         _textColor  = (_config.showBoxText ? _config.boxTextColor : _config.primeColor))
+    created
+
+clearVisualState(SessionVisualState _visualState, bool _clearLines, bool _clearLabels, bool _clearBoxes) =>
+    if _clearLines
+        line.delete(_visualState.highLine)
+        line.delete(_visualState.lowLine)
+        _visualState.highLine := na
+        _visualState.lowLine  := na
+    if _clearLabels
+        label.delete(_visualState.highLabel)
+        label.delete(_visualState.lowLabel)
+        _visualState.highLabel := na
+        _visualState.lowLabel  := na
+    if _clearBoxes
+        box.delete(_visualState.square)
+        _visualState.square := na
+
+applyLabelOffsetStyle(SessionVisualState _visualState, bool _isOffset) =>
+    if not na(_visualState.highLabel)
+        string highStyle = (_isOffset ? label.style_label_lower_left : label.style_label_left)
+        string lowStyle  = (_isOffset ? label.style_label_upper_left : label.style_label_left)
+        _visualState.highLabel.updateLabel(_style = highStyle)
+        _visualState.lowLabel.updateLabel(_style = lowStyle)
+
+// Session boxes span the chart bars that contain the boundaries, falling back to the scheduled
+// boundary when the bar timestamp has not been observed yet.
+syncSessionBox(UTIL.SessionState _state, SessionVisualState _visualState, SessionVisualConfig _config) =>
+    int boxRight = renderSessionEnd(_state)
+    if na(_visualState.square)
+        _visualState.square := createSessionBox(boxRight, _config, _state.labelText)
+    int leftTime  = (na(_state.sessStartBarTime) ? _state.sessStartTime : _state.sessStartBarTime)
+    int rightTime = (na(_state.sessEndBarTime) ? boxRight : _state.sessEndBarTime)
+    _visualState.square.updateBox(
+         _left        = leftTime,           _top         = _state.highPrice,
+         _right       = rightTime,          _bottom      = _state.lowPrice,
+         _borderColor = _config.primeColor, _borderWidth = _config.boxWidth,
+         _borderStyle = _config.boxStyle,   _bgColor     = _config.backgroundColor)
+
+advanceHiLoLines(UTIL.SessionState _state, SessionVisualState _visualState, SessionVisualConfig _config,
+     bool _isDaily, int _timeNow, string _instanceKey) =>
+    int  renderEnd          = renderSessionEnd(_state)
+    bool isSingleBarSession = (
+        not na(_state.sessStartBarTime) and not na(_state.sessEndBarTime)
+    ) and _state.sessStartBarTime == _state.sessEndBarTime
+    if not na(_visualState.highLine) and not na(_visualState.lowLine) and map.contains(barTrackerMap, _instanceKey)
+        BarTracker tracker = map.get(barTrackerMap, _instanceKey)
+        if time >= _state.lineEndTime and na(tracker.endBar)
+            tracker.endBar := bar_index
+        // Keep every coordinate in UNIX time. Converting timestamp anchors to bar indexes can
+        // collapse a line when a session boundary falls inside a chart candle.
+        int projectedRightTime = time + UTIL.barDurationMs() * _config.aheadBars
+        int rightTime = (not na(tracker.endBar)
+             ? _state.lineEndTime
+             : math.min(projectedRightTime, _state.lineEndTime))
+        int lineStartHigh = _state.highLineStartTime
+        int lineStartLow  = _state.lowLineStartTime
+        if _config.anchor == UTIL.SessionAnchor.SessionEnd and _timeNow > renderEnd
+            int endAnchor = nz(_state.sessEndBarTime, renderEnd)
+            lineStartHigh := endAnchor
+            lineStartLow  := endAnchor
+        line.set_xloc(
+             _visualState.highLine, lineStartHigh, rightTime, xloc.bar_time)
+        line.set_xloc(
+             _visualState.lowLine, lineStartLow, rightTime, xloc.bar_time)
+        if _config.showLabel and not na(_visualState.highLabel) and not na(_visualState.lowLabel)
+            label.set_xloc(_visualState.highLabel, rightTime, xloc.bar_time)
+            label.set_xloc(_visualState.lowLabel, rightTime, xloc.bar_time)
+    if _timeNow <= renderEnd and _config.showBox and not _isDaily
+        applyLabelOffsetStyle(_visualState, not isSingleBarSession)
+    if _timeNow > renderEnd and not _isDaily
+        applyLabelOffsetStyle(_visualState, false)
+
+ensureCurrentSessionShapes(UTIL.SessionState _state, SessionVisualConfig _config, bool _isDaily,
+     string _instanceKey) =>
+    // The developing daily session draws nothing; its shapes appear once the day completes.
+    if not _isDaily
+        SessionVisualState visualState = getOrCreateVisualState(_instanceKey)
+        if _config.showHiLo
+            if na(visualState.highLine)
+                visualState.highLine := createHiLoLine(true, _config.primeColor, _config.lineStyle, _config.lineWidth)
+            if na(visualState.lowLine)
+                visualState.lowLine := createHiLoLine(false, _config.primeColor, _config.lineStyle, _config.lineWidth)
+            visualState.highLine.updateLine(_y1 = _state.highPrice, _y2 = _state.highPrice)
+            visualState.lowLine.updateLine(_y1 = _state.lowPrice, _y2 = _state.lowPrice)
+            if _config.showLabel
+                if na(visualState.highLabel)
+                    visualState.highLabel := createHiLoLabel(true, _state.labelText + " High", _config.primeColor, _config.showBox)
+                if na(visualState.lowLabel)
+                    visualState.lowLabel := createHiLoLabel(false, _state.labelText + " Low", _config.primeColor, _config.showBox)
+                visualState.highLabel.updateLabel(_y = _state.highPrice, _text = _state.labelText + " High")
+                visualState.lowLabel.updateLabel(_y = _state.lowPrice, _text = _state.labelText + " Low")
+            else
+                clearVisualState(visualState, false, true, false)
         else
-            returnVal := false
-    returnVal
+            clearVisualState(visualState, true, true, false)
+        if _config.showBox
+            syncSessionBox(_state, visualState, _config)
+        else
+            clearVisualState(visualState, false, false, true)
+        map.put(visualStateMap, _instanceKey, visualState)
 
-//#endregion Run Time Functions
-
-//#region Session Time Helpers **************************
-
-getLineEndTime(string _timeZone, int _sessEnd, int _sessEndHour, int _sessEndMins, string _iLineEndName, bool _xDay, bool _isDaily) =>
-    xDay = _xDay
-    lineEndHour = math.round(str.tonumber(str.substring(_iLineEndName, 0, 2)))
-    lineEndMin = math.round(str.tonumber(str.substring(_iLineEndName, 3, 5)))
-    lineCloseTime = timestamp(_timeZone, year, month, dayofmonth, lineEndHour, lineEndMin)
+applyHistoryVisuals(UTIL.SessionState _state, SessionVisualConfig _config, bool _isDaily,
+     string _instanceKey) =>
+    SessionVisualState visualState = getOrCreateVisualState(_instanceKey)
     if _isDaily
-        xDay :=  timestamp(_timeZone, year, month, dayofmonth, _sessEndHour, _sessEndMins) ==
-                 timestamp(_timeZone, year, month, dayofmonth, lineEndHour, lineEndMin) ?  true : false
-    while lineCloseTime < _sessEnd
-        lineCloseTime += timeSpan("Day")
-    if xDay
-        lineCloseTime := lineCloseTime + timeSpan("Day")
-    if shouldSkipWeekends()
-        weekClose = getWeekClose()
-        nextOpen = weekClose + timeSpan("Day") * 2
-        while lineCloseTime > weekClose and lineCloseTime < nextOpen
-            lineCloseTime += timeSpan("Day")
-        if lineCloseTime >= nextOpen and lineCloseTime < nextOpen + timeSpan("Minute") * 5
-            lineCloseTime += timeSpan("Day")
-    lineCloseTime
-
-//#endregion Session Time Helpers
-
-//#region Helper Functions ******************************
-
-isStartPrice(string _iStart) =>
-    _iStart == "Price" ? true : false
-
-getCustomSessionInfo(string _sessName, string _customSession =na,  string _customLabel = na) =>
-    SessionInfo returnVal = na
-    if _sessName != "Custom"
-        returnVal := getSessionInfo(_sessName)
-    if _sessName == "Custom"
-        name            = _customLabel
-        session         = _customSession
-        [startHour, startMin, endHour, endMin] = sessToHoursMins(session)
-        returnVal := SessionInfo.new(name, session, startHour, startMin, endHour, endMin)
-    returnVal
-
-isSessFirstBar(SessionInfo _session, string _timeZone = "America/New_York", int _spanAdjust = 0) =>
-    sessStart = timestamp(_timeZone, year, month, dayofmonth, _session.openHour, _session.openMinute) + _spanAdjust
-    isSessionStartInBar = sessStart >= time and sessStart < time_close
-    bool isFirstBar = isSessionStartInBar
-    isFirstBar
-
-createSessionDataCore(sessionInputs _input, SessionInfo _sessInfo, bool _isDaily, string _timeZone, string _lineEndTimeZone, int _spanAdjust) =>
-    sessStartTime = timestamp(_timeZone, year, month, dayofmonth, _sessInfo.openHour, _sessInfo.openMinute) + _spanAdjust
-    sessDuration = sessionDuration(_sessInfo.session)
-    sessEndTime = sessStartTime + sessDuration - 1
-    if shouldSkipWeekends()
-        sessEndTime := sessEndTime >= getWeekClose() ? sessEndTime + (timeSpan("Day") * 2) : sessEndTime
-    sessionData.new(
-         high,
-         sessStartTime,
-         na,
-         na,
-         low,
-         sessStartTime,
-         na,
-         na,
-         na,
-         _sessInfo.labelText,
-         sessStartTime,
-         sessEndTime,
-         _input.aheadTime,
-         sessStartTime,
-         sessStartTime,
-         getLineEndTime(_lineEndTimeZone, sessEndTime, _sessInfo.closeHour, _sessInfo.openMinute, _input.lineEnd, _input.xDay, _isDaily),
-         _sessInfo.openHour,
-         _sessInfo.closeHour,
-         sessStartTime,
-         na
-         )
-
-firstBarSessionCore(sessionInputs _input, sessionData[] _sessDataArray, SessionInfo _sessInfo, bool _isDaily, int _spanAdjust, string _timeZone, string _lineEndTimeZone) =>
-    array.unshift(_sessDataArray, createSessionDataCore(_input, _sessInfo, _isDaily, _timeZone, _lineEndTimeZone, _spanAdjust))
-
-newHighOrLowCore(sessionData _sessData, bool _isHigher, bool _isLower, bool _isStartPrice, bool _isAdj) =>
-    currentTime = timestamp(year, month, dayofmonth, hour, minute)
-    if _isHigher
-        _sessData.highPrice := _isAdj ? _sessData.highPrice : high
-        _sessData.highTime := _isAdj ? _sessData.highTime : currentTime
-        _sessData.highLineStartTime := _isStartPrice ? _sessData.highTime : _sessData.sessStartTime
-    if _isLower
-        _sessData.lowPrice := _isAdj ? _sessData.lowPrice : low
-        _sessData.lowTime := _isAdj ? _sessData.lowTime : currentTime
-        _sessData.lowLineStartTime := _isStartPrice ? _sessData.lowTime : _sessData.sessStartTime
-
-isNewHighLowCore(string _swing, float _prevHiLo) =>
-    _swing == "swingHigh" ? high > _prevHiLo : low < _prevHiLo
-
-setAdjustedData(sessionData _data, float _highPrice, float _lowPrice, int _highTime, int _lowTime) =>
-    _data.highPrice := _highPrice
-    _data.lowPrice := _lowPrice
-    _data.highTime := _highTime
-    _data.lowTime := _lowTime
-
-isLateSessStart(SessionInfo _si, sessionData[] _arr, string _tz, int _now) =>
-    bool inSess = isSession(_si.session, _tz)
-    if not inSess
-        false
-    else if array.size(_arr) == 0
-        true
+        // Daily sessions never draw a live session, so the historical pass owns every shape,
+        // including the completed day's box.
+        if _config.showHiLo
+            int lineStartHigh = _state.highLineStartTime
+            int lineStartLow  = _state.lowLineStartTime
+            if _config.anchor == UTIL.SessionAnchor.SessionEnd
+                int endAnchor = nz(_state.sessEndBarTime, renderSessionEnd(_state))
+                lineStartHigh := endAnchor
+                lineStartLow  := endAnchor
+            if na(visualState.highLine)
+                visualState.highLine := createHiLoLine(true, _config.primeColor, _config.lineStyle, _config.lineWidth)
+            if na(visualState.lowLine)
+                visualState.lowLine := createHiLoLine(false, _config.primeColor, _config.lineStyle, _config.lineWidth)
+            visualState.highLine.updateLine(
+                 _x1 = lineStartHigh,      _y1 = _state.highPrice,
+                 _x2 = _state.lineEndTime, _y2 = _state.highPrice)
+            visualState.lowLine.updateLine(
+                 _x1 = lineStartLow,       _y1 = _state.lowPrice,
+                 _x2 = _state.lineEndTime, _y2 = _state.lowPrice)
+            if _config.showLabel
+                if na(visualState.highLabel)
+                    visualState.highLabel := createHiLoLabel(true, "PDH", _config.primeColor, false)
+                if na(visualState.lowLabel)
+                    visualState.lowLabel := createHiLoLabel(false, "PDL", _config.primeColor, false)
+                visualState.highLabel.updateLabel(_x = _state.lineEndTime, _y = _state.highPrice, _text = "PDH", _style = label.style_label_left)
+                visualState.lowLabel.updateLabel(_x = _state.lineEndTime, _y = _state.lowPrice, _text = "PDL", _style = label.style_label_left)
+            else
+                clearVisualState(visualState, false, true, false)
+        else
+            clearVisualState(visualState, true, true, false)
+        if _config.showBox
+            syncSessionBox(_state, visualState, _config)
+        else
+            clearVisualState(visualState, false, false, true)
     else
-        sessionData lat = array.get(_arr, 0)
-        lat.sessEndTime < _now
+        if _config.showHiLo and _config.showLineHistory and _config.showLabel
+            visualState.highLabel.updateLabel(_text = "H", _style = label.style_label_left)
+            visualState.lowLabel.updateLabel(_text = "L", _style = label.style_label_left)
+        if not (_config.showHiLo and _config.showLineHistory)
+            clearVisualState(visualState, true, true, false)
+        if not (_config.showBox and _config.showBoxHistory)
+            clearVisualState(visualState, false, false, true)
+    map.put(visualStateMap, _instanceKey, visualState)
 
-compLateSpanAdj(SessionInfo _si, string _tz, int _spanAdj) =>
-    int stChk = timestamp(_tz, year, month, dayofmonth, _si.openHour, _si.openMinute) + _spanAdj
-    int res = _spanAdj
-    if stChk > time
-        res -= timeSpan("Day")
-    res
+isNewSessionInstance(array<UTIL.SessionState> _states, bool _isDaily, bool _isFirstBarOfSession,
+     string _slotKey) =>
+    // A scheduled opening during a resumed weekend session is not a new instance.
+    bool isNewSession = _isFirstBarOfSession and array.size(_states) > 0 and (
+         array.get(_states, 0).sessStartTime >= time and array.get(_states, 0).sessStartTime < time_close)
+    if not isNewSession and not _isDaily and array.size(_states) > 0
+        string instanceKey = sessionInstanceKey(_slotKey, array.get(_states, 0).sessStartTime)
+        isNewSession := not map.contains(barTrackerMap, instanceKey)
+    isNewSession
 
-//#endregion Helper Functions
+registerStateTracker(UTIL.SessionState _state, string _slotKey) =>
+    string instanceKey = sessionInstanceKey(_slotKey, _state.sessStartTime)
+    if not map.contains(barTrackerMap, instanceKey)
+        map.put(barTrackerMap, instanceKey, BarTracker.new(
+             bar_index, bar_index, bar_index, _state.highLineStartTime, _state.lowLineStartTime))
+    // Preserve the engine's original start-bar timestamp when rendering deferred history.
+    getOrCreateVisualState(instanceKey)
 
-//#region Run Session Functions**************************
+registerSessionTracker(array<UTIL.SessionState> _states, string _slotKey) =>
+    if array.size(_states) > 0
+        registerStateTracker(array.get(_states, 0), _slotKey)
 
-runSession(map<string, sessionInputs> _inputMap, string _mapKey, sessionData[] _sessDataArray, int _timeNow, string _timeZoneUser, string _timeZoneDefault, int _daysLimit) =>
-    inputInfo = map.get(_inputMap, _mapKey)
-    sessInfo = getCustomSessionInfo(inputInfo.sessName, inputInfo.customSession, inputInfo.customLabel)
-    timeZone = inputInfo.sessName == "Custom" ? _timeZoneUser : _timeZoneDefault
-    candleSpanAdjust = dayofweek(time) != dayofweek(time_close) ? timeSpan("Day") : 0
-    isDaily = sessInfo.openHour == sessInfo.closeHour and sessInfo.openMinute == sessInfo.closeMinute
-    isFirstBarOfSession = isSessFirstBar(sessInfo, timeZone, candleSpanAdjust)
-    startFromPrice = isStartPrice(inputInfo.startName)
+pruneExpiredSession(array<UTIL.SessionState> _states, int _daysLimit, bool _isDaily,
+     string _slotKey) =>
+    // A scheduled record with no prices is not an observed historical session.
+    // Keep index 0 because it may be waiting for its first qualifying live data.
+    if array.size(_states) > 1
+        for index = array.size(_states) - 1 to 1
+            UTIL.SessionState candidate = array.get(_states, index)
+            if na(candidate.openPrice) and na(candidate.highPrice) and na(candidate.lowPrice) and na(candidate.closePrice)
+                string emptyKey = sessionInstanceKey(_slotKey, candidate.sessStartTime)
+                if map.contains(visualStateMap, emptyKey)
+                    clearVisualState(map.get(visualStateMap, emptyKey), true, true, true)
+                    map.remove(visualStateMap, emptyKey)
+                map.remove(barTrackerMap, emptyKey)
+                array.remove(_states, index)
+    int retainLimit = _daysLimit + (_isDaily ? 2 : 1)
+    while array.size(_states) > retainLimit
+        UTIL.SessionState removed = array.pop(_states)
+        string instanceKey        = sessionInstanceKey(_slotKey, removed.sessStartTime)
+        if map.contains(visualStateMap, instanceKey)
+            clearVisualState(map.get(visualStateMap, instanceKey), true, true, true)
+            map.remove(visualStateMap, instanceKey)
+        map.remove(barTrackerMap, instanceKey)
 
-    bool needsLate = false
-    int actSpanAdj = candleSpanAdjust
-    if not isFirstBarOfSession and not isDaily
-        needsLate := isLateSessStart(sessInfo, _sessDataArray, timeZone, _timeNow)
-        if needsLate
-            actSpanAdj := compLateSpanAdj(sessInfo, timeZone, candleSpanAdjust)
-    bool isNewSess = isFirstBarOfSession or needsLate
+trimDailyHistoryVisuals(array<UTIL.SessionState> _states, SessionVisualConfig _config, bool _isDaily,
+     string _slotKey) =>
+    if _isDaily and array.size(_states) > 2
+        for index = 2 to array.size(_states) - 1
+            UTIL.SessionState state        = array.get(_states, index)
+            string instanceKey             = sessionInstanceKey(_slotKey, state.sessStartTime)
+            SessionVisualState visualState = getOrCreateVisualState(instanceKey)
+            if not _config.showLineHistory
+                clearVisualState(visualState, true, true, false)
+            if not _config.showBoxHistory
+                clearVisualState(visualState, false, false, true)
 
-    if inputInfo.showAll and isRunTime(_daysLimit, false, isDaily, _timeNow)
-        if isNewSess
-            int spanCreate = (needsLate ? actSpanAdj : candleSpanAdjust)
-            firstBarSessionCore(inputInfo, _sessDataArray, sessInfo, isDaily, spanCreate, timeZone, _timeZoneUser)
-            data0 = array.get(_sessDataArray, 0)
-            data0.sessStartBarTime := time
-        for data in _sessDataArray
-            if _timeNow > data.lineEndTime
-                continue
-            if _timeNow < data.sessEndTime
-                bool isStartIntra = isSessIntrabar(true, sessInfo, timeZone, time, time_close, candleSpanAdjust) and barstate.isconfirmed
-                bool isEndIntra = isSessIntrabar(false, sessInfo, timeZone, time, time_close, candleSpanAdjust) and barstate.isconfirmed
-                if isStartIntra or isEndIntra
-                    endTime = isEndIntra ? data.sessEndTime : time_close
-                    startTime = isStartIntra ? data.sessStartTime : time
-                    highPrice = not isStartIntra and isEndIntra and not isNewSess ? data.highPrice : 0
-                    lowPrice = not isStartIntra and isEndIntra and not isNewSess ? data.lowPrice : 69420
-                    [adjHiPrice, adjLowPrice, adjHighTime, adjLowTime] = adjustHighLow(startTime, endTime, highPrice, lowPrice, data.highTime, data.lowTime, _timeNow)
-                    setAdjustedData(data, adjHiPrice, adjLowPrice, adjHighTime, adjLowTime)
-                    newHighOrLowCore(data, true, true, startFromPrice, true)
-                else
-                    isHigher = isNewHighLowCore("swingHigh", data.highPrice)
-                    isLower = isNewHighLowCore("swingLow", data.lowPrice)
-                    newHighOrLowCore(data, isHigher, isLower, startFromPrice, false)
-            renderSessEnd = data.sessEndTime - 1
-            if renderSessEnd >= time and renderSessEnd < time_close and na(data.sessEndBarTime)
-                data.sessEndBarTime := time
-    [sessInfo.session, inputInfo.showBg, isDaily, inputInfo.subColor, timeZone]
-
-//#endregion Run Session
-
-//#endregion LIB FUNCTIONS
-
-//+-----------------------------------------------------+
-//                      VARIABLES                       |
-//+-----------------------------------------------------+
-//#region VARIABLES
-
-var string TZ             = iLib.timezoneToString(i_tz)
-var string DEF_TZ     = str.tostring(iLib.Timezones.ny)
-int NOW                     = timestamp(year, month, dayofmonth, hour, minute)
-int DAY                      = dayofmonth(NOW)
-var int lastDay        = na
-var bool isRun              = false
-
-// Set number of days to look in the history
-i_daysLim := i_showHist ? i_daysLim : 0
-
-//#region Initialize Data Holders************************
-
-// Session data array
-var sessArr01 = array.new<sessionData>()
-
-// Trade window v-line arrays
-var vLnStart01 = array.new<line>()
-var vLnEnd01 = array.new<line>()
-var int twLastStart01 = na
-var bool twEndAdj01 = false
-
-// Session input UDT
-var sessInput01 = sessionInputs.new(i_show01, i_sess01, i_priClr01, i_subClr01, i_sessBg01, i_showHL01, i_hlStyle01, i_hlSize01, i_showLbl01, i_showBx01,
-     i_bxStyle01, i_bxSize01, i_lnStart01, i_lnEndTime01, i_lnXDay01, i_ahead01, i_showLnHist01, i_showBxHist01, i_custLbl01, i_custSess01)
-
-// Session input map
-var sessInMap = map.new<string, sessionInputs>()
-if barstate.isfirst
-    map.put(sessInMap, "sess01", sessInput01)
-
-var trkMap = map.new<int, barTrk>()
-
-// Alert tracking map - keyed by session start time
-var alrtMap = map.new<int, brkTrk>()
-
-//#endregion Data Holders
-
-//#endregion VARIABLES
-
-//+-----------------------------------------------------+
-//                      FUNCTIONS                       |
-//+-----------------------------------------------------+
-//#region FUNCTIONS
-
-//#region Debug Function ********************************
-
-debug(string _id, bool _show, int _t = time, string _s1 = na) =>
-    if _show
-        if _id == "sessVLines"
-            log.info("sessVLines - Status:\n{0}", _s1)
-
-//#endregion Debug Function
-
-//#region Text Helpers **********************************
-
-sessEnd(sessionData _d) =>
-    _d.sessEndTime - 1
-
-//#endregion Text Helpers
-
-//#region Session V-Line Functions **********************
-
-sessVLines(line[] _sArr, line[] _eArr, string _sess, int _lim, bool _hist, color _clr, string _lnStyle, string _lnSize, int _now, string _tz, int _lastStart, bool _endAdj) =>
-    actSess = getCustomSessionInfo("Custom", _sess, "Active Session")
-    int dur = sessionDuration(actSess.session)
-    int spanAdj = dayofweek(time) != dayofweek(time_close) ? timeSpan("Day") : 0
-    int stTime = timestamp(_tz, year, month, dayofmonth, actSess.openHour, actSess.openMinute) + spanAdj
-    bool inTW = isSession(_sess, _tz)
-    if inTW and stTime > time
-        stTime -= timeSpan("Day")
-    int endTime = stTime + dur
-
-    int retStart = _lastStart
-    bool retEndAdj = _endAdj
-    bool drawn = (not na(_lastStart) and _lastStart == stTime)
-
-    bool doDraw = false
-    if not drawn and isRunTime(_lim, false, false, _now)
-        bool rtReady = (not barstate.isrealtime or timenow >= stTime)
-        if isSessFirstBar(actSess, _tz) and rtReady
-            doDraw := true
-        if not doDraw and inTW and rtReady
-            doDraw := true
-
-    if doDraw
-        int stLn = time
-        int endLn = endTime
-        if shouldSkipWeekends()
-            int wkClose = getWeekClose()
-            int nxOpen = wkClose + timeSpan("Day") * 2
-            if endLn > wkClose and endLn < nxOpen
-                endLn += timeSpan("Day") * 2
-        if array.size(_sArr) == 0 or _hist
-            array.unshift(_sArr, line.new(stLn, open, stLn, close, xloc.bar_time, extend.both, _clr, iLib.lineStyleFromString(_lnStyle), iLib.lineSizeFromString(_lnSize)))
-            array.unshift(_eArr, line.new(endLn, open, endLn, close, xloc.bar_time, extend.both, _clr, iLib.lineStyleFromString(_lnStyle), iLib.lineSizeFromString(_lnSize)))
-            if array.size(_sArr) > _lim + 1
-                line.delete(array.pop(_sArr))
-                line.delete(array.pop(_eArr))
-        if not _hist and array.size(_sArr) == 1
-            line.set_x1(array.get(_sArr, 0), stLn)
-            line.set_x2(array.get(_sArr, 0), stLn)
-            line.set_x1(array.get(_eArr, 0), endLn)
-            line.set_x2(array.get(_eArr, 0), endLn)
-        retStart := stTime
-        retEndAdj := false
-
-    if not retEndAdj and not inTW and drawn and array.size(_eArr) > 0
-        line eLn = array.get(_eArr, 0)
-        int curEndX = line.get_x1(eLn)
-        if curEndX > nz(time_close[1], 0) and curEndX < time
-            line.set_x1(eLn, time)
-            line.set_x2(eLn, time)
-        retEndAdj := true
-
-    [retStart, retEndAdj]
-
-clearSessVLines(line[] _startArr, line[] _endArr) =>
-    while array.size(_startArr) > 0
-        line.delete(array.pop(_startArr))
-    while array.size(_endArr) > 0
-        line.delete(array.pop(_endArr))
+renderSessionStates(array<UTIL.SessionState> _states, SessionVisualConfig _config, bool _isDaily,
+     int _timeNow, string _slotKey) =>
+    for [index, state] in _states
+        int  renderEnd           = renderSessionEnd(state)
+        bool sessionIsLive       = _timeNow <= renderEnd
+        bool sessionEndInsideBar = renderEnd >= time and renderEnd < time_close
+        bool sessionEndsThisBar  = time > renderEnd and time[1] <= renderEnd
+        bool lineIsLive          = _config.showHiLo and _timeNow <= state.lineEndTime
+        bool lineEndsThisBar     = _config.showHiLo and time >= state.lineEndTime and time[1] < state.lineEndTime
+        bool needsVisualUpdate   = sessionIsLive or sessionEndInsideBar or sessionEndsThisBar or lineIsLive or lineEndsThisBar
+        if needsVisualUpdate
+            string instanceKey = sessionInstanceKey(_slotKey, state.sessStartTime)
+            // An observed gap can extend an endpoint that was previously frozen.
+            if map.contains(barTrackerMap, instanceKey) and time < state.lineEndTime
+                BarTracker resumedTracker = map.get(barTrackerMap, instanceKey)
+                resumedTracker.endBar := int(na)
+            bool isFrozen = (map.contains(barTrackerMap, instanceKey)
+                 ? not na(map.get(barTrackerMap, instanceKey).endBar)
+                 : false)
+            SessionVisualState visualState = getOrCreateVisualState(instanceKey)
+            // Intraday sessions own their drawings on the newest record; daily sessions own them on
+            // the most recently completed day. Replay stepping, a mid-session reload, or an input
+            // change can skip the session-open bar, so rebuild those shapes from stored state
+            // whenever they are missing instead of waiting for an edge that already passed.
+            bool ownsCurrentDrawings = (_isDaily ? index == 1 : index == 0)
+            bool hasExpectedShapes   = (not _config.showHiLo or not na(visualState.highLine)) and
+              (not _config.showBox or not na(visualState.square))
+            bool needsShapeRebuild   = ownsCurrentDrawings and not hasExpectedShapes
+            // Historical objects are already created with the current input styles on each script run.
+            // Only the live lifecycle needs per-bar drawing updates.
+            if not isFrozen
+                if sessionEndInsideBar and na(state.sessEndBarTime)
+                    state.sessEndBarTime := time
+                if not _isDaily and (sessionIsLive or sessionEndInsideBar or needsShapeRebuild)
+                    ensureCurrentSessionShapes(state, _config, false, instanceKey)
+                if _isDaily and needsShapeRebuild
+                    applyHistoryVisuals(state, _config, true, instanceKey)
+                if _config.showHiLo
+                    advanceHiLoLines(state, visualState, _config, _isDaily, _timeNow, instanceKey)
+                if time > renderEnd and time[1] <= renderEnd
+                    applyLabelOffsetStyle(visualState, false)
     true
 
-//#endregion Session V-Line Functions
+// Build only the retained drawings after the historical calculations have finished.
+// History visibility is applied before creation, avoiding create-then-delete work.
+renderRetainedSessionHistory(array<UTIL.SessionState> _states, SessionVisualConfig _config,
+     bool _isDaily, int _timeNow, string _slotKey) =>
+    for [index, state] in _states
+        bool isPrevious = index > 0
+        if not _isDaily or isPrevious
+            SessionVisualConfig appearance = _config.copy()
+            if isPrevious and (not _isDaily or index > 1)
+                appearance.showHiLo := _config.showHiLo and _config.showLineHistory
+                appearance.showBox := _config.showBox and _config.showBoxHistory
+            if appearance.showHiLo or appearance.showBox
+                string instanceKey = sessionInstanceKey(_slotKey, state.sessStartTime)
+                SessionVisualState visualState = registerStateTracker(state, _slotKey)
+                if _isDaily
+                    applyHistoryVisuals(state, appearance, true, instanceKey)
+                else
+                    ensureCurrentSessionShapes(state, appearance, false, instanceKey)
+                advanceHiLoLines(state, visualState, appearance, _isDaily, _timeNow, instanceKey)
+                if isPrevious and not _isDaily
+                    applyHistoryVisuals(state, appearance, false, instanceKey)
+    // The current daily record has no drawings, but needs a tracker for live rollover.
+    if _isDaily and array.size(_states) > 0
+        registerSessionTracker(_states, _slotKey)
+    true
 
-//#region Shape Functions *******************************
+// #endregion Session Visual Helpers
 
-createLines(bool _isHi, bool _showLn, color _clr, string _style, string _size) =>
-    line ret = na
-    if _showLn and _isHi
-        ret := line.new(time, high, time_close, high, xloc.bar_time, extend.none, _clr, iLib.lineStyleFromString(_style), iLib.lineSizeFromString(_size))
-    if _showLn and not _isHi
-        ret := line.new(time, low, time_close, low, xloc.bar_time, extend.none, _clr, iLib.lineStyleFromString(_style), iLib.lineSizeFromString(_size))
-    ret
+// @function syncSessionVisuals                     - Creates, updates, and prunes every drawing for the tracked session.
+// @param    _config       (UTIL.SessionConfig)     - Session configuration for this slot.
+// @param    _visualConfig (SessionVisualConfig)    - Resolved appearance settings for this slot.
+// @param    _sessionInfo  (UTIL.SessionInfo)       - Descriptor returned by the session engine, including its timezone.
+// @param    _states       (array<UTIL.SessionState>) - Session state storage for this slot.
+// @param    _timeNow      (int)                    - Current timestamp.
+// @param    _daysLimit    (int)                    - Days of history allowed.
+// @param    _slotKey      (string)                 - Stable session-slot identity used to namespace drawing state.
+// @returns                (bool)                   - Whether session visuals are enabled.
+syncSessionVisuals(UTIL.SessionConfig _config, SessionVisualConfig _visualConfig, UTIL.SessionInfo _sessionInfo,
+     array<UTIL.SessionState> _states, int _timeNow, int _daysLimit, string _slotKey) =>
+    if _config.isEnabled
+        // Retain lightweight records on every bar; ordinary historical bars create no session drawings.
+        pruneExpiredSession(_states, _daysLimit, _sessionInfo.isDaily, _slotKey)
+        if barstate.islastconfirmedhistory
+            renderRetainedSessionHistory(_states, _visualConfig, _sessionInfo.isDaily, _timeNow, _slotKey)
+        else if barstate.isrealtime or barstate.islast
+            int boundaryOffset = UTIL.barDayBoundaryOffsetMs(
+                 _sessionInfo.timezone, _sessionInfo.openHour, _sessionInfo.openMinute)
+            bool isFirstBar = UTIL.isSessionFirstBar(_sessionInfo, boundaryOffset)
+            bool isNewSession = isNewSessionInstance(_states, _sessionInfo.isDaily, isFirstBar, _slotKey)
+            if isNewSession
+                registerSessionTracker(_states, _slotKey)
+                if array.size(_states) > 1
+                    UTIL.SessionState previous = array.get(_states, 1)
+                    applyHistoryVisuals(previous, _visualConfig, _sessionInfo.isDaily,
+                         sessionInstanceKey(_slotKey, previous.sessStartTime))
+                trimDailyHistoryVisuals(_states, _visualConfig, _sessionInfo.isDaily, _slotKey)
+            renderSessionStates(_states, _visualConfig, _sessionInfo.isDaily, _timeNow, _slotKey)
+    _config.isEnabled
 
-createLabels(bool _isHi, bool _showLn, bool _showLbl, string _lbl, color _clr, bool _showBox) =>
-    color blank = color.new(#000000, 100)
-    label ret = na
-    lblStyleHi = _showBox ? label.style_label_lower_left : label.style_label_left
-    lblStyleLo = _showBox ? label.style_label_upper_left : label.style_label_left
-    if _showLbl and _showLn and _isHi
-        ret := label.new(time_close, high, _lbl + " High", xloc = xloc.bar_time, color = blank, textcolor = _clr, yloc = yloc.price, style = lblStyleHi)
-    if _showLbl and _showLn and not _isHi
-        ret := label.new(time_close, low, _lbl + " Low", xloc = xloc.bar_time, color = blank, textcolor = _clr, yloc = yloc.price, style = lblStyleLo)
-    ret
+// #endregion Session Visual Functions
 
-createBox(bool _showBox, int _endT, color _clr, string _bxSize, string _bxStyle, color _bxClr, bool _showTxt = false, string _txt = "", color _txtClr = #FFFFFF, iLib.TextSize _txtSize = iLib.TextSize.tiny, iLib.BoxHAlign _txtHAlign = iLib.BoxHAlign.left, iLib.BoxVAlign _txtVAlign = iLib.BoxVAlign.top) =>
-    box ret = na
-    if _showBox
-        ret := box.new(time, high, _endT, low, _clr, iLib.lineSizeFromString(_bxSize), iLib.lineStyleFromString(_bxStyle), extend.none, xloc.bar_time, _bxClr, "", size.small, text_color = _clr, text_halign = text.align_left, text_valign = text.align_top)
-        if _showTxt
-            txtSize = _txtSize.textSize()
-            hAlign = _txtHAlign.boxHAlign()
-            vAlign = _txtVAlign.boxVAlign()
-            box.set_text(ret, _txt)
-            box.set_text_color(ret, _txtClr)
-            box.set_text_size(ret, txtSize)
-            box.set_text_halign(ret, hAlign)
-            box.set_text_valign(ret, vAlign)
-    ret
+// #region Alert Functions ********************************
 
-clearShapes(sessionData _d, bool _cLn, bool _cLbl, bool _cBx) =>
-    it = _d
-    if _cLn
-        line.delete(it.highLine)
-        line.delete(it.lowLine)
-    if _cLbl
-        label.delete(it.highLabel)
-        label.delete(it.lowLabel)
-    if _cBx
-        box.delete(it.square)
+// #region Alert Helpers //
 
-updLblStyle(sessionData _d, bool _isOff) =>
-    b = _d
-    if not na(b.highLabel)
-        if _isOff
-            label.set_style(b.highLabel, label.style_label_lower_left)
-            label.set_style(b.lowLabel, label.style_label_upper_left)
-        else
-            label.set_style(b.highLabel, label.style_label_left)
-            label.set_style(b.lowLabel, label.style_label_left)
+registerBreak(BreakTracker _tracker, bool _isHigh, bool _hasBroken, bool _isInWindow, string _message) =>
+    bool didAlert = false
+    if _isHigh and _hasBroken and not _tracker.highBroken
+        _tracker.highBroken := true
+        if _isInWindow
+            _tracker.highAlerted := true
+            alert(_message, alert.freq_once_per_bar)
+            didAlert := true
+    if not _isHigh and _hasBroken and not _tracker.lowBroken
+        _tracker.lowBroken := true
+        if _isInWindow
+            _tracker.lowAlerted := true
+            alert(_message, alert.freq_once_per_bar)
+            didAlert := true
+    didAlert
 
-advHiLoLines(sessionData _d, int _keep, bool _showLbl, bool _showBox, bool _isDaily, int _now) =>
-    b = _d
-    int endT = sessEnd(b)
-    if not na(b.highLine) and not na(b.lowLine) and map.contains(trkMap, b.sessStartTime)
-        barTrk t = map.get(trkMap, b.sessStartTime)
-        // Detect new high/low start bar changes
-        if b.highLineStartTime != t.hiTm
-            t.hiBar := bar_index
-            t.hiTm := b.highLineStartTime
-        if b.lowLineStartTime != t.loTm
-            t.loBar := bar_index
-            t.loTm := b.lowLineStartTime
-        // Record lineEndBar once when time reaches lineEndTime
-        if time >= b.lineEndTime and na(t.endBar)
-            t.endBar := bar_index
-        // Projection vs frozen
-        int x2 = (not na(t.endBar) ? t.endBar : bar_index + _keep)
-        line.set_xloc(b.highLine, t.hiBar, x2, xloc.bar_index)
-        line.set_xloc(b.lowLine, t.loBar, x2, xloc.bar_index)
-        if _showLbl and not na(b.highLabel) and not na(b.lowLabel)
-            label.set_xloc(b.highLabel, x2, xloc.bar_index)
-            label.set_xloc(b.lowLabel, x2, xloc.bar_index)
-    if _now <= endT and _showBox and not _isDaily
-        updLblStyle(b, true)
-    if _now > endT and not _isDaily
-        updLblStyle(b, false)
+findAlertableSession(array<UTIL.SessionState> _states, int _timeNow) =>
+    UTIL.SessionState result = na
+    for state in _states
+        if _timeNow > renderSessionEnd(state) and _timeNow <= state.lineEndTime
+            result := state
+            break
+    result
 
-//#endregion Shape Functions
+// #endregion Alert Helpers
 
-//#region History Functions *****************************
-
-setHist(sessionData _d, sessionInputs _in, bool _isDaily, string _custLbl = na) =>
-    it = _d
-    i = _in
-    int endT = sessEnd(it)
-    if _isDaily
-        // Daily sessions have no current-session drawings, so keep one historical render path active.
-        bool showDailyLines = i.showHiLo
-        bool showDailyBox = i.showBox
-        if showDailyLines
-            it.highLine := createLines(true, true, i.primeColor, i.lineStyle, i.lineSize)
-            line.set_xy1(it.highLine, it.highLineStartTime, it.highPrice)
-            line.set_xy2(it.highLine, it.lineEndTime, it.highPrice)
-            it.lowLine := createLines(false, true, i.primeColor, i.lineStyle, i.lineSize)
-            line.set_xy1(it.lowLine, it.lowLineStartTime, it.lowPrice)
-            line.set_xy2(it.lowLine, it.lineEndTime, it.lowPrice)
-            if i.showLabel
-                it.highLabel := createLabels(true, true, true, "", i.primeColor, i.showBox)
-                label.set_x(it.highLabel, it.lineEndTime)
-                label.set_y(it.highLabel, it.highPrice)
-                label.set_text(it.highLabel, not na(_custLbl) ? _custLbl + " High" : "PDH")
-                label.set_style(it.highLabel, label.style_label_left)
-                it.lowLabel := createLabels(false, true, true, "", i.primeColor, i.showBox)
-                label.set_x(it.lowLabel, it.lineEndTime)
-                label.set_y(it.lowLabel, it.lowPrice)
-                label.set_text(it.lowLabel, not na(_custLbl) ? _custLbl + " Low" : "PDL")
-                label.set_style(it.lowLabel, label.style_label_left)
-            if not i.showLabel
-                label.delete(it.highLabel)
-                label.delete(it.lowLabel)
-                it.highLabel := na
-                it.lowLabel := na
-        if not showDailyLines
-            clearShapes(it, true, true, false)
-
-        if showDailyBox
-            it.square := createBox(true, endT, i.primeColor, i.boxSize, i.boxStyle, i.subColor)
-            leftT = na(it.sessStartBarTime) ? it.sessStartTime : it.sessStartBarTime
-            rightT = na(it.sessEndBarTime) ? endT : it.sessEndBarTime
-            box.set_left(it.square, leftT)
-            box.set_top(it.square, it.highPrice)
-            box.set_right(it.square, rightT)
-            box.set_bottom(it.square, it.lowPrice)
-        if not showDailyBox
-            clearShapes(it, false, false, true)
-
-    if not _isDaily
-        if i.showHiLo and i.showLineHist and i.showLabel
-            label.set_text(it.highLabel, "H")
-            label.set_style(it.highLabel, label.style_label_left)
-            label.set_text(it.lowLabel, "L")
-            label.set_style(it.lowLabel, label.style_label_left)
-
-        if i.showHiLo and not i.showLineHist
-            clearShapes(it, true, true, false)
-
-        if not i.showHiLo and i.showLineHist
-            // Parent section is off, so force-clear line history as well.
-            clearShapes(it, true, true, false)
-
-        if i.showBox and not i.showBoxHist
-            clearShapes(it, false, false, true)
-        if not i.showBox and i.showBoxHist
-            // Parent section is off, so force-clear box history as well.
-            clearShapes(it, false, false, true)
-
-//#endregion History Functions
-
-//#region Render Functions ******************************
-
-ensureCurrShapes(sessionData _d, sessionInputs _in, bool _isDaily) =>
-    if not _isDaily
-        if _in.showHiLo
-            if na(_d.highLine)
-                _d.highLine := createLines(true, true, _in.primeColor, _in.lineStyle, _in.lineSize)
-            if na(_d.lowLine)
-                _d.lowLine := createLines(false, true, _in.primeColor, _in.lineStyle, _in.lineSize)
-            line.set_y1(_d.highLine, _d.highPrice)
-            line.set_y2(_d.highLine, _d.highPrice)
-            line.set_y1(_d.lowLine, _d.lowPrice)
-            line.set_y2(_d.lowLine, _d.lowPrice)
-            if _in.showLabel
-                if na(_d.highLabel)
-                    _d.highLabel := createLabels(true, true, true, _d.sessLabelText, _in.primeColor, _in.showBox)
-                if na(_d.lowLabel)
-                    _d.lowLabel := createLabels(false, true, true, _d.sessLabelText, _in.primeColor, _in.showBox)
-                label.set_y(_d.highLabel, _d.highPrice)
-                label.set_text(_d.highLabel, _d.sessLabelText + " High")
-                label.set_y(_d.lowLabel, _d.lowPrice)
-                label.set_text(_d.lowLabel, _d.sessLabelText + " Low")
-            if not _in.showLabel
-                label.delete(_d.highLabel)
-                label.delete(_d.lowLabel)
-                _d.highLabel := na
-                _d.lowLabel := na
-        if not _in.showHiLo
-            line.delete(_d.highLine)
-            line.delete(_d.lowLine)
-            label.delete(_d.highLabel)
-            label.delete(_d.lowLabel)
-            _d.highLine := na
-            _d.lowLine := na
-            _d.highLabel := na
-            _d.lowLabel := na
-        if _in.showBox
-            // Nudge the box end 1ms earlier so it doesn't visually overlap the next bar on HTF
-            int boxEnd = sessEnd(_d)
-            if na(_d.square)
-                _d.square := createBox(true, boxEnd, _in.primeColor, _in.boxSize, _in.boxStyle, _in.subColor, i_showBxTxt01, _d.sessLabelText, i_bxTxtClr01, i_bxTxtSize01, i_bxTxtHAlign01, i_bxTxtVAlign01)
-            leftT = na(_d.sessStartBarTime) ? _d.sessStartTime : _d.sessStartBarTime
-            rightT = na(_d.sessEndBarTime) ? boxEnd : _d.sessEndBarTime
-            box.set_left(_d.square, leftT)
-            box.set_top(_d.square, _d.highPrice)
-            box.set_right(_d.square, rightT)
-            box.set_bottom(_d.square, _d.lowPrice)
-        if not _in.showBox
-            box.delete(_d.square)
-            _d.square := na
-
-renderSess(map<string, sessionInputs> _inMap, string _key, sessionData[] _arr, int _now, string _tzUser, string _tzDef, int _daysLim) =>
-    inInfo = map.get(_inMap, _key)
-    sInfo = getCustomSessionInfo(inInfo.sessName, inInfo.customSession, inInfo.customLabel)
-    tz = inInfo.sessName == "Custom" ? _tzUser : _tzDef
-    spanAdj = dayofweek(time) != dayofweek(time_close) ? iLib.timeSpan("Day") : 0
-    isDaily = sInfo.openHour == sInfo.closeHour and sInfo.openMinute == sInfo.closeMinute
-    isFirst = isSessFirstBar(sInfo, tz, spanAdj)
-    bool isNew = isFirst
-    if not isNew and not isDaily and array.size(_arr) > 0
-        sessionData latD = array.get(_arr, 0)
-        if not map.contains(trkMap, latD.sessStartTime)
-            isNew := true
-
-    if inInfo.showAll and isRunTime(_daysLim, false, isDaily, _now)
-        if isNew and array.size(_arr) > 0
-            newD = array.get(_arr, 0)
-            newD.sessStartBarTime := time
-            if not map.contains(trkMap, newD.sessStartTime)
-                map.put(trkMap, newD.sessStartTime, barTrk.new(bar_index, bar_index, bar_index, newD.highLineStartTime, newD.lowLineStartTime))
-        if isNew and array.size(_arr) > 1
-            setHist(array.get(_arr, 1), inInfo, isDaily)
-        if isNew and array.size(_arr) > _daysLim + (isDaily ? 2 : 1)
-            rm = array.pop(_arr)
-            clearShapes(rm, true, true, true)
-            map.remove(trkMap, rm.sessStartTime)
-        // For daily sessions, history toggles OFF should still keep 1 prior session visible.
-        if isDaily and array.size(_arr) > 2
-            for idx = 2 to array.size(_arr) - 1
-                histData = array.get(_arr, idx)
-                if not inInfo.showLineHist
-                    clearShapes(histData, true, true, false)
-                if not inInfo.showBoxHist
-                    clearShapes(histData, false, false, true)
-        for data in _arr
-            bool isDone = map.contains(trkMap, data.sessStartTime) ? not na(map.get(trkMap, data.sessStartTime).endBar) : false
-            if isDone
-                continue
-            if (not inInfo.showHiLo or isDaily) and _now > data.lineEndTime
-                continue
-            int endT = sessEnd(data)
-            if endT >= time and endT < time_close and na(data.sessEndBarTime)
-                data.sessEndBarTime := time
-            if _now <= endT
-                ensureCurrShapes(data, inInfo, isDaily)
-            if inInfo.showHiLo
-                advHiLoLines(data, inInfo.aheadTime, inInfo.showLabel, inInfo.showBox, isDaily, _now)
-            if time > endT and time[1] <= endT
-                updLblStyle(data, false)
-
-//#endregion Render Functions
-
-//#region Alert Functions ********************************
-
-handleBrk(brkTrk _trk, bool _isHi, bool _cond, bool _inWin, string _msg) =>
-    bool shHi = false
-    bool shLo = false
-    if _isHi
-        if _cond and not _trk.hiBrk
-            _trk.hiBrk := true
-            if _inWin
-                _trk.hiAlrt := true
-                alert(_msg, alert.freq_once_per_bar)
-                shHi := true
-    else
-        if _cond and not _trk.loBrk
-            _trk.loBrk := true
-            if _inWin
-                _trk.loAlrt := true
-                alert(_msg, alert.freq_once_per_bar)
-                shLo := true
-    [_trk, shHi, shLo]
-
-isInTradeWin() =>
-    bool hasTW = i_showTW01
-    if not hasTW
-        true
-    else
-        bool inWin1 = (i_showTW01 ? isSession(i_tw01, TZ) : false)
-        inWin1
-
-procSessBrkAlerts(sessionData[] _arr, string _mode, string _lbl, int _now) =>
-    bool shHi = false
-    bool shLo = false
-
-    if _mode != "No Alerts" and array.size(_arr) > 0
-        int alertDataIndex = na
-        for idx = 0 to array.size(_arr) - 1
-            cand = array.get(_arr, idx)
-            int candEnd = sessEnd(cand)
-            if _now > candEnd and _now <= cand.lineEndTime
-                alertDataIndex := idx
-                break
-
-        if not na(alertDataIndex)
-            sessionData data = array.get(_arr, alertDataIndex)
-            int key = data.sessStartTime
-
-            // Initialize tracker if needed
-            if not map.contains(alrtMap, key)
-                map.put(alrtMap, key, brkTrk.new(key, false, false, false, false))
-
-            brkTrk trk = map.get(alrtMap, key)
-            bool inWin = isInTradeWin()
-
-            switch _mode
-                "On Break" =>
-                    [trkHi, h1, l1] = handleBrk(trk, true, high > data.highPrice, inWin, "Price breaking " + _lbl + " high.")
-                    trk := trkHi
-                    shHi := shHi or h1
-                    [trkLo, h2, l2] = handleBrk(trk, false, low < data.lowPrice, inWin, "Price breaking " + _lbl + " low.")
-                    trk := trkLo
-                    shLo := shLo or l2
-                "Close Out" =>
+// @function processSessionBreakAlerts              - Evaluates break, close-out, and sweep alerts for the session.
+// @param    _states       (array<UTIL.SessionState>) - Session state storage for this slot.
+// @param    _alertMode    (AlertMode)              - Alert behavior selected by the user.
+// @param    _sessionLabel (string)                 - Label used in the alert message.
+// @param    _timeNow      (int)                    - Current timestamp.
+// @param    _isInWindow   (bool)                   - True when breaks are allowed to alert on this bar.
+// @param    _slotKey      (string)                 - Stable session-slot identity used to namespace alert state.
+// @returns                ([bool, bool])           - High-break and low-break marker flags for this bar.
+processSessionBreakAlerts(array<UTIL.SessionState> _states, AlertMode _alertMode, string _sessionLabel,
+     int _timeNow, bool _isInWindow, string _slotKey) =>
+    bool showHighMarker = false
+    bool showLowMarker  = false
+    if _alertMode != AlertMode.off
+        UTIL.SessionState state = findAlertableSession(_states, _timeNow)
+        if not na(state)
+            string trackerKey = sessionInstanceKey(_slotKey, state.sessStartTime)
+            if not map.contains(breakTrackerMap, trackerKey)
+                map.put(breakTrackerMap, trackerKey, BreakTracker.new(state.sessStartTime))
+            BreakTracker tracker = map.get(breakTrackerMap, trackerKey)
+            switch _alertMode
+                AlertMode.onBreak =>
+                    showHighMarker := registerBreak(tracker, true, high > state.highPrice, _isInWindow,
+                         "Price breaking " + _sessionLabel + " high.")
+                    showLowMarker := registerBreak(tracker, false, low < state.lowPrice, _isInWindow,
+                         "Price breaking " + _sessionLabel + " low.")
+                AlertMode.closeOut =>
                     if barstate.isconfirmed
-                        [trkHi, h1, l1] = handleBrk(trk, true, close > data.highPrice, inWin, "Price closed above " + _lbl + " high.")
-                        trk := trkHi
-                        shHi := shHi or h1
-                        [trkLo, h2, l2] = handleBrk(trk, false, close < data.lowPrice, inWin, "Price closed below " + _lbl + " low.")
-                        trk := trkLo
-                        shLo := shLo or l2
-                "Close In (Sweep)" =>
+                        showHighMarker := registerBreak(tracker, true, close > state.highPrice, _isInWindow,
+                             "Price closed above " + _sessionLabel + " high.")
+                        showLowMarker := registerBreak(tracker, false, close < state.lowPrice, _isInWindow,
+                             "Price closed below " + _sessionLabel + " low.")
+                AlertMode.closeIn =>
                     if barstate.isconfirmed
-                        swpHi = high > data.highPrice and close <= data.highPrice
-                        swpLo = low < data.lowPrice and close >= data.lowPrice
-                        [trkHi, h1, l1] = handleBrk(trk, true, swpHi, inWin, "Price swept " + _lbl + " high.")
-                        trk := trkHi
-                        shHi := shHi or h1
-                        [trkLo, h2, l2] = handleBrk(trk, false, swpLo, inWin, "Price swept " + _lbl + " low.")
-                        trk := trkLo
-                        shLo := shLo or l2
+                        bool sweptHigh = high > state.highPrice and close <= state.highPrice
+                        bool sweptLow  = low < state.lowPrice and close >= state.lowPrice
+                        showHighMarker := registerBreak(tracker, true, sweptHigh, _isInWindow,
+                             "Price swept " + _sessionLabel + " high.")
+                        showLowMarker := registerBreak(tracker, false, sweptLow, _isInWindow,
+                             "Price swept " + _sessionLabel + " low.")
+            map.put(breakTrackerMap, trackerKey, tracker)
+    [showHighMarker, showLowMarker]
 
-            // Persist tracker updates so alerts do not refire until a new session starts
-            map.put(alrtMap, key, trk)
+// @function pruneBreakTrackers                     - Removes break trackers whose session is no longer stored.
+// @param    _states       (array<UTIL.SessionState>) - Session state storage for this slot.
+// @param    _slotKey      (string)                 - Stable session-slot identity used to namespace alert state.
+// @returns                (void)
+pruneBreakTrackers(array<UTIL.SessionState> _states, string _slotKey) =>
+    array<string> liveKeys = array.new<string>()
+    for state in _states
+        array.push(liveKeys, sessionInstanceKey(_slotKey, state.sessStartTime))
+    array<string> staleKeys = array.new<string>()
+    for [trackerKey, _tracker] in breakTrackerMap
+        if array.indexof(liveKeys, trackerKey) == -1
+            array.push(staleKeys, trackerKey)
+    for staleKey in staleKeys
+        map.remove(breakTrackerMap, staleKey)
 
-    [shHi, shLo]
+// #endregion Alert Functions
 
-cleanupAlrtMap(sessionData[] _arr) =>
-    vKeys = array.new<int>()
-    for data in _arr
-        array.push(vKeys, data.sessStartTime)
+// #endregion Functions
 
-    rmKeys = array.new<int>()
-    for [key, _trk] in alrtMap
-        bool found = false
-        for validKey in vKeys
-            if key == validKey
-                found := true
-                break
-        if not found
-            array.push(rmKeys, key)
+//+-------------------------------------------------------+
+//                        EXECUTION                       |
+//+-------------------------------------------------------+
+// #region Execution
 
-    for key in rmKeys
-        map.remove(alrtMap, key)
+// #region Shared Runtime Context *************************
 
-//#endregion Alert Functions
+bool needsIntrabarData = false
+if sessionConfig.isEnabled and timeframe.isintraday and timeframe.in_seconds() > 60
+    UTIL.SessionInfo requestSession = UTIL.resolveSessionInfo(
+         sessionConfig.preset, sessionConfig.customSession, sessionConfig.customLabel, sessionConfig.timezone)
+    if not na(requestSession)
+        needsIntrabarData := UTIL.needsSessionIntrabars(requestSession)
 
-//#endregion FUNCTIONS
+// One conditional request, including historical initialization for realtime use.
+UTIL.IntrabarData intrabarData = UTIL.requestIntrabarData(i_daysInput, needsIntrabarData)
 
-//+-----------------------------------------------------+
-//                      EXECUTION                       |
-//+-----------------------------------------------------+
-//#region EXECUTION
+// #endregion Shared Runtime Context
 
-//#region Runtime Gate***********************************
+// #region Session Execution ******************************
 
-if na(lastDay) or DAY != lastDay
-    isRun := isRunTime(i_daysLim, true, false, NOW)
-    lastDay := DAY
+bool  showHighBreak = false, bool showLowBreak = false
+float sessionHigh   = na,    float sessionLow  = na
+color sessionTint   = na
 
-//#endregion Runtime Gate
+// The history-bearing engine call stays in unconditional scope. The library returns na
+// immediately for disabled configurations, so a disabled slot remains inexpensive.
+// No calendar-day cutoff: actual session records are retained in syncSessionVisuals().
+UTIL.SessionInfo sessionInfo = UTIL.runSessionEngine(sessionConfig, sessionStates, intrabarData, TIMENOW, int(na))
+if not na(sessionInfo)
+    syncSessionVisuals(sessionConfig, visualConfig, sessionInfo, sessionStates, TIMENOW, daysLimit, SESSION_SLOT_KEY)
+    string alertLabel = (sessionConfig.preset == UTIL.SessionPreset.Custom ? i_customLabel : sessionInfo.labelText)
+    [highBreakFlag, lowBreakFlag] = processSessionBreakAlerts(
+         sessionStates, i_alertMode, alertLabel, TIMENOW, isAlertWindowOpen, SESSION_SLOT_KEY)
+    showHighBreak := highBreakFlag
+    showLowBreak  := lowBreakFlag
+    bool tintBar = not na(UTIL.getActiveSession(sessionStates, TIMENOW)) and visualConfig.showBackground and
+      not sessionInfo.isDaily and isWithinHistory
+    sessionTint := (tintBar ? visualConfig.backgroundColor : na)
+    if array.size(sessionStates) > 0
+        UTIL.SessionState newestSession = array.get(sessionStates, 0)
+        sessionHigh := newestSession.highPrice
+        sessionLow  := newestSession.lowPrice
 
-//#region Session 1 Pipeline****************************
+// #endregion Session Execution
 
-[sStr01, sShowBg01, isDaily01, sSubClr01, sTz01] = runSession(sessInMap, "sess01", sessArr01, NOW, TZ, DEF_TZ, i_daysLim)
-renderSess(sessInMap, "sess01", sessArr01, NOW, TZ, DEF_TZ, i_daysLim)
-bgcolor(isSession(sStr01, sTz01) and i_show01 and sShowBg01 and not(isDaily01) and isRun ? sSubClr01 : na)
+// #region Trade Window Execution *************************
 
-//#endregion Session 1 Pipeline
-
-//#region Session Break Alerts **************************
-
-alrtMode01 = i_show01 ? i_alrtSess01 : "No Alerts"
-[shHi01, shLo01] = procSessBrkAlerts(sessArr01, alrtMode01, i_custLbl01, NOW)
-
-sessHi01 = (i_show01 and array.size(sessArr01) > 0) ? array.get(sessArr01, 0).highPrice : na
-sessLo01 = (i_show01 and array.size(sessArr01) > 0) ? array.get(sessArr01, 0).lowPrice : na
-plot(sessHi01, "Session 1 High", color = i_priClr01, display = display.status_line)
-plot(sessLo01, "Session 1 Low", color = i_priClr01, display = display.status_line)
-
-// Visual markers for high breaks (triangles above bar)
-plotshape(shHi01, "Session 1 High Break", shape.triangleup, location.abovebar, i_priClr01, size = size.small, display = display.all - display.status_line)
-
-// Visual markers for low breaks (triangles below bar)
-plotshape(shLo01, "Session 1 Low Break", shape.triangledown, location.belowbar, i_priClr01, size = size.small, display = display.all - display.status_line)
-
-// Cleanup stale alert trackers periodically
-if barstate.islast
-    cleanupAlrtMap(sessArr01)
-
-//#endregion Session Break Alerts
-
-//#region Trade Window V-Lines **************************
-
-if i_showTW01 and i_showTwLn01
-    [twStTmp, twAdjTmp] = sessVLines(vLnStart01, vLnEnd01, i_tw01, i_daysLim, i_twHist01, i_twLnClr01, i_twLnStyle01, i_twLnSize01, NOW, TZ, twLastStart01, twEndAdj01)
-    twLastStart01 := twStTmp
-    twEndAdj01 := twAdjTmp
+if a_windowLines
+    windowState := drawTradeWindow(windowStartLines, windowEndLines, windowState,
+         i_window, i_windowHistory, i_windowColor, i_windowStyle.toLineStyle(),
+         i_windowSize.toLineWidth(), daysLimit, TIMENOW)
 else
-    clearSessVLines(vLnStart01, vLnEnd01)
-    twLastStart01 := na
-    twEndAdj01 := false
+    windowState := clearTradeWindow(windowStartLines, windowEndLines)
 
-// Trade window background
-bgcolor(isSession(i_tw01, TZ) and i_showTW01 and i_showTwBg01 and isRun ? i_twBgClr01 : na)
+color tradeWindowTint = (a_windowBg and isTradeWindowActive and isWithinHistory ? i_windowBgColor : na)
 
-//#endregion Trade Window V-Lines
+// #endregion Trade Window Execution
 
-//#endregion EXECUTION
+// #region Cleanup ****************************************
+
+if barstate.islast
+    pruneBreakTrackers(sessionStates, SESSION_SLOT_KEY)
+
+// #endregion Cleanup
+
+// #region Global Plots ***********************************
+
+bgcolor(sessionTint)
+bgcolor(tradeWindowTint)
+
+plot(sessionHigh, "Session High", color = i_primeColor, display = display.status_line)
+plot(sessionLow,  "Session Low",  color = i_primeColor, display = display.status_line)
+
+plotshape(showHighBreak, "Session High Break", shape.triangleup, location.abovebar, i_primeColor, size = size.small, display = display.all - display.status_line)
+plotshape(showLowBreak,  "Session Low Break",  shape.triangledown, location.belowbar, i_primeColor, size = size.small, display = display.all - display.status_line)
+
+// #endregion Global Plots
+
+// #endregion Execution

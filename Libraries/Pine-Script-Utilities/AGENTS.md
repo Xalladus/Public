@@ -1,14 +1,16 @@
 # AGENTS.md - Libraries/Pine-Script-Utilities
 
-Pine Script v6 utility and session-state library. The library owns enums, validation, conversions, time calculations, conditional intrabar retrieval, and session mutation. The host owns inputs, persistent arrays, drawing creation, retention policy, alerts, and cross-library composition. Existing drawing setters and cleanup exports mutate or delete host-owned objects; they never create them. `session-example.pine` is the advanced indicator consumer.
+Pine Script v6 utility and session-state library. The library owns enums, validation, conversions, time calculations, conditional intrabar retrieval, and session mutation. The host owns inputs, persistent arrays, drawing creation, retention policy, alerts, and cross-library composition. Existing drawing setters and cleanup exports mutate or delete host-owned objects; they never create them. The advanced indicator consumer is [Ultra-Sessions-2026.pine](../../../Trading-View-Scripts/Indicators/Ultra-Sessions/Ultra-Sessions-2026.pine) in the sibling Trading-View-Scripts project.
 
-Current checked-in test import, not a claim that every local edit is published:
+Current documented import (version 1), also used by `Ultra-Sessions-2026.pine`:
 
 ```pine
-import OneCleverGuy/UtilityLibrary1CGTESTA/12 as UTIL
+import OneCleverGuy/UtilityLibrary1CG/<version> as UTIL
 ```
 
-The library imports nothing. The example also imports `OneCleverGuy/RoundNumberLibrary/3 as RNL`. Reconcile the permanent title and published version before release; do not invent version numbers. Standards: [coding style](../../docs/style-guide.md), [AGENTS](../../docs/agents-file-standard.md), [guide](../../docs/guide-standards.md), [publication markup](../../docs/tradingview-publication-markup.md).
+The library imports nothing. The Ultra Sessions consumer also imports `OneCleverGuy/RoundNumberLibrary/3 as RNL`. Keep consumer imports aligned with the published version; do not invent version numbers. Shared standards live in the sibling Trading-View-Scripts project: [coding style](../../../Trading-View-Scripts/docs/style-guide.md), [AGENTS](../../../Trading-View-Scripts/docs/agents-file-standard.md), [guide](../../../Trading-View-Scripts/docs/guide-standards.md), [publication markup](../../../Trading-View-Scripts/docs/tradingview-publication-markup.md).
+
+Keep this file compact: retain the callable surface and non-obvious runtime contracts; document shared arguments once and summarize regular numeric enum ranges. Use grouped references under the shared AGENTS standard. Internal imports use the latest verified numeric version; publication examples use `<version>` and TradingView markup. Keep complete integrations and edge cases in the guide, and a concise copyable consumer example in publication copy.
 
 ## Public API
 
@@ -75,7 +77,22 @@ UTIL.planTradeWindow(string _session, string _timezone, int _daysLimit, int _tim
 
 ## Exported Enums
 
-### `Timezones`
+Regular numeric ranges are summarized below. Timezone and preset members are listed explicitly after the overview; [source declarations](1CG-PS-Utilities.pine) remain authoritative when changing them.
+
+| Enum | Values / use |
+|---|---|
+| `Timezones` | `utc`, `exch`, and named city selections; `toTimezone()` resolves an IANA string or the exchange timezone. |
+| `Hours`, `Minutes`, `QuarterHours` | `h0`â€“`h23`, `m0`â€“`m59`, and `t0000`â€“`t2345` in 15-minute steps; convert to integers or HHMM tokens. |
+| `Duration` | `Minute`, `QuarterHour`, `HalfHour`, `Hour`, `FourHours`, `EightHours`, `TwelveHours`, `Day`, `Week`; fixed millisecond durations. |
+| `AssetClass` | `Forex`, `Crypto`, `Futures`, `Stock`, `Index`, `CFD`, `Fund`, `Bond`, `Economic`, `Other`. |
+| `LineStyle`, `LineSize` | `solid`, `dotted`, `dashed`, `lArrow`, `rArrow`, `bArrow`; widths `thin`, `normal`, `heavy`, `thick`, `wide` map to 1â€“5. |
+| `TextSize` | `auto`, `tiny`, `small`, `normal`, `large`, `huge`. |
+| `HorizontalAlign`, `VerticalAlign` | `left`/`center`/`right`; `top`/`center`/`bottom`. |
+| `LineExtend`, `LabelStyle` | Extension: `none`, `right`, `left`, `both`. Labels: `center`, `down`, `left`, `right`, `up`, `lowLeft`, `lowRight`, `upperLeft`, `upperRight`. |
+| `SessionPreset` | `Custom`; regional `Fx*`, exchange `Eq*`, futures `Fut*`, and daily `Daily*` schedules. Resolve through `resolveSessionInfo`; do not duplicate preset lookup tables in consumers. |
+| `SessionAnchor` | `SessionEnd` (default; current chart bar while active), `SessionOpen`, `ExtremeTime`; controls level anchors, not OHLC collection. |
+
+### `Timezones` members
 
 | Member | Display / meaning |
 |---|---|
@@ -137,302 +154,7 @@ UTIL.planTradeWindow(string _session, string _timezone, int _daysLimit, int _tim
 | `nor` | America/Noronha(-2) |
 | `sg` | Atlantic/South_Georgia(-2) |
 
-### `Hours`
-
-| Member | Display / meaning |
-|---|---|
-| `h0` | 00 |
-| `h1` | 01 |
-| `h2` | 02 |
-| `h3` | 03 |
-| `h4` | 04 |
-| `h5` | 05 |
-| `h6` | 06 |
-| `h7` | 07 |
-| `h8` | 08 |
-| `h9` | 09 |
-| `h10` | 10 |
-| `h11` | 11 |
-| `h12` | 12 |
-| `h13` | 13 |
-| `h14` | 14 |
-| `h15` | 15 |
-| `h16` | 16 |
-| `h17` | 17 |
-| `h18` | 18 |
-| `h19` | 19 |
-| `h20` | 20 |
-| `h21` | 21 |
-| `h22` | 22 |
-| `h23` | 23 |
-
-### `Minutes`
-
-| Member | Display / meaning |
-|---|---|
-| `m0` | 00 |
-| `m1` | 01 |
-| `m2` | 02 |
-| `m3` | 03 |
-| `m4` | 04 |
-| `m5` | 05 |
-| `m6` | 06 |
-| `m7` | 07 |
-| `m8` | 08 |
-| `m9` | 09 |
-| `m10` | 10 |
-| `m11` | 11 |
-| `m12` | 12 |
-| `m13` | 13 |
-| `m14` | 14 |
-| `m15` | 15 |
-| `m16` | 16 |
-| `m17` | 17 |
-| `m18` | 18 |
-| `m19` | 19 |
-| `m20` | 20 |
-| `m21` | 21 |
-| `m22` | 22 |
-| `m23` | 23 |
-| `m24` | 24 |
-| `m25` | 25 |
-| `m26` | 26 |
-| `m27` | 27 |
-| `m28` | 28 |
-| `m29` | 29 |
-| `m30` | 30 |
-| `m31` | 31 |
-| `m32` | 32 |
-| `m33` | 33 |
-| `m34` | 34 |
-| `m35` | 35 |
-| `m36` | 36 |
-| `m37` | 37 |
-| `m38` | 38 |
-| `m39` | 39 |
-| `m40` | 40 |
-| `m41` | 41 |
-| `m42` | 42 |
-| `m43` | 43 |
-| `m44` | 44 |
-| `m45` | 45 |
-| `m46` | 46 |
-| `m47` | 47 |
-| `m48` | 48 |
-| `m49` | 49 |
-| `m50` | 50 |
-| `m51` | 51 |
-| `m52` | 52 |
-| `m53` | 53 |
-| `m54` | 54 |
-| `m55` | 55 |
-| `m56` | 56 |
-| `m57` | 57 |
-| `m58` | 58 |
-| `m59` | 59 |
-
-### `QuarterHours`
-
-| Member | Display / meaning |
-|---|---|
-| `t0000` | 00:00 |
-| `t0015` | 00:15 |
-| `t0030` | 00:30 |
-| `t0045` | 00:45 |
-| `t0100` | 01:00 |
-| `t0115` | 01:15 |
-| `t0130` | 01:30 |
-| `t0145` | 01:45 |
-| `t0200` | 02:00 |
-| `t0215` | 02:15 |
-| `t0230` | 02:30 |
-| `t0245` | 02:45 |
-| `t0300` | 03:00 |
-| `t0315` | 03:15 |
-| `t0330` | 03:30 |
-| `t0345` | 03:45 |
-| `t0400` | 04:00 |
-| `t0415` | 04:15 |
-| `t0430` | 04:30 |
-| `t0445` | 04:45 |
-| `t0500` | 05:00 |
-| `t0515` | 05:15 |
-| `t0530` | 05:30 |
-| `t0545` | 05:45 |
-| `t0600` | 06:00 |
-| `t0615` | 06:15 |
-| `t0630` | 06:30 |
-| `t0645` | 06:45 |
-| `t0700` | 07:00 |
-| `t0715` | 07:15 |
-| `t0730` | 07:30 |
-| `t0745` | 07:45 |
-| `t0800` | 08:00 |
-| `t0815` | 08:15 |
-| `t0830` | 08:30 |
-| `t0845` | 08:45 |
-| `t0900` | 09:00 |
-| `t0915` | 09:15 |
-| `t0930` | 09:30 |
-| `t0945` | 09:45 |
-| `t1000` | 10:00 |
-| `t1015` | 10:15 |
-| `t1030` | 10:30 |
-| `t1045` | 10:45 |
-| `t1100` | 11:00 |
-| `t1115` | 11:15 |
-| `t1130` | 11:30 |
-| `t1145` | 11:45 |
-| `t1200` | 12:00 |
-| `t1215` | 12:15 |
-| `t1230` | 12:30 |
-| `t1245` | 12:45 |
-| `t1300` | 13:00 |
-| `t1315` | 13:15 |
-| `t1330` | 13:30 |
-| `t1345` | 13:45 |
-| `t1400` | 14:00 |
-| `t1415` | 14:15 |
-| `t1430` | 14:30 |
-| `t1445` | 14:45 |
-| `t1500` | 15:00 |
-| `t1515` | 15:15 |
-| `t1530` | 15:30 |
-| `t1545` | 15:45 |
-| `t1600` | 16:00 |
-| `t1615` | 16:15 |
-| `t1630` | 16:30 |
-| `t1645` | 16:45 |
-| `t1700` | 17:00 |
-| `t1715` | 17:15 |
-| `t1730` | 17:30 |
-| `t1745` | 17:45 |
-| `t1800` | 18:00 |
-| `t1815` | 18:15 |
-| `t1830` | 18:30 |
-| `t1845` | 18:45 |
-| `t1900` | 19:00 |
-| `t1915` | 19:15 |
-| `t1930` | 19:30 |
-| `t1945` | 19:45 |
-| `t2000` | 20:00 |
-| `t2015` | 20:15 |
-| `t2030` | 20:30 |
-| `t2045` | 20:45 |
-| `t2100` | 21:00 |
-| `t2115` | 21:15 |
-| `t2130` | 21:30 |
-| `t2145` | 21:45 |
-| `t2200` | 22:00 |
-| `t2215` | 22:15 |
-| `t2230` | 22:30 |
-| `t2245` | 22:45 |
-| `t2300` | 23:00 |
-| `t2315` | 23:15 |
-| `t2330` | 23:30 |
-| `t2345` | 23:45 |
-
-### `Duration`
-
-| Member | Display / meaning |
-|---|---|
-| `Minute` | Minute |
-| `QuarterHour` | 15 Minutes |
-| `HalfHour` | 30 Minutes |
-| `Hour` | Hour |
-| `FourHours` | 4 Hours |
-| `EightHours` | 8 Hours |
-| `TwelveHours` | 12 Hours |
-| `Day` | Day |
-| `Week` | Week |
-
-### `AssetClass`
-
-| Member | Display / meaning |
-|---|---|
-| `Forex` | Forex |
-| `Crypto` | Crypto |
-| `Futures` | Futures |
-| `Stock` | Stock |
-| `Index` | Index |
-| `CFD` | CFD |
-| `Fund` | Fund |
-| `Bond` | Bond |
-| `Economic` | Economic |
-| `Other` | Other |
-
-### `LineStyle`
-
-| Member | Display / meaning |
-|---|---|
-| `solid` | Solid (─) |
-| `dotted` | Dotted (┈) |
-| `dashed` | Dashed (╌) |
-| `lArrow` | Left Arrow (<─) |
-| `rArrow` | Right Arrow (─>) |
-| `bArrow` | Both Arrows (<─>) |
-
-### `LineSize`
-
-| Member | Display / meaning |
-|---|---|
-| `thin` | 1px (thin) |
-| `normal` | 2px (normal) |
-| `heavy` | 3px (heavy) |
-| `thick` | 4px (thick) |
-| `wide` | 5px (wide) |
-
-### `TextSize`
-
-| Member | Display / meaning |
-|---|---|
-| `auto` | Auto |
-| `tiny` | Tiny |
-| `small` | Small |
-| `normal` | Normal |
-| `large` | Large |
-| `huge` | Huge |
-
-### `HorizontalAlign`
-
-| Member | Display / meaning |
-|---|---|
-| `left` | Left |
-| `center` | Center |
-| `right` | Right |
-
-### `VerticalAlign`
-
-| Member | Display / meaning |
-|---|---|
-| `top` | Top |
-| `center` | Center |
-| `bottom` | Bottom |
-
-### `LineExtend`
-
-| Member | Display / meaning |
-|---|---|
-| `none` | None |
-| `right` | Right |
-| `left` | Left |
-| `both` | Both |
-
-### `LabelStyle`
-
-| Member | Display / meaning |
-|---|---|
-| `center` | Center |
-| `down` | Down |
-| `left` | Left |
-| `right` | Right |
-| `up` | Up |
-| `lowLeft` | Low Left |
-| `lowRight` | Low Right |
-| `upperLeft` | Upper Left |
-| `upperRight` | Upper Right |
-
-### `SessionPreset`
+### `SessionPreset` members
 
 | Member | Display / meaning |
 |---|---|
@@ -456,21 +178,13 @@ UTIL.planTradeWindow(string _session, string _timezone, int _daysLimit, int _tim
 | `DailyNewYork` | Daily: New York (0000-0000 New York) |
 | `Custom` | Custom |
 
-### `SessionAnchor`
-
-| Member | Display / meaning |
-|---|---|
-| `SessionEnd` | Session End |
-| `SessionOpen` | Session Open |
-| `ExtremeTime` | Extreme Time |
-
-Timezone offsets in display strings are descriptive. Use IANA timezone names for DST. Presets keep their native timezones; only Custom uses the supplied custom timezone. Japan and Hong Kong presets are continuous envelopes including midday recesses, not full exchange calendars.
-
 ## Exported Types
 
-Persist SessionConfig and one array<SessionState> per configured session with var. Returned UDTs are references. Engine-owned session fields should be read by the host, not independently rewritten.
+Persist configuration and one newest-first state array per session with `var`. Accessors return references; the engine mutates session records in place. Fields without explicit array defaults must receive initialized arrays before scanning. Timestamps are UNIX milliseconds.
 
 ### `IntrabarScan`
+
+Aggregated one-minute data for a time range inside the current bar.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -484,15 +198,19 @@ Persist SessionConfig and one array<SessionState> per configured session with va
 
 ### `IntrabarData`
 
+Shared one-minute arrays for the current chart bar.
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `times` | `array<int>` | `required` | One-minute bar opening timestamps. |
-| `opens` | `array<float>` | `required` | One-minute opening prices. |
-| `highs` | `array<float>` | `required` | One-minute high prices. |
-| `lows` | `array<float>` | `required` | One-minute low prices. |
-| `closes` | `array<float>` | `required` | One-minute closing prices. |
+| `times` | `array<int>` | `implicit na; supply array` | One-minute bar opening timestamps. |
+| `opens` | `array<float>` | `implicit na; supply array` | One-minute opening prices. |
+| `highs` | `array<float>` | `implicit na; supply array` | One-minute high prices. |
+| `lows` | `array<float>` | `implicit na; supply array` | One-minute low prices. |
+| `closes` | `array<float>` | `implicit na; supply array` | One-minute closing prices. |
 
 ### `SessionInfo`
+
+Static session descriptor including the timezone it is defined in.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -507,6 +225,8 @@ Persist SessionConfig and one array<SessionState> per configured session with va
 | `isDaily` | `bool` | `false` | True when open and close are identical, meaning a 24-hour session. |
 
 ### `SessionState`
+
+Lifecycle state for one tracked session instance.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -529,6 +249,8 @@ Persist SessionConfig and one array<SessionState> per configured session with va
 
 ### `SessionConfig`
 
+Consumer configuration for the session engine.
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `isEnabled` | `bool` | `true` | Master processing toggle. |
@@ -544,6 +266,8 @@ Persist SessionConfig and one array<SessionState> per configured session with va
 
 ### `TradeWindowPlan`
 
+Planning output for drawing trade-window boundaries.
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `startTime` | `int` | `na` | Window start UNIX time. |
@@ -554,164 +278,51 @@ Persist SessionConfig and one array<SessionState> per configured session with va
 
 ## Function Reference
 
-Exact argument types and defaults appear in Public API. Optional arguments are those with defaults. Drawing setters use na to mean unchanged; cleanup functions delete objects and mutate their arrays.
+Public API gives exact argument order, types, and defaults. This grouped reference pairs argument intent and return shapes with behavior and side effects; argument-heavy operations have dedicated tables below.
 
-### `toTimezone`
+| Callable group | Arguments | Returns | Meaning / side effects |
+|---|---|---|---|
+| Enum conversion methods | `this`: enum selection to convert | `string` or `int`, as listed per method in Public API | Convert the explicit receiver to the corresponding Pine string or integer; do not gather inputs. |
+| `detectAssetClass`, `priceDecimals`, `tickValue` | None; uses current chart metadata | `AssetClass`, `int` decimals, `float` tick value respectively | Read chart symbol metadata. Tick value is `mintick * pointvalue`. |
+| `priceToTicks`, `ticksToPrice`, `pipSize`, `priceToPips`, `pipsToPrice` | `_priceDistance` or `_ticks`/`_pips`: distance to convert; `_pipSizeOverride`: optional pip size | `float` converted distance or pip size | Convert price distances. Default pip size is ten ticks on forex, one elsewhere; positive override replaces it, nonpositive override returns `na`. |
+| `defaultQuantityStep`, `roundQuantity`, `positionNotional` | No arguments for default; `_quantity`, `_step`: quantity and rounding increment; `_quantity`, `_price`: notional inputs | `float` step, rounded quantity, or notional | Step heuristic: 0.01 crypto, 1 elsewhere. Round down and clamp quantity at zero; invalid step falls back to 1. Notional is quantity Ã— price Ã— pointvalue. |
+| `durationMs`, `timezoneOffsetMs`, `barDurationMs` | `_duration`: named interval; `_timezone`: target timezone; no arguments for bar duration | `int` milliseconds | Millisecond helpers; named/bar durations are nominal. Timezone offset uses date-based midnight construction, not a universal instantaneous DST calculation. |
+| `hhmmFromParts`, `hhmmToParts`, `hhmmToMinutes`, `minutesToHhmm`, `sessionToParts`, `sessionDurationMs` | `_hour`, `_minute`: enum selections; `_hhmm`: clock token; `_minutesOfDay`: minute count; `_session`: session token | Clock `string`, `[int, int]` clock parts, `int` minutes, `[int, int, int, int]` session parts, or `int` duration respectively | Parse/format clock values. Invalid tokens return `na` values; minute-of-day input wraps. Equal valid session endpoints mean 24 hours. |
+| `barDayBoundaryOffsetMs`, `getSessionStartTime`, `isSessionFirstBar`, `isSessionBoundaryInBar` | `_timezone`, `_hour`, `_minute`: clock boundary; `_session`: descriptor; `_dayOffsetMs`: day token; `_isStart`, `_barStartTime`, `_barEndTime`: boundary test | `int` offset/start timestamp or `bool` first-bar/boundary test | Build/test session boundaries in the descriptor timezone. Day offset is a nominal-day token. Boundary-in-bar test is strict; first-bar test includes a boundary at bar open. |
+| `getObservedLongGap` | `_minimumGapMs`: minimum interruption length | `[bool, int, int, int]`: detected, previous close, current open, duration | Returns detection flag, previous close, current open, and duration. Evaluates on `barstate.isnew`; otherwise timestamps are `na` and duration 0. Nonpositive threshold clamps to 1 ms. |
+| `historyCutoffTime`, `isWithinHistoryWindow` | `_calendarDays`: history length; `_referenceTime`: anchor; `_extraDays`: membership slack | `int` cutoff or `bool` membership | Exchange-calendar cutoff preserving reference hour/minute; cutoff days clamp at 0, membership days plus slack at 1. Membership compares current bar open. |
+| `resolveSessionInfo`, `isInSession`, `isInAnySession` | `_preset` and custom descriptor fields; `_session` or `_sessions`: membership schedules; `_timezone`: membership timezone | `SessionInfo` or na; `bool` for membership wrappers | Resolve a strict engine descriptor, or test native TradingView session membership. Empty membership array returns false; the native wrappers and engine parser have different syntax contracts. |
+| `needsSessionIntrabars`, `requestIntrabarData`, `scanIntrabarRange` | `_session`: descriptor; `_historyDays`: minute request budget; `_required`: request gate; scan range and seeds detailed below | `bool` need, `IntrabarData` arrays, or `IntrabarScan` aggregation | Detect partial boundaries, request shared minute arrays, and scan `[startTime, endTime)` using supplied extreme seeds. Request budget: `min((max(nz(_historyDays), 0) + 1) * 1440, 100000)` minute bars. |
+| `runSessionEngine` | `_config`, `_states`, `_intrabarData`, `_timeNow`, `_daysLimit`: configuration, mutable storage, shared data, clock, processing window | `SessionInfo` or na | Mutates the supplied state array and records on eligible intraday bars. Disabled/invalid config returns `na`; disabling does not clear records. A valid returned descriptor does not prove that a record was created. |
+| `getActiveSession`, `getCompletedSession` | `_states`: newest-first records; `_timeNow`: clock; `_sessionsBack`: completed-record offset | `SessionState` reference or na | Return references or `na`. Active checks index 0 against inclusive session bounds. Completed counts records ending before the supplied clock; offset 0 is newest, negative offsets clamp to 0. Missing-price records still count. |
+| `trimSessionStates` | `_states`: mutable records; `_maxSessions`: retention limit | `int` remaining count | Pops oldest references in place, retaining at least 1; returns remaining count. No drawing cleanup. |
+| `planTradeWindow` | `_session`, `_timezone`: schedule; `_daysLimit`: history; `_timeNow`: clock; `_lastDrawnStart`: host deduplication marker | `TradeWindowPlan` | Returns scheduled boundaries and rendering flags, gated by calendar history, realtime readiness, and the last-drawn start. No orders, alerts, or drawings. |
+| `updateLine`, `updateLabel`, `updateBox`, `updateTableCell` | `this`: existing object; optional properties below; table also needs `_column`, `_row` | Same `line`, `label`, `box`, or `table` reference | Mutate existing host objects and return the same ID. Optional `na` properties are unchanged; coordinate mode is unchanged. |
+| `clearDrawings`, `trimPool`, `toChartPoints` | Optional object pools; `maxSize`: per-pool limit for trim; `_times`, `_prices`: point coordinates | `int` deleted count, `int` remaining count, or `array<chart.point>` | Clear deletes objects/empties arrays and returns deleted count. Trim pops oldest objects from newest-first pools and returns total remaining count. Points uses the shorter time/price array. |
 
-Resolves a timezone selection into a string usable by time() and timestamp().
+### Arguments for multi-parameter operations
 
-| Argument | Type | Meaning |
+Defaults are listed in Public API; parameters with defaults are optional. Shared drawing options are documented once below. Each method requires its existing object receiver; table updates also require zero-based `_column` and `_row`. All optional drawing properties use `na` to leave the property unchanged.
+
+| Drawing argument | Type | Meaning / applies to |
 |---|---|---|
-| `this` | `Timezones` | Timezone enum value. |
-
-Returns: (string) - IANA timezone name, or the exchange timezone for Timezones.exch.
-
-### `toHourInt`
-
-Converts an hour selection into an integer hour.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `Hours` | Hour enum value. |
-
-Returns: (int) - Hour in 24-hour format.
-
-### `toMinuteInt`
-
-Converts a minute selection into an integer minute.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `Minutes` | Minute enum value. |
-
-Returns: (int) - Minute value from 0 to 59.
-
-### `toHhmm`
-
-Converts a quarter-hour selection into a compact time token.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `QuarterHours` | Quarter-hour enum value. |
-
-Returns: (string) - Four-character time token. Example: "1430".
-
-### `toLineStyle`
-
-Converts a line style selection into a Pine line style constant.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `LineStyle` | Line style enum value. |
-
-Returns: (string) - Pine line style constant.
-
-### `toLineWidth`
-
-Converts a line size selection into a pixel width.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `LineSize` | Line size enum value. |
-
-Returns: (int) - Width in pixels.
-
-### `toTextSizeString`
-
-Converts a text size selection into a Pine size constant.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `TextSize` | Text size enum value. |
-
-Returns: (string) - Pine size constant.
-
-### `toHorizontalAlign`
-
-Converts a horizontal alignment selection into a Pine text align constant.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `HorizontalAlign` | Horizontal alignment enum value. |
-
-Returns: (string) - Pine text align constant.
-
-### `toVerticalAlign`
-
-Converts a vertical alignment selection into a Pine text align constant.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `VerticalAlign` | Vertical alignment enum value. |
-
-Returns: (string) - Pine text align constant.
-
-### `toLineExtend`
-
-Converts a line extension selection into a Pine extend constant.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `LineExtend` | Line extension enum value. |
-
-Returns: (string) - Pine extend constant.
-
-### `toLabelStyle`
-
-Converts a label style selection into a Pine label style constant.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `LabelStyle` | Label style enum value. |
-
-Returns: (string) - Pine label style constant.
-
-### `updateLine`
-
-Updates any combination of line properties in one call.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `line` | Line being updated. |
 | `_x1` | `int` | New first point x value. |
 | `_y1` | `float` | New first point price. |
 | `_x2` | `int` | New second point x value. |
 | `_y2` | `float` | New second point price. |
 | `_extend` | `string` | New extend constant. |
-| `_color` | `color` | New line color. |
-| `_style` | `string` | New line style constant. |
+| `_color` | `color` | Line color or label background color. |
+| `_style` | `string` | Line or label style constant for the receiving object. |
 | `_width` | `int` | New line width in pixels. |
-
-Returns: (line) - The same line, to allow chaining.
-
-### `updateLabel`
-
-Updates any combination of label properties in one call.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `label` | Label being updated. |
 | `_x` | `int` | New x value. |
 | `_y` | `float` | New price, used when yloc is yloc.price. |
-| `_text` | `string` | New label text. |
+| `_text` | `string` | Displayed label, box, or table-cell text. |
 | `_yloc` | `string` | New yloc constant. |
-| `_color` | `color` | New label background color. |
-| `_style` | `string` | New label style constant. |
 | `_textColor` | `color` | New text color. |
 | `_textSize` | `string` | New text size constant. |
 | `_textAlign` | `string` | New text alignment constant. |
 | `_tooltip` | `string` | New tooltip text. |
 | `_fontFamily` | `string` | New font family constant. |
-
-Returns: (label) - The same label, to allow chaining.
-
-### `updateBox`
-
-Updates any combination of box properties in one call.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `box` | Box being updated. |
 | `_left` | `int` | New left edge x value. |
 | `_top` | `float` | New top edge price. |
 | `_right` | `int` | New right edge x value. |
@@ -719,218 +330,14 @@ Updates any combination of box properties in one call.
 | `_borderColor` | `color` | New border color. |
 | `_borderWidth` | `int` | New border width in pixels. |
 | `_borderStyle` | `string` | New border style constant. |
-| `_extend` | `string` | New extend constant. |
 | `_bgColor` | `color` | New background color. |
-| `_text` | `string` | New box text. |
-| `_textSize` | `string` | New text size constant. |
-| `_textColor` | `color` | New text color. |
 | `_textHAlign` | `string` | New horizontal text alignment constant. |
 | `_textVAlign` | `string` | New vertical text alignment constant. |
 | `_textWrap` | `string` | New text wrap constant. |
-| `_fontFamily` | `string` | New font family constant. |
-
-Returns: (box) - The same box, to allow chaining.
-
-### `updateTableCell`
-
-Updates any combination of properties on an existing table cell.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `this` | `table` | Table that already contains the cell. |
 | `_column` | `int` | Zero-based column index. |
 | `_row` | `int` | Zero-based row index. |
-| `_text` | `string` | New cell text. |
-| `_textColor` | `color` | New text color. |
-| `_textSize` | `string` | New text size constant. |
-| `_bgColor` | `color` | New cell background color. |
-| `_textHAlign` | `string` | New horizontal text alignment constant. |
-| `_textVAlign` | `string` | New vertical text alignment constant. |
-| `_tooltip` | `string` | New cell tooltip. |
-| `_fontFamily` | `string` | New font family constant. |
 
-Returns: (table) - The same table, to allow chaining.
-
-### `detectAssetClass`
-
-Resolves the chart symbol into a normalized asset class.
-
-Returns: (AssetClass) - Normalized asset class for the current symbol.
-
-### `priceDecimals`
-
-Returns the number of decimal places implied by the symbol tick size.
-
-Returns: (int) - Decimal places, clamped to zero or more.
-
-### `tickValue`
-
-Returns the money value of one tick for one contract or unit.
-
-Returns: (float) - Tick value in the instrument's quote currency.
-
-### `priceToTicks`
-
-Converts a price distance into ticks.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_priceDistance` | `float` | Distance in price units. |
-
-Returns: (float) - Distance in ticks.
-
-### `ticksToPrice`
-
-Converts a tick distance into price units.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_ticks` | `float` | Distance in ticks. |
-
-Returns: (float) - Distance in price units.
-
-### `pipSize`
-
-Returns the price distance of one pip.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_pipSizeOverride` | `float` | Optional pip price distance. na uses the default; nonpositive values return na. |
-
-Returns: (float) - Override when supplied; otherwise ten ticks on forex symbols, one tick elsewhere. Override for feeds without fractional pips.
-
-### `priceToPips`
-
-Converts a price distance into pips.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_priceDistance` | `float` | Distance in price units. |
-| `_pipSizeOverride` | `float` | Optional pip price distance, passed to pipSize(). |
-
-Returns: (float) - Distance in pips.
-
-### `pipsToPrice`
-
-Converts a pip distance into price units.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_pips` | `float` | Distance in pips. |
-| `_pipSizeOverride` | `float` | Optional pip price distance, passed to pipSize(). |
-
-Returns: (float) - Distance in price units.
-
-### `defaultQuantityStep`
-
-Returns a sensible quantity increment for the current asset class.
-
-Returns: (float) - 1.0 for whole-unit markets, 0.01 for crypto. Override per venue when needed.
-
-### `roundQuantity`
-
-Rounds a position size down to a tradable increment.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_quantity` | `float` | Unrounded position size. |
-| `_step` | `float` | Quantity increment. Futures and equities use 1.0. |
-
-Returns: (float) - Nonnegative quantity rounded down to the increment.
-
-### `positionNotional`
-
-Returns the notional exposure of a position.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_quantity` | `float` | Position size in broker units. |
-| `_price` | `float` | Price used for the valuation. |
-
-Returns: (float) - Notional value in the instrument's quote currency.
-
-### `durationMs`
-
-Converts a named duration into milliseconds.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_duration` | `Duration` | Duration enum value. |
-
-Returns: (int) - Length in milliseconds.
-
-### `timezoneOffsetMs`
-
-Measures the offset between a timezone and UTC on the current chart day.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_timezone` | `string` | IANA timezone name. |
-
-Returns: (int) - Offset in milliseconds. Negative west of UTC. Divide by 3600000 for hours.
-
-### `hhmmFromParts`
-
-Combines hour and minute selections into a compact time token.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_hour` | `Hours` | Hour enum value. |
-| `_minute` | `Minutes` | Minute enum value. |
-
-Returns: (string) - Four-character time token. Example: "0930".
-
-### `hhmmToParts`
-
-Splits a compact time token into hour and minute integers.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_hhmm` | `string` | Four-character time token. |
-
-Returns: ([int, int]) - Hour and minute, or [na, na] when the token is invalid.
-
-### `hhmmToMinutes`
-
-Converts a compact time token into minutes from midnight.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_hhmm` | `string` | Four-character time token. |
-
-Returns: (int) - Minutes from midnight, or na when the token is invalid.
-
-### `minutesToHhmm`
-
-Converts minutes from midnight into a compact time token.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_minutesOfDay` | `int` | Minutes from midnight. Values outside one day wrap. |
-
-Returns: (string) - Four-character time token, or na when the input is na.
-
-### `barDurationMs`
-
-Returns the length of one chart bar in milliseconds.
-
-Returns: (int) - Bar length in milliseconds.
-
-### `barDayBoundaryOffsetMs`
-
-Returns the day offset needed when a wall-clock target occurs after local midnight inside this bar.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_timezone` | `string` | Timezone whose calendar boundary is tested. |
-| `_hour` | `int` | Wall-clock target hour. |
-| `_minute` | `int` | Wall-clock target minute. |
-
-Returns: (int) - One nominal day when tomorrow's target occurs inside this bar, otherwise 0.
-
-### `clearDrawings`
-
-Deletes drawings and empties any combination of supplied drawing pools.
+#### `clearDrawings`
 
 | Argument | Type | Meaning |
 |---|---|---|
@@ -939,89 +346,17 @@ Deletes drawings and empties any combination of supplied drawing pools.
 | `boxes` | `array<box>` | Optional box pool to clear. |
 | `polylines` | `array<polyline>` | Optional polyline pool to clear. |
 
-Returns: (int) - Total count of drawings deleted across all supplied pools.
-
-### `trimPool`
-
-Trims any combination of drawing pools down to a maximum size (newest first).
+#### `trimPool`
 
 | Argument | Type | Meaning |
 |---|---|---|
 | `maxSize` | `int` | Maximum number of objects to retain in each supplied pool. |
-| `lines` | `array<line>` | Optional line pool to trim. |
-| `labels` | `array<label>` | Optional label pool to trim. |
-| `boxes` | `array<box>` | Optional box pool to trim. |
-| `polylines` | `array<polyline>` | Optional polyline pool to trim. |
+| `lines` | `array<line>` | Optional line pool to trim (newest first). |
+| `labels` | `array<label>` | Optional label pool to trim (newest first). |
+| `boxes` | `array<box>` | Optional box pool to trim (newest first). |
+| `polylines` | `array<polyline>` | Optional polyline pool to trim (newest first). |
 
-Returns: (int) - Total count of drawings remaining across all supplied pools.
-
-### `toChartPoints`
-
-Builds a chart.point array for polyline and multi-point drawing calls.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_times` | `array<int>` | UNIX times, one per point. |
-| `_prices` | `array<float>` | Prices, one per point. |
-
-Returns: (array<chart.point>) - Points built from the shorter of the two input arrays.
-
-### `sessionToParts`
-
-Parses a session string into its hour and minute components.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_session` | `string` | Exactly one "HHMM-HHMM" window. Day suffixes and multiple windows are unsupported. |
-
-Returns: ([int, int, int, int]) - Start hour, start minute, end hour, end minute; all na when invalid.
-
-### `sessionDurationMs`
-
-Calculates the length of a session string in milliseconds.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_session` | `string` | Session string in "HHMM-HHMM" format. |
-
-Returns: (int) - Session length in milliseconds, or na when invalid. Identical valid start and end times return 24 hours.
-
-### `getObservedLongGap`
-
-Detects a long interruption immediately before the current chart bar.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_minimumGapMs` | `int` | Smallest qualifying interruption in milliseconds. Defaults to one day. |
-
-Returns: ([bool, int, int, int]) - Detection flag, previous bar close, current bar open, and observed duration.
-
-### `historyCutoffTime`
-
-Returns the oldest timestamp a script should process, counted in calendar days.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_calendarDays` | `int` | Number of calendar days of history to allow. |
-| `_referenceTime` | `int` | Newest chart timestamp used as the history anchor. |
-
-Returns: (int) - Cutoff UNIX timestamp.
-
-### `isWithinHistoryWindow`
-
-Reports whether the current bar is inside the allowed calendar history window.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_calendarDays` | `int` | Number of calendar days of history to allow. |
-| `_referenceTime` | `int` | Newest chart timestamp used as the history anchor. |
-| `_extraDays` | `int` | Additional calendar days of slack for sessions that span days. |
-
-Returns: (bool) - True when the bar should be processed.
-
-### `resolveSessionInfo`
-
-Resolves a preset, or builds a descriptor from a custom session string.
+#### `resolveSessionInfo`
 
 | Argument | Type | Meaning |
 |---|---|---|
@@ -1030,55 +365,7 @@ Resolves a preset, or builds a descriptor from a custom session string.
 | `_customLabel` | `string` | Label applied when the preset is Custom. Defaults to "Custom". |
 | `_customTimezone` | `string` | IANA timezone for a Custom session. na uses the exchange timezone. |
 
-Returns: (SessionInfo) - Resolved descriptor with timezone, or na when a Custom session string is missing or invalid.
-
-### `isInSession`
-
-Reports whether the current bar falls inside a session.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_session` | `string` | Session string in TradingView format. |
-| `_timezone` | `string` | IANA timezone used for the session test. |
-
-Returns: (bool) - True when the current bar is inside the session.
-
-### `isInAnySession`
-
-Reports whether the current bar falls inside any supplied session.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_sessions` | `array<string>` | Session strings to test. |
-| `_timezone` | `string` | IANA timezone used for the session tests. |
-
-Returns: (bool) - True when at least one session contains the current bar. False on an empty array.
-
-### `getSessionStartTime`
-
-Returns the session open timestamp for the current local session day.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_session` | `SessionInfo` | Session descriptor. Its timezone is used. |
-| `_dayOffsetMs` | `int` | Nominal-day token from barDayBoundaryOffsetMs() or a manual whole-day shift. |
-
-Returns: (int) - Session open UNIX time.
-
-### `isSessionFirstBar`
-
-Reports whether the current bar contains the session open.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_session` | `SessionInfo` | Session descriptor. |
-| `_dayOffsetMs` | `int` | Nominal-day token from barDayBoundaryOffsetMs() or a manual whole-day shift. |
-
-Returns: (bool) - True when the session opens inside this bar.
-
-### `isSessionBoundaryInBar`
-
-Reports whether a session open or close falls inside a bar interval.
+#### `isSessionBoundaryInBar`
 
 | Argument | Type | Meaning |
 |---|---|---|
@@ -1088,32 +375,7 @@ Reports whether a session open or close falls inside a bar interval.
 | `_barEndTime` | `int` | Bar end UNIX time. |
 | `_dayOffsetMs` | `int` | Nominal-day token from barDayBoundaryOffsetMs() or a manual whole-day shift. |
 
-Returns: (bool) - True when the requested boundary falls strictly inside the bar.
-
-### `needsSessionIntrabars`
-
-Tests whether either session boundary falls strictly inside the current chart candle.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_session` | `SessionInfo` | Resolved session descriptor. |
-
-Returns: (bool) - True when one-minute filtering is needed. False on one-minute or smaller charts.
-
-### `requestIntrabarData`
-
-Requests one shared set of one-minute arrays for the current chart bar.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_historyDays` | `simple int` | Calendar days of one-minute history the host may need. |
-| `_required` | `bool` | Whether this candle needs filtering. Call every bar; the request runs conditionally inside. |
-
-Returns: (IntrabarData) - Shared one-minute OHLC arrays, empty when skipped. Initializes the dataset on the last confirmed historical bar for realtime use.
-
-### `scanIntrabarRange`
-
-Aggregates one-minute data inside a time range of the current chart bar.
+#### `scanIntrabarRange`
 
 | Argument | Type | Meaning |
 |---|---|---|
@@ -1125,11 +387,7 @@ Aggregates one-minute data inside a time range of the current chart bar.
 | `_seedHighTime` | `int` | High timestamp kept when no new high is found. |
 | `_seedLowTime` | `int` | Low timestamp kept when no new low is found. |
 
-Returns: (IntrabarScan) - Aggregated open, high, low, close, extreme times, and a data flag.
-
-### `runSessionEngine`
-
-Creates and maintains session lifecycle state for one configured session.
+#### `runSessionEngine`
 
 | Argument | Type | Meaning |
 |---|---|---|
@@ -1139,45 +397,7 @@ Creates and maintains session lifecycle state for one configured session.
 | `_timeNow` | `int` | Current UNIX timestamp supplied by the host. |
 | `_daysLimit` | `int` | Calendar days of history to process. Pass na to process all loaded bars and let the host retain records by count. |
 
-Returns: (SessionInfo) - Resolved descriptor including its timezone, or na when the configuration cannot be resolved.
-
-### `getActiveSession`
-
-Returns the session that is currently in progress.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_states` | `array<SessionState>` | Session state storage. |
-| `_timeNow` | `int` | Current UNIX timestamp. |
-
-Returns: (SessionState) - In-progress session state, or na when no session is open.
-
-### `getCompletedSession`
-
-Returns a completed session counted back from the most recent one.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_states` | `array<SessionState>` | Session state storage. |
-| `_sessionsBack` | `int` | Zero-based offset. 0 is the most recently completed session. |
-| `_timeNow` | `int` | Current UNIX timestamp used to exclude in-progress sessions. |
-
-Returns: (SessionState) - Requested completed session state, or na when unavailable.
-
-### `trimSessionStates`
-
-Drops the oldest session states so storage stays bounded.
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `_states` | `array<SessionState>` | Session state storage. |
-| `_maxSessions` | `int` | Maximum number of sessions to retain. |
-
-Returns: (int) - Number of states remaining after trimming.
-
-### `planTradeWindow`
-
-Computes scheduled trade-window boundaries with realtime gating.
+#### `planTradeWindow`
 
 | Argument | Type | Meaning |
 |---|---|---|
@@ -1186,8 +406,6 @@ Computes scheduled trade-window boundaries with realtime gating.
 | `_daysLimit` | `int` | Calendar days of history the host may draw. |
 | `_timeNow` | `int` | Current UNIX timestamp. |
 | `_lastDrawnStart` | `int` | Start timestamp the host most recently drew, or na. |
-
-Returns: (TradeWindowPlan) - Window boundaries plus in-window, already-drawn, and should-draw flags.
 
 ## Function Hierarchy
 
@@ -1199,7 +417,7 @@ UTIL
 |   +-- HHMM parsing and calendar helpers
 |-- Session pipeline (host calls each bar)
 |   |-- resolveSessionInfo -> presetToSessionInfo / buildSessionInfo
-|   |-- needsSessionIntrabars -> isSessionBoundaryInBar
+|   |-- needsSessionIntrabars -> barDayBoundaryOffsetMs / wallClockTimestamp
 |   |-- requestIntrabarData -> conditional security_lower_tf
 |   +-- runSessionEngine
 |       |-- resolveSessionInfo
@@ -1215,7 +433,7 @@ UTIL
 |-- Host-owned drawing support
 |   |-- updateLine / updateLabel / updateBox / updateTableCell
 |   +-- clearDrawings / trimPool / toChartPoints
-+-- session-example.pine (consumer, not imported by library)
++-- Ultra-Sessions-2026.pine (sibling project consumer, not imported by library)
     |-- Persistent configurations, state arrays and visual trackers
     |-- Shared intrabar request -> engine per enabled session
     |-- pruneExpiredSession (record count and drawing cleanup)
@@ -1225,16 +443,20 @@ UTIL
 
 ## Standard Integration Pattern
 
-This uses the checked-in test import. Verify that the imported publication contains the local implementation before testing. Eight retained records here means at most eight total records, including a developing session; it is not the example's separate previous-session input.
+This uses the published version 1 import. Verify that the imported publication contains any future local changes before testing. Eight retained records here means at most eight total records, including a developing session; it is not the Ultra Sessions consumer's separate previous-session input.
 
 ```pine
 //@version=6
 indicator("Utility Session Consumer", overlay = true)
-import OneCleverGuy/UtilityLibrary1CGTESTA/12 as UTIL
+import OneCleverGuy/UtilityLibrary1CG/1 as UTIL
+
+string i_session = input.session("0930-1600", "Session")
+string i_timezone = input.string("America/New_York", "Timezone")
+int i_retainedSessions = input.int(8, "Retained sessions", minval = 1)
 
 var UTIL.SessionConfig cfg = UTIL.SessionConfig.new(
-     preset = UTIL.SessionPreset.Custom, customSession = "0930-1600",
-     customLabel = "Cash", timezone = "America/New_York")
+     preset = UTIL.SessionPreset.Custom, customSession = i_session,
+     customLabel = "Cash", timezone = i_timezone)
 var array<UTIL.SessionState> states = array.new<UTIL.SessionState>()
 var UTIL.SessionInfo descriptor = UTIL.resolveSessionInfo(
      cfg.preset, cfg.customSession, cfg.customLabel, cfg.timezone)
@@ -1244,9 +466,10 @@ int nowTime = (barstate.isrealtime and not replayClock ? timenow : nz(time_close
 bool needsMinutes = UTIL.needsSessionIntrabars(descriptor)
 UTIL.IntrabarData minutes = UTIL.requestIntrabarData(20, needsMinutes)
 UTIL.SessionInfo resolved = UTIL.runSessionEngine(cfg, states, minutes, nowTime, int(na))
-int retainedCount = UTIL.trimSessionStates(states, 8)
+int retainedCount = UTIL.trimSessionStates(states, i_retainedSessions)
 UTIL.SessionState active = UTIL.getActiveSession(states, nowTime)
-float sessionHigh = (not na(active) ? active.highPrice : float(na))
+bool hasActiveHigh = not na(resolved) and not na(active) and not na(active.highPrice)
+float sessionHigh = (hasActiveHigh ? active.highPrice : float(na))
 plot(sessionHigh, "Active session high", style = plot.style_linebr)
 ```
 
@@ -1261,11 +484,11 @@ For multiple sessions, OR the enabled sessions' boundary checks, request once, a
 | Historical request initialization | Wrapper also requests on `barstate.islastconfirmedhistory` on eligible timeframes, even when no boundary needs scanning. Preserve this preparation for realtime requests. |
 | First update after long gap | Engine adjusts retained endpoints when the gap is observed. Three `varip` endpoint fields preserve these first-update changes. Price fields keep ordinary rollback behavior. |
 | Retention | Host chooses record counts or a calendar processing window. Engine does not trim storage automatically. |
-| Historical rendering | Example computes history first, then creates retained drawings on the last confirmed historical bar. |
-| Live rendering | Example updates current drawings and handles rollover. Stored bar timestamps anchor deferred boxes. |
+| Historical rendering | Ultra Sessions computes history first, then creates retained drawings on the last confirmed historical bar. |
+| Live rendering | Ultra Sessions updates current drawings and handles rollover. Stored bar timestamps anchor deferred boxes. |
 | Alerts and other libraries | Host owns signal decisions, alert calls, round levels and visual composition. |
 
-The drawing setters/deleters and conditional request wrapper are existing, session-authorized exceptions to the broader repository compute-only/global-request conventions. Preserve their documented contracts; do not move drawing creation, inputs, alerts or example-specific policy into the library during unrelated changes.
+The existing API includes drawing setters/deleters and a conditional request wrapper. These are specific exceptions to the shared compute-only/global-request conventions, as implemented in the source. Preserve their documented contracts; do not move drawing creation, inputs, alerts or consumer-specific policy into the library during unrelated changes.
 
 ## Rules And Pitfalls
 
@@ -1275,7 +498,7 @@ The drawing setters/deleters and conditional request wrapper are existing, sessi
 | Pass configuration explicitly | Construct descriptors from arguments. Do not restore mutable global preset objects accessed by exports. |
 | Strict engine session syntax | Use exactly `HHMM-HHMM`, valid hours and minutes. Invalid parsing returns `na`; equal endpoints mean 24 hours. Weekday masks and split periods are not supported by this parser. Native membership wrappers have a separate contract. |
 | Preset timezone ownership | Presets use their native timezone; custom timezone applies to Custom. IANA identifiers handle seasonal offsets. Presets are schedule envelopes, not holiday or lunch-break calendars. |
-| Session prices and line expiry are independent | Session OHLC uses session boundaries only. `closeTime` is exclusive; `sessEndTime` is close minus 1 ms. Explicit line endpoints use the requested clock time. Preserve the example's bar-edge rendering convention. |
+| Session prices and line expiry are independent | Session OHLC uses session boundaries only. `closeTime` is exclusive; `sessEndTime` is close minus 1 ms. Explicit line endpoints use the requested clock time. Preserve the Ultra Sessions consumer's bar-edge rendering convention. |
 | React to observed gaps | Default long-gap threshold is one day between previous close and current open. No future market-calendar prediction. Endpoints strictly inside a gap shift by the gap's local calendar-date span, preserving wall-clock time. |
 | Resume interrupted sessions | A session started before the gap and closing inside it retains its identity and prices with an extended close. Suppress overlapping scheduled starts until it ends. A session already finished before the gap is not resumed. |
 | Preserve field-level `varip` | `closeTime`, `sessEndTime`, and `lineEndTime` survive first-tick gap adjustment. Do not make all price state intrabar-persistent as a blanket rollback fix. |
@@ -1284,7 +507,7 @@ The drawing setters/deleters and conditional request wrapper are existing, sessi
 | Intrabar arrays must align | Custom `IntrabarData` must contain chronological, equally sized time/OHLC arrays. Scanner does not validate alignment. Request history is a minute-bar budget, not guaranteed calendar coverage. |
 | Standard chart assumptions | Intended for time-based intraday charts. Daily and higher charts do not run the state engine. Nonstandard chart behavior is not certified. Replay-clock detection is a heuristic. |
 | Count records explicitly | Pass `int(na)` as engine days limit to process loaded history. `trimSessionStates` keeps at least one record and removes references only. It neither filters empty records nor deletes drawings. |
-| Example history has separate policies | Regional storage budgets N+1; daily N+2 supports previous-day levels. Object budgets may cap N. Daily identifiers count daily bars; trade-window history remains calendar based. |
+| Ultra Sessions history has separate policies | Regional storage budgets N+1; daily N+2 supports previous-day levels. Object budgets may cap N. Daily identifiers count daily bars; trade-window history remains calendar based. |
 | Partial initial history | Non-daily sessions can initialize mid-session from available bars. Daily sessions do not use that late-start path. Loaded data cannot reconstruct absent prices. |
 | Timestamp coordinates | Host creates time-based objects with `xloc.bar_time`. Do not apply the bar-index 500-future-bar limit to timestamps. Setters do not change coordinate mode. |
 | Setter omissions | `na` means leave a property unchanged. Use native setters if the desired operation is clearing a value to `na`. Arrow line styles are not box-border styles. |

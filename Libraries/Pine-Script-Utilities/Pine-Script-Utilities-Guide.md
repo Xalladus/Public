@@ -4,7 +4,7 @@
 
 Pine Script Utilities is a Pine v6 library for common representation, price-unit, time, drawing-maintenance and session-state tasks. Its session engine connects these utilities into a reusable lifecycle: resolve a schedule, collect qualifying prices, preserve session identity and expose state to the consumer.
 
-This guide explains why and when to use the components. [AGENTS.md](AGENTS.md) contains the complete signatures, enum values, field definitions and argument reference. [session-example.pine](session-example.pine) demonstrates the larger indicator architecture; its styling, alerts, round levels and retention choices are consumer features.
+This guide explains why and when to use the components. [AGENTS.md](AGENTS.md) contains the API map and runtime contracts; [the source](1CG-PS-Utilities.pine) contains exact enum values, field declarations, and parameter comments. [Ultra-Sessions-2026.pine](../../../Trading-View-Scripts/Indicators/Ultra-Sessions/Ultra-Sessions-2026.pine) demonstrates the larger indicator architecture; its styling, alerts, round levels and retention choices are consumer features.
 
 ## Core Philosophy & Data Flow
 
@@ -108,12 +108,12 @@ Trade-window planning returns boundaries and flags for host rendering. It neithe
 
 ### Minimal persistent consumer
 
-The following uses the current checked-in test import. Confirm that the selected publication version includes the local source changes. Replace it with the final publication import when releasing a consumer.
+The following uses the published version 1 import, matching `session-example.pine`. When releasing future updates, confirm that the selected publication version includes the required source changes.
 
 ```pine
 //@version=6
 indicator("Utility Session Consumer", overlay = true)
-import OneCleverGuy/UtilityLibrary1CGTESTA/12 as UTIL
+import OneCleverGuy/UtilityLibrary1CG/1 as UTIL
 
 var UTIL.SessionConfig cfg = UTIL.SessionConfig.new(
      preset = UTIL.SessionPreset.Custom, customSession = "0930-1600",

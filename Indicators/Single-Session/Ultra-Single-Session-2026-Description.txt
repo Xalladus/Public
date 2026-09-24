@@ -62,3 +62,14 @@ You can also use this for daily session templates (for example midnight-to-midni
 [*]More history + more visuals = more drawing objects.
 [*]If your chart gets heavy, reduce history depth and/or turn off extra visuals.
 [/list]
+
+[b]Update: Session Timing and History[/b]
+[list]
+[*]Session tracking now uses the shared utility engine. The preset selector includes FX, regional equity and futures templates, plus FX Close, UTC, exchange-timezone and New York daily boundaries. Presets resolve in their native timezone; custom sessions, the trade window and line endings use your selected timezone.
+[*]Line Starts now offers Session End alongside Session Open and Extreme Time. High/low lines and labels use timestamp anchors so boundaries inside a chart candle do not collapse when projected.
+[*]History now counts previous session occurrences instead of elapsed days. Closures without session prices do not consume the count. The existing five-session default and ninety-session maximum remain.
+[*]Retained historical session drawings are built after history loads. Current drawings can be restored after a reload or during replay without waiting for the next session opening.
+[*]The session engine adjusts affected timing from long gaps observed in chart data when trading resumes, replacing the previous weekday-based weekend handling. Replay bars behind live time use their bar clock.
+[*]Lower-timeframe data is requested conditionally when the selected session requires it, instead of requesting it through the embedded session helpers.
+[*]Preset alert messages now use the resolved preset label; custom sessions use your custom label.
+[/list]

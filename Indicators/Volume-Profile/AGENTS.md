@@ -8,8 +8,8 @@ Pine Script v6 example consumer for fixed and recurring volume profiles. The ind
 
 | Library | Alias | Role |
 |---------|-------|------|
-| `OneCleverGuy/InputLibrary/4` | `iLib` | Timezone, quarter-hour, line-style, line-size, and text-size enums/conversions. |
-| `OneCleverGuy/VolumeProfileLibraryTESTB/3` | `VP` | Profile state, accumulation, statistics, drawing plans, history, and rendering. |
+| `OneCleverGuy/UtilityLibrary1CG/1` | `UTIL` | Timezone, quarter-hour, line-style, line-size, and text-size enums/conversions. |
+| `OneCleverGuy/VolumeProfileLibrary/4` | `VP` | Profile state, accumulation, statistics, drawing plans, history, and rendering. |
 
 ## Input Groups
 
@@ -56,8 +56,8 @@ Pine Script v6 example consumer for fixed and recurring volume profiles. The ind
 FixedRangeVolumeProfile
 |
 +-- Input Resolution
-|   +-- i_timezone.getOfficialTimezone()
-|   +-- i_anchorQuarter.toHHMMString()
+|   +-- i_timezone.toTimezone()
+|   +-- i_anchorQuarter.toHhmm()
 |
 +-- Intrabar Context
 |   +-- request.security_lower_tf(...)
