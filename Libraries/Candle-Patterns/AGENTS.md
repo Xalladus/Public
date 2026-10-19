@@ -6,15 +6,67 @@ classification, pattern detection, result-family classification, enum naming
 helpers, and sentiment scoring.
 The consumer owns input declarations, average-size/ATR sourcing, bar ordering,
 rendering, alerts, and any strategy logic built on top of the returned data.
-Published as:
+
+## Current release
+
+- Published release: **Unconfirmed**.
+- Publication visibility: **Unconfirmed**.
+- Confirmation source/date: no user confirmation or verified publication information recorded; repository instructions reviewed on 2026-10-13.
+
+The previous integration example documented the import below; it is not publication confirmation.
 
 ```pine
-import OneCleverGuy/CandlePatternLibrary/<version> as CPL
+import OneCleverGuy/CandlePatternLibrary/6 as CPL
 ```
 
-Dependency note: this library has no imported-library dependencies.
+Other documentation uses `<version>` and links to [this release record](#current-release).
+Local edits and documentation checks do not advance or confirm a published release.
+Executable imports retain explicit numeric dependency pins; preserve historical test versions.
 
----
+## Dependencies
+
+This library has no imported-library dependencies.
+
+## Files and navigation
+
+```text
+Candle-Patterns/
+|-- 1CG-Candle-Pattern-Library.pine
+|-- 1CG-Candle-Pattern-Library-Publication.txt
+`-- AGENTS.md
+```
+
+| File | Role |
+|---|---|
+| [1CG-Candle-Pattern-Library.pine](1CG-Candle-Pattern-Library.pine) | Maintained library source. |
+| [AGENTS.md](AGENTS.md#current-release) | API, editing instructions, and owning release record. |
+| [1CG-Candle-Pattern-Library-Publication.txt](1CG-Candle-Pattern-Library-Publication.txt) | Append-only TradingView consumer copy. |
+
+No standalone developer guide or scoped validation evidence is maintained in this folder.
+If added, keep the guide at the root and validation material under `prep/`.
+
+Quick reference: [Public API](#public-api), [Exported Enums](#exported-enums),
+[Exported Types](#exported-types), [Function Reference](#function-reference),
+[Function Hierarchy](#function-hierarchy),
+[Standard Integration Pattern](#standard-integration-pattern),
+[Execution Ownership](#execution-ownership), [Rules And Pitfalls](#rules-and-pitfalls),
+and [Verification](#verification).
+
+Follow the local shared standards: [Pine coding style](../../docs/style-guide.md),
+[AGENTS.md structure](../../docs/agents-file-standard.md),
+[Markdown documentation](../../docs/markdown-documentation-standard.md),
+[guide writing](../../docs/guide-standards.md), and
+[TradingView publication markup](../../docs/tradingview-publication-markup.md).
+These docs match the sibling Trading-View-Scripts standards as reviewed on 2026-10-13.
+
+Keep source, guide, publication text, and `AGENTS.md` at the component root.
+Put new tests, validation builders, release checklists, and generated review material
+under lowercase `prep/`; update relative links when moving support files.
+Keep the callable surface, argument/type tables, compact text function hierarchy,
+integration pattern, ownership, and pitfalls here. Put detailed lifecycle reasoning
+and source-traced Mermaid diagrams in a guide. Name actual functions and state,
+explain arrow meanings, distinguish call order from data dependencies and timing
+gates, and mark proposed flows separately.
 
 ## Public API
 
@@ -516,8 +568,10 @@ CPL
 
 ## Standard Integration Pattern
 
+The import below is a documentation placeholder; select and verify an executable numeric pin against [Current release](#current-release). This example does not establish publication or compilation status.
+
 ```pine
-import OneCleverGuy/CandlePatternLibrary/6 as CPL
+import OneCleverGuy/CandlePatternLibrary/<version> as CPL
 
 float avgSize = ta.atr(14)
 CPL.CandleAnalysisConfig config = CPL.CandleAnalysisConfig.new(
@@ -597,4 +651,26 @@ not manage persistent runtime containers.
 | Helper predicates are lower-level than analyzers | Calling helpers directly bypasses analyzer-level priority ordering and weak/strong engulfing classification. |
 | Zero-range candles use a safe wick-range fallback | `analyzeCandle()` substitutes `_avgSize * 0.001` for section placement math when `wickRange <= 0`. |
 | `AGENTS.md` is the documentation source of truth | Keep API signatures, type fields, behavior, hierarchy, and runtime rules here aligned with the Pine source. The publication file is consumer-facing copy, not a second API reference. |
-| Keep one append-only publication file | Maintain `1CG-Candle-Pattern-Library-Publication.txt`; never revise text from an already published TradingView version. Append each new version section at the end of the file, even if an older section describes a different ordering convention. The appended section must explain the new import version, additions, behavioral changes, and migration requirements without relying on edits to earlier text. |
+| Keep one append-only publication file | Maintain `1CG-Candle-Pattern-Library-Publication.txt`. Append new updates at the end even if older copy describes a different ordering convention; follow the Publication copy rule below. |
+| Pine layout | Follow the style guide's prologue and canonical primary-section order; omit unused sections. Use bannered primary regions, padded secondary regions, and tertiary helper/function groups. Define helpers before callers; keep internal declarations before exports. |
+| Readable declarations | Use descriptive camelCase names, UPPER_SNAKE_CASE constants, explicitly typed parameters with `_` prefixes for new APIs, and no reserved or built-in shadowing. Preserve existing public names and argument order during style-only edits. |
+| Formatting | Use four-space block/bracket indentation, two-space continuation outside brackets, one blank line between logical blocks, and a soft 120-character limit (about 150 for useful alignment). Prefer two aligned columns for short sibling items; repeat each declaration's type. Parenthesize ternaries and prefer `switch` for multi-way selection. |
+| Public annotations | Maintain `@function`, `@param`, and `@returns` on exported functions/methods, `@enum` on exported enums, and `@type` on exported UDTs. Private helpers do not need compiler notes. |
+| Pine runtime and types | Use documented Pine types, typed `na` where required, matching branch-return types, and boolean absence flags instead of `na` booleans. Guard empty index loops; keep history-dependent series calls consistent each bar and follow the style guide's request-context rules. Preserve documented library-specific request/state exceptions. |
+| Release references | Maintain this file's Current release record from user confirmation or verified publication information; do not infer or increment publication status from source edits, language versions, or consumer pins. Other documentation and commented imports use `<version>` and link to the owning release section. Deliberately update and compile executable numeric pins; preserve historical evidence and Pine/protocol versions. |
+| Publication copy | Preserve existing `.txt` copy and release notes; append concise user-visible updates at the end unless the user explicitly requests rewriting. Use `[b]`, `[list]` with `[*]`, and `[pine]`, without Markdown headings, bullets, backticks, or fences. Include a concise copyable consumer example with essential inputs, config assembly, a realistic runtime call, and result validation. Use `<version>` in public examples without repository-only links; keep full integrations and edge cases in the guide. |
+
+## Verification
+
+| Check | Status | Evidence / limit |
+|---|---|---|
+| Publication | Unconfirmed | See [Current release](#current-release); previous examples do not confirm the current publication. |
+| Instructions review | Reviewed 2026-10-13 | Compared local docs with Trading-View-Scripts; this change updates AGENTS.md only. |
+| Compilation and runtime | Pending | No scoped compile, historical, or live-chart result is recorded here. Documentation review does not certify Pine behavior. |
+
+Confirm the published import, compile a consumer, and exercise analyzer priority, candle order, tolerances, zero-range candles, result-family membership, and invalid ATR/multiplier behavior before claiming runtime validation.
+Store new results under `prep/` with the tested source revision, date, environment,
+setup, action, expected/observed results, and evidence. State **What this proves**
+and **What this does not prove**; preserve earlier observations and numeric test pins.
+Link evidence here and keep publication, compilation, historical execution, and
+live behavior distinct. Add dated results without rewriting earlier evidence.

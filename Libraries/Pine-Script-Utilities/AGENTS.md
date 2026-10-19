@@ -2,15 +2,75 @@
 
 Pine Script v6 utility and session-state library. The library owns enums, validation, conversions, time calculations, conditional intrabar retrieval, and session mutation. The host owns inputs, persistent arrays, drawing creation, retention policy, alerts, and cross-library composition. Existing drawing setters and cleanup exports mutate or delete host-owned objects; they never create them. The advanced indicator consumer is [Ultra-Sessions-2026.pine](../../../Trading-View-Scripts/Indicators/Ultra-Sessions/Ultra-Sessions-2026.pine) in the sibling Trading-View-Scripts project.
 
-Current documented import (version 1), also used by `Ultra-Sessions-2026.pine`:
+## Current release
+
+- Published release: **Unconfirmed**.
+- Publication visibility: **Unconfirmed**.
+- Confirmation source/date: no user confirmation or verified publication information recorded; repository instructions reviewed on 2026-10-13.
+
+The previous AGENTS.md described the import below as published and used by Ultra Sessions; no user confirmation or verified publication source/date was recorded.
 
 ```pine
-import OneCleverGuy/UtilityLibrary1CG/<version> as UTIL
+import OneCleverGuy/UtilityLibrary1CG/1 as UTIL
 ```
 
-The library imports nothing. The Ultra Sessions consumer also imports `OneCleverGuy/RoundNumberLibrary/3 as RNL`. Keep consumer imports aligned with the published version; do not invent version numbers. Shared standards live in the sibling Trading-View-Scripts project: [coding style](../../../Trading-View-Scripts/docs/style-guide.md), [AGENTS](../../../Trading-View-Scripts/docs/agents-file-standard.md), [guide](../../../Trading-View-Scripts/docs/guide-standards.md), [publication markup](../../../Trading-View-Scripts/docs/tradingview-publication-markup.md).
+Other documentation uses `<version>` and links to [this release record](#current-release).
+Local edits and documentation checks do not advance or confirm a published release.
+Executable imports retain explicit numeric dependency pins; preserve historical test versions.
 
-Keep this file compact: retain the callable surface and non-obvious runtime contracts; document shared arguments once and summarize regular numeric enum ranges. Use grouped references under the shared AGENTS standard. Internal imports use the latest verified numeric version; publication examples use `<version>` and TradingView markup. Keep complete integrations and edge cases in the guide, and a concise copyable consumer example in publication copy.
+## Dependencies
+
+The library imports nothing. The Ultra Sessions consumer also imports
+`OneCleverGuy/RoundNumberLibrary/<version> as RNL`; its owning release record is
+[Round Number Current release](../../../Trading-View-Scripts/Libraries/Round-Number/AGENTS.md#current-release).
+Keep cross-library composition in the host. Preserve Utilities' existing drawing
+mutation/cleanup exports and conditional intrabar request wrapper as explicit
+exceptions to the shared compute-only/global-request conventions; retain their
+contracts without adding inputs, drawing creation, alerts, or consumer policy.
+
+Keep this file compact: document shared arguments once, summarize regular numeric
+enum ranges, and use grouped function references under the AGENTS.md standard.
+
+## Files and navigation
+
+```text
+Pine-Script-Utilities/
+|-- 1CG-PS-Utilities.pine
+|-- publication-document.txt
+|-- Pine-Script-Utilities-Guide.md
+`-- AGENTS.md
+```
+
+| File | Role |
+|---|---|
+| [1CG-PS-Utilities.pine](1CG-PS-Utilities.pine) | Maintained library source. |
+| [AGENTS.md](AGENTS.md#current-release) | API, editing instructions, and owning release record. |
+| [Pine-Script-Utilities-Guide.md](Pine-Script-Utilities-Guide.md) | Session lifecycle, integrations, and edge cases. |
+| [publication-document.txt](publication-document.txt) | Append-only TradingView consumer copy. |
+| [Ultra Sessions instructions](../../../Trading-View-Scripts/Indicators/Ultra-Sessions/AGENTS.md) | Advanced sibling consumer contracts. |
+
+Quick reference: [Public API](#public-api), [Exported Enums](#exported-enums),
+[Exported Types](#exported-types), [Function Reference](#function-reference),
+[Function Hierarchy](#function-hierarchy),
+[Standard Integration Pattern](#standard-integration-pattern),
+[Execution Ownership](#execution-ownership), [Rules And Pitfalls](#rules-and-pitfalls),
+and [Verification](#verification).
+
+Follow the local shared standards: [Pine coding style](../../docs/style-guide.md),
+[AGENTS.md structure](../../docs/agents-file-standard.md),
+[Markdown documentation](../../docs/markdown-documentation-standard.md),
+[guide writing](../../docs/guide-standards.md), and
+[TradingView publication markup](../../docs/tradingview-publication-markup.md).
+These docs match the sibling Trading-View-Scripts standards as reviewed on 2026-10-13.
+
+Keep source, guide, publication text, and `AGENTS.md` at the component root.
+Put new tests, validation builders, release checklists, and generated review material
+under lowercase `prep/`; update relative links when moving support files.
+Keep the callable surface, argument/type tables, compact text function hierarchy,
+integration pattern, ownership, and pitfalls here. Put detailed lifecycle reasoning
+and source-traced Mermaid diagrams in a guide. Name actual functions and state,
+explain arrow meanings, distinguish call order from data dependencies and timing
+gates, and mark proposed flows separately.
 
 ## Public API
 
@@ -443,23 +503,23 @@ UTIL
 
 ## Standard Integration Pattern
 
-This uses the published version 1 import. Verify that the imported publication contains any future local changes before testing. Eight retained records here means at most eight total records, including a developing session; it is not the Ultra Sessions consumer's separate previous-session input.
+The import below is a documentation placeholder; select and verify an executable numeric pin against [Current release](#current-release). Verify that the imported publication contains the local APIs before testing. Eight retained records here means at most eight total records, including a developing session; it is not the Ultra Sessions consumer's separate previous-session input.
 
 ```pine
 //@version=6
 indicator("Utility Session Consumer", overlay = true)
-import OneCleverGuy/UtilityLibrary1CG/1 as UTIL
+import OneCleverGuy/UtilityLibrary1CG/<version> as UTIL
 
-string i_session = input.session("0930-1600", "Session")
-string i_timezone = input.string("America/New_York", "Timezone")
-int i_retainedSessions = input.int(8, "Retained sessions", minval = 1)
+string i_session = input.session("0930-1600", "Session", display = display.none)
+string i_timezone = input.string("America/New_York", "Timezone", display = display.none)
+int i_retainedSessions = input.int(8, "Retained sessions", minval = 1, display = display.none)
 
 var UTIL.SessionConfig cfg = UTIL.SessionConfig.new(
-     preset = UTIL.SessionPreset.Custom, customSession = i_session,
-     customLabel = "Cash", timezone = i_timezone)
+    preset = UTIL.SessionPreset.Custom, customSession = i_session,
+    customLabel = "Cash", timezone = i_timezone)
 var array<UTIL.SessionState> states = array.new<UTIL.SessionState>()
 var UTIL.SessionInfo descriptor = UTIL.resolveSessionInfo(
-     cfg.preset, cfg.customSession, cfg.customLabel, cfg.timezone)
+    cfg.preset, cfg.customSession, cfg.customLabel, cfg.timezone)
 
 bool replayClock = barstate.isrealtime and not na(time_close) and timenow > time_close + UTIL.durationMs(UTIL.Duration.Day)
 int nowTime = (barstate.isrealtime and not replayClock ? timenow : nz(time_close, time))
@@ -516,5 +576,27 @@ The existing API includes drawing setters/deleters and a conditional request wra
 | Risk ownership | Account-risk sizing and trade risk/reward calculations belong in the separate risk library. Quantity rounding and notional conversion remain general utilities. |
 | Time helper limits | `sessionDurationMs` is nominal duration. `barDurationMs` is nominal where timeframe seconds exist. `timezoneOffsetMs` uses date-based midnight construction, not a universal instantaneous DST-offset calculation. |
 | Publication verification | Match local code to the final import version, compile consumers in TradingView and replay boundaries/gaps. Local documentation checks do not certify Pine runtime behavior. |
+| Pine layout | Follow the style guide's prologue and canonical primary-section order; omit unused sections. Use bannered primary regions, padded secondary regions, and tertiary helper/function groups. Define helpers before callers; keep internal declarations before exports. |
+| Readable declarations | Use descriptive camelCase names, UPPER_SNAKE_CASE constants, explicitly typed parameters with `_` prefixes for new APIs, and no reserved or built-in shadowing. Preserve existing public names and argument order during style-only edits. |
+| Formatting | Use four-space block/bracket indentation, two-space continuation outside brackets, one blank line between logical blocks, and a soft 120-character limit (about 150 for useful alignment). Prefer two aligned columns for short sibling items; repeat each declaration's type. Parenthesize ternaries and prefer `switch` for multi-way selection. |
+| Public annotations | Maintain `@function`, `@param`, and `@returns` on exported functions/methods, `@enum` on exported enums, and `@type` on exported UDTs. Private helpers do not need compiler notes. |
+| Pine runtime and types | Use documented Pine types, typed `na` where required, matching branch-return types, and boolean absence flags instead of `na` booleans. Guard empty index loops; keep history-dependent series calls consistent each bar and follow the style guide's request-context rules. Preserve documented library-specific request/state exceptions. |
+| Release references | Maintain this file's Current release record from user confirmation or verified publication information; do not infer or increment publication status from source edits, language versions, or consumer pins. Other documentation and commented imports use `<version>` and link to the owning release section. Deliberately update and compile executable numeric pins; preserve historical evidence and Pine/protocol versions. |
+| Publication copy | Preserve existing `.txt` copy and release notes; append concise user-visible updates at the end unless the user explicitly requests rewriting. Use `[b]`, `[list]` with `[*]`, and `[pine]`, without Markdown headings, bullets, backticks, or fences. Include a concise copyable consumer example with essential inputs, config assembly, a realistic runtime call, and result validation. Use `<version>` in public examples without repository-only links; keep full integrations and edge cases in the guide. |
 
 See [the guide](Pine-Script-Utilities-Guide.md) for lifecycle reasoning and [publication copy](publication-document.txt) for TradingView-formatted text.
+
+## Verification
+
+| Check | Status | Evidence / limit |
+|---|---|---|
+| Publication | Unconfirmed | See [Current release](#current-release); previous examples do not confirm the current publication. |
+| Instructions review | Reviewed 2026-10-13 | Compared local docs with Trading-View-Scripts; this change updates AGENTS.md only. |
+| Compilation and runtime | Pending | No scoped compile, historical, or live-chart result is recorded here. Documentation review does not certify Pine behavior. |
+
+Confirm the published import, compile a consumer, and exercise session boundaries, partial minute coverage, timezone/DST transitions, long-gap resumption, realtime rollback, retention, and drawing cleanup before claiming runtime validation.
+Store new results under `prep/` with the tested source revision, date, environment,
+setup, action, expected/observed results, and evidence. State **What this proves**
+and **What this does not prove**; preserve earlier observations and numeric test pins.
+Link evidence here and keep publication, compilation, historical execution, and
+live behavior distinct. Add dated results without rewriting earlier evidence.
