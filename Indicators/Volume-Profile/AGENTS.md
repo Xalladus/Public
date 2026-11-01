@@ -4,12 +4,19 @@
 
 Pine Script v6 example consumer for fixed and recurring volume profiles. The indicator owns user inputs, recurring-timezone conversion, fixed timestamp handoff, lower-timeframe requests, style/config assembly, missing-volume validation, Data Window plots, and the optional statistics table. `VolumeProfileLibrary` owns range lifecycle, volume/statistics calculations, history management, drawing-budget resolution, and chart-object rendering.
 
+## Current release
+
+- Script: `1CG-Volume-Profile.pine`.
+- Published release identifier and visibility: Unconfirmed.
+- Confirmation source/date: no verified publication information supplied as of 2026-10-31.
+- Local input-alignment edits do not establish a new published release.
+
 ## Dependencies
 
 | Library | Alias | Role |
 |---------|-------|------|
-| `OneCleverGuy/UtilityLibrary1CG/1` | `UTIL` | Timezone, quarter-hour, line-style, line-size, and text-size enums/conversions. |
-| `OneCleverGuy/VolumeProfileLibrary/4` | `VP` | Profile state, accumulation, statistics, drawing plans, history, and rendering. |
+| [`OneCleverGuy/UtilityLibrary1CG/<version>`](../../Libraries/Pine-Script-Utilities/AGENTS.md#current-release) | `UTIL` | Timezone, quarter-hour, line-style, line-size, and text-size enums/conversions. |
+| [`OneCleverGuy/VolumeProfileLibrary/<version>`](../../Libraries/Volume-Profile/AGENTS.md) | `VP` | Profile state, accumulation, statistics, drawing plans, history, and rendering. |
 
 ## Input Groups
 
@@ -102,6 +109,12 @@ FixedRangeVolumeProfile
 | Persistent config | `profileStyle` and `profileConfig` use `var`; input changes restart the script and rebuild them. |
 | Input layout | Keep input calls compact. Align tooltip continuation operators at or beyond the tooltip declaration `=` column. Within a shared `inline` row, align each `group` argument and leave one blank line after the inline block. Name input-activity gates `a_` plus a three-letter abbreviation, align their declaration `=` with the surrounding input declarations, define them immediately after their parent inputs, and reuse them for dependent controls. Do not wrap only one or two trailing arguments onto a new line; when wrapping is necessary, indent continuation content beyond the declaration's `=`. |
 | Input order | Profile is Value Area %, Rows, Width %; Display begins with Show Profile Visuals; Appearance begins with Split Buy/Sell. |
+| Inline titles | Within each `group` and `inline` row, only the first input has a non-empty title; every later title is `""`, never a space. Keep the first title as short as possible while remaining clear. `Prefix/Date` means POC prefix then date toggle; `VAH/VAL/Date` means VAH prefix, VAL prefix, then date toggle. Tooltips explain control order. |
 | Invisible outputs | Keep the latest-level and POC volume `plot()` calls at global scope with `display.data_window`. |
 | Whole session diagnostics | Display `_state.effectiveHistoryCount/_cfg.historyCount`; do not expose fractional capacity or gradient-band counts in the table. |
 | Publication preservation | Add release/update sections to `publication-document.txt`; do not replace its existing description. |
+
+## Verification
+
+- 2026-10-31: local source comparison confirmed all 43 input defaults, types, order, bounds, activity gates, groups, and inline keys are unchanged. All nine inline rows have one non-empty first title, empty subsequent titles, aligned `group` arguments, and defined tooltip references.
+- The declaration, imports, and all code after the Inputs section match the previous source. TradingView compilation and visual inspection remain pending.

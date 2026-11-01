@@ -2,7 +2,7 @@
 
 ## Overview
 
-`Markov-Transitions.ps` is a standalone Pine Script v6 analytic indicator. It
+`Markov-Transitions.pine` is a standalone Pine Script v6 analytic indicator. It
 owns input declarations, higher-timeframe state classification, cumulative
 transition and same-state continuation statistics, live chart-candle coloring,
 and table rendering. It does not import any libraries, place trades, emit
@@ -12,7 +12,16 @@ The indicator classifies each selected analysis-timeframe return as `Bullish`,
 `Neutral`, or `Bearish`; tallies transitions across the configured candle gap;
 and shows both a transition matrix and optional same-state average-move panel.
 
+## Current release
+
+- Script: `Markov-Transitions.pine`.
+- Published release identifier and visibility: Unconfirmed.
+- Confirmation source/date: no verified publication information supplied as of 2026-10-31. Release headings in draft publication copy do not establish a published version.
+- Local input-alignment edits do not establish a new published release.
+
 Dependency note: this indicator has no imported-library dependencies.
+
+Current source note: the engine narrative below predates the Window Mode update. The current source has Rolling, Isolated, and Non-Overlapping modes, an `Obs` queue, a four-argument `computeTally` returning 45 values, confirmed directional candle colors, and collection lines. Use the source as authoritative for runtime edits; the local alignment update does not alter those behaviors.
 
 ---
 
@@ -26,7 +35,8 @@ Dependency note: this indicator has no imported-library dependencies.
 | `Settings` | `Candle Diff` | Number of classified analysis candles between the transition's from-state and to-state. `1` is the next-state model. |
 | `Settings` | `Display` | Selects `Both`, `Transition Matrix`, or `Average Move`. |
 | `Appearance` | `Color Candles` | Enables chart-timeframe candle colors based on the live higher-timeframe threshold boundaries. |
-| `Appearance` | `Bull`, `Neut`, `Bear` | Colors used for the live-state candle coloring. |
+| `Appearance` | `Bull/Bear` | Bull then Bear colors, shared by confirmed directional candles and collection lines; the second title is empty. |
+| `Appearance` | `Collection` | Collection-line width then style; the second title is empty. |
 | `Appearance` | `Table Position` | Chart anchor for the rendered table. |
 
 ---
@@ -168,7 +178,7 @@ Markov Transition Matrix
 
 ## Standard Integration Pattern
 
-This is a standalone indicator, so users add `Markov-Transitions.ps` directly
+This is a standalone indicator, so users add `Markov-Transitions.pine` directly
 to a chart; there is no importable public API. The critical in-file pattern is
 to keep the stateful function inside `request.security()` and consume the
 returned snapshot only after its shape is validated:
@@ -224,3 +234,10 @@ before the analysis-timeframe bar closes; the cumulative tally does not.
 | Live candle colors and tally timing differ | Candle colors use the current chart close against live higher-timeframe threshold boundaries; `computeTally()` advances only once per unique analysis bar. |
 | The data is cumulative | Counts and continuation statistics cover all loaded history in the security context. Changing inputs recompiles the script and rebuilds state. |
 | Table lifecycle is last-bar only | The table is deleted and recreated in the `barstate.islast` block so the selected anchor and mode-specific row count stay correct. |
+| Inline titles | Each `group` and `inline` row has one short, clear first title and exactly `""` for all later titles. Explain control order in the row tooltip, align `group` arguments, and leave one blank line after each inline block. Preserve defaults and control order. |
+
+## Verification
+
+- 2026-10-31: local source comparison confirmed all 12 input defaults, types, order, bounds, options, display settings, groups, and inline keys are unchanged. Both inline rows have one visible first title, empty later titles, aligned `group` arguments, and defined tooltip references.
+- The prologue and all code after Inputs match the previous source. Existing [publication copy](Markov-Transitions-Publication.txt) is preserved with input-alignment notes appended. `git diff --check` passed for these changes.
+- TradingView compilation and visual checks remain pending. This source comparison establishes the scope of the input-layout edit; it does not validate the older engine narrative or runtime behavior.

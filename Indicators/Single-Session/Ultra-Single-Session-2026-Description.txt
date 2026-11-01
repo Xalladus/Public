@@ -73,3 +73,10 @@ You can also use this for daily session templates (for example midnight-to-midni
 [*]Lower-timeframe data is requested conditionally when the selected session requires it, instead of requesting it through the embedded session helpers.
 [*]Preset alert messages now use the resolved preset label; custom sessions use your custom label.
 [/list]
+
+[b]Update: Input Alignment[/b]
+[list]
+[*]Inline settings now use one short title per row for TradingView's automatic input alignment. Tooltips explain the controls in their displayed order.
+[*]Session and Window rows now place their titles before the enable checkbox. Compact labels include Colors/BG, Box/History, Hi/Lo/History, Start/Ahead, and End/+1 Day.
+[*]Clarification of existing alert behavior: On Break requires price strictly beyond the level; an equal touch does not qualify. A first qualifying event outside the enabled trade window consumes that side without an alert or later retry.
+[/list]

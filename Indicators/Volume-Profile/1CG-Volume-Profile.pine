@@ -57,9 +57,11 @@ string tt_lineFill        = "Region fill for the polyline displays. None draws o
 string tt_rowColors       = "Buy, sell, and single-color profile colors. Opacity is respected by boxes and polylines."
 string tt_rangeBox        = "Range highlight box visibility and fill color."
 string tt_poc             = "Point of Control line visibility, color, width, and style."
-string tt_pocLabel        = "Origin label drawn at the right end of each POC line: prefix text, show origin date, text color, and size."
+string tt_pocLabel        = "POC label visibility, text color, and size. Labels appear at the right end of each POC line."
+string tt_pocText         = "POC label prefix text, followed by the option to show the origin date."
 string tt_valueAreaLines  = "Value Area High and Low lines share one toggle, color, width, and style."
-string tt_valueAreaLabels = "Origin labels drawn at the right end of each value-area line: VAH/VAL prefix text, show origin date, text color, and size."
+string tt_valueAreaLabels = "VAH and VAL label visibility, text color, and size. Labels appear at the right end of each value-area line."
+string tt_valueAreaText   = "VAH prefix text, VAL prefix text, and the option to show the origin date, in that order."
 string tt_dateFormat      = "Date format applied to POC, VAH, and VAL origin labels."
 string tt_extendLevels    = "Extend each completed session's POC and value-area lines until the end of the following session."
                           + " The newest completed session's lines follow the latest bar until the next session begins. Recurring modes only."
@@ -117,7 +119,7 @@ bool a_box    = i_showVisuals and i_display == VP.ProfileDisplay.Boxes
 bool a_ply    = i_showVisuals and i_display != VP.ProfileDisplay.Boxes
 
 i_dimOutsideValueArea = input.bool(true, "Dim Outside VA", group = iGroupDisplay, inline = "VA", tooltip = tt_outsideVA, display = display.none, active = a_box)
-i_outTransparency     = input.int(75, " ",                 group = iGroupDisplay, inline = "VA", minval = 0, maxval = 100, display = display.none, active = a_box and i_dimOutsideValueArea)
+i_outTransparency     = input.int(75, "",                  group = iGroupDisplay, inline = "VA", minval = 0, maxval = 100, display = display.none, active = a_box and i_dimOutsideValueArea)
 
 i_lineFill            = input.enum(VP.PolylineFill.Gradient, "Line Fill", group = iGroupDisplay, tooltip = tt_lineFill, active = a_ply)
 
@@ -128,39 +130,41 @@ i_lineFill            = input.enum(VP.PolylineFill.Gradient, "Line Fill", group 
 var string iGroupAppearance = "Appearance"
 i_splitBuySell        = input.bool(true, "Split Buy/Sell", group = iGroupAppearance, tooltip = tt_splitBuySell, display = display.none, active = i_showVisuals)
 i_buyColor            = input.color(color.new(#26a69a, 35), "Row Colors", group = iGroupAppearance, inline = "RC", tooltip = tt_rowColors, display = display.none, active = i_showVisuals)
-i_sellColor           = input.color(color.new(#ef5350, 35), " ",          group = iGroupAppearance, inline = "RC", display = display.none, active = i_showVisuals)
-i_totalColor          = input.color(color.new(#2962ff, 35), " ",          group = iGroupAppearance, inline = "RC", display = display.none, active = i_showVisuals)
+i_sellColor           = input.color(color.new(#ef5350, 35), "",           group = iGroupAppearance, inline = "RC", display = display.none, active = i_showVisuals)
+i_totalColor          = input.color(color.new(#2962ff, 35), "",           group = iGroupAppearance, inline = "RC", display = display.none, active = i_showVisuals)
 
 i_showRangeBox        = input.bool(true,       "Range Box", group = iGroupAppearance, inline = "RB", tooltip = tt_rangeBox, display = display.none, active = i_showVisuals)
 bool a_rbx            = i_showVisuals and i_showRangeBox
-i_rangeFill           = input.color(#2962ff12, " ",         group = iGroupAppearance, inline = "RB", display = display.none, active = a_rbx)
+i_rangeFill           = input.color(#2962ff12, "",          group = iGroupAppearance, inline = "RB", display = display.none, active = a_rbx)
 
-i_showPoc             = input.bool(true,    "Point of Control", group = iGroupAppearance, inline = "PC", tooltip = tt_poc, display = display.none, active = i_showVisuals)
+i_showPoc             = input.bool(true, "POC",              group = iGroupAppearance, inline = "PC", tooltip = tt_poc, display = display.none, active = i_showVisuals)
 bool a_poc            = i_showVisuals and i_showPoc
-i_pocColor            = input.color(#ff0000,             " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
-i_pocWidth            = input.enum(UTIL.LineSize.normal, " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
-i_pocStyle            = input.enum(UTIL.LineStyle.solid, " ",   group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
+i_pocColor            = input.color(#ff0000, "",             group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
+i_pocWidth            = input.enum(UTIL.LineSize.normal, "", group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
+i_pocStyle            = input.enum(UTIL.LineStyle.solid, "", group = iGroupAppearance, inline = "PC", display = display.none, active = a_poc)
 
-i_showPocLabel        = input.bool(true, "POC Label",        group = iGroupAppearance, inline = "PL", tooltip = tt_pocLabel, display = display.none, active = a_poc)
+i_showPocLabel        = input.bool(true, "POC Label",       group = iGroupAppearance, inline = "PL", tooltip = tt_pocLabel, display = display.none, active = a_poc)
 bool a_pcl            = a_poc and i_showPocLabel
-i_pocTextColor        = input.color(#ffffff,          " ",   group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
-i_pocTextSize         = input.enum(UTIL.TextSize.small, " ", group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
-i_pocPrefix           = input.string("POC", "Prefix",        group = iGroupAppearance, inline = "PLT", display = display.none, active = a_pcl)
-i_showPocDate         = input.bool(true, "Show Date",        group = iGroupAppearance, inline = "PLT", display = display.none, active = a_pcl)
+i_pocTextColor        = input.color(#ffffff, "",            group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
+i_pocTextSize         = input.enum(UTIL.TextSize.small, "", group = iGroupAppearance, inline = "PL", display = display.none, active = a_pcl)
 
-i_showValueAreaLines  = input.bool(false, "Value Area Lines", group = iGroupAppearance, inline = "VL", tooltip = tt_valueAreaLines, display = display.none, active = i_showVisuals)
+i_pocPrefix           = input.string("POC", "Prefix/Date", group = iGroupAppearance, inline = "PLT", tooltip = tt_pocText, display = display.none, active = a_pcl)
+i_showPocDate         = input.bool(true, "",               group = iGroupAppearance, inline = "PLT", display = display.none, active = a_pcl)
+
+i_showValueAreaLines  = input.bool(false, "VA Lines",        group = iGroupAppearance, inline = "VL", tooltip = tt_valueAreaLines, display = display.none, active = i_showVisuals)
 bool a_val            = i_showVisuals and i_showValueAreaLines
-i_valueAreaColor      = input.color(#2962ff, " ",             group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
-i_valueAreaWidth      = input.enum(UTIL.LineSize.normal, " ", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
-i_valueAreaStyle      = input.enum(UTIL.LineStyle.solid, " ", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
+i_valueAreaColor      = input.color(#2962ff, "",             group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
+i_valueAreaWidth      = input.enum(UTIL.LineSize.normal, "", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
+i_valueAreaStyle      = input.enum(UTIL.LineStyle.solid, "", group = iGroupAppearance, inline = "VL", display = display.none, active = a_val)
 
-i_showValueAreaLabels = input.bool(true, "VA Labels",        group = iGroupAppearance, inline = "VB", tooltip = tt_valueAreaLabels, display = display.none, active = a_val)
+i_showValueAreaLabels = input.bool(true, "VA Labels",       group = iGroupAppearance, inline = "VB", tooltip = tt_valueAreaLabels, display = display.none, active = a_val)
 bool a_vlb            = a_val and i_showValueAreaLabels
-i_valueAreaTextColor  = input.color(#ffffff, " ",            group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
-i_valueAreaTextSize   = input.enum(UTIL.TextSize.small, " ", group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
-i_vahPrefix           = input.string("VAH", "VAH Prefix",    group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
-i_valPrefix           = input.string("VAL", "VAL Prefix",    group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
-i_showVaDate          = input.bool(true, "Show Date",        group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
+i_valueAreaTextColor  = input.color(#ffffff, "",            group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
+i_valueAreaTextSize   = input.enum(UTIL.TextSize.small, "", group = iGroupAppearance, inline = "VB", display = display.none, active = a_vlb)
+
+i_vahPrefix           = input.string("VAH", "VAH/VAL/Date", group = iGroupAppearance, inline = "VBT", tooltip = tt_valueAreaText, display = display.none, active = a_vlb)
+i_valPrefix           = input.string("VAL", "",             group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
+i_showVaDate          = input.bool(true, "",                group = iGroupAppearance, inline = "VBT", display = display.none, active = a_vlb)
 
 bool a_lbl_date       = (a_pcl and i_showPocDate) or (a_vlb and i_showVaDate)
 i_dateFormat          = input.enum(VP.DateFormat.DayMonth, "Label Date Format", group = iGroupAppearance, tooltip = tt_dateFormat, display = display.none, active = a_lbl_date)

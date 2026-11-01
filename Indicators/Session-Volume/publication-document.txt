@@ -1,0 +1,76 @@
+[b]Session Volume Averages[/b]
+
+Compare current chart-bar volume with two historical baselines for up to three configurable session windows. The indicator appears in a separate pane and shows volume bars only while at least one enabled session is active.
+
+[b]Quick Start[/b]
+[list=1]
+[*]Add Session Volume Averages to an intraday chart with volume data.
+[*]Choose the timezone shared by all three windows. America/New_York is the default.
+[*]In Sessions, use the Session 1, Session 2, and Session 3 checkboxes to enable the windows you need. Each compact row contains its checkbox, hours, and line color.
+[*]Set Sessions to Average. The default is 20 completed sessions, with a range of 5 to 100.
+[*]Adjust Up/Down volume colors. Enable Debug if you want to inspect each session's average values and bar position.
+[/list]
+
+[b]Two Baselines Per Session[/b]
+[list]
+[*][b]Session Average[/b]: the thicker, partly transparent line. Each completed session's total volume is divided by its bar count, then those session means are averaged. Each retained session has equal weight.
+[*][b]Bar-Position Average[/b]: the thinner line. The first observed chart bar of the active session is compared with the first bar of each retained session, the second with the second, and so on. Sessions without that bar position are excluded from that position's average.
+[/list]
+
+Bar position means ordinal chart-bar position, not an exact wall-clock timestamp. Missing bars or shorter sessions can change which clock times are compared. Changing chart timeframe changes both bar sizes and bar positions, so it also changes the baselines.
+
+[b]Default Windows[/b]
+[list]
+[*][b]Session 1[/b]: 08:00-17:00, purple.
+[*][b]Session 2[/b]: 03:00-12:00, blue.
+[*][b]Session 3[/b]: 19:00-04:00, amber.
+[/list]
+
+All three start enabled and use the same selected timezone. Their default hours are not converted from independent New York, London, or Tokyo timezones. The script applies a Monday-Friday session mask. These windows are configurable templates, not full exchange calendars.
+
+[b]How to Read the Pane[/b]
+[list]
+[*]Volume bars use the first Up/Down color when price closes at or above the bar's open, and the second color when it closes below the open.
+[*]Each session's color identifies both of its historical baselines. Overlapping sessions keep separate history and can show their lines at the same time.
+[*]Volume remains a single histogram during overlaps; it is not added once per session.
+[*]Outside a particular enabled session, its averages return to zero. Disabled sessions' average lines are hidden. Outside all enabled sessions, the volume histogram is also suppressed.
+[*]Before completed history exists, baselines are zero. While the history target fills, averages use the completed sessions currently available. The developing session is not included in its own baseline.
+[/list]
+
+[b]History and Diagnostics[/b]
+
+A session is archived when the script observes a bar outside that window after previously observing one inside it. Its volume samples, total, and bar count are retained, and history beyond the selected target is removed. Sessions that remain continuously active across observed bars need a separate check because there may be no closing transition to archive.
+
+Debug shows each session's current Session Average, Bar-Position Average, and tracked bar count, plus active/idle status and the selected history target.
+
+[b]Data Notes[/b]
+[list]
+[*]The script uses the current chart's volume feed and bar boundaries. It does not reconstruct partial-session candles with lower-timeframe requests.
+[*]Session boundaries, overnight windows, missing bars, and the first partially loaded session can affect the comparison sample.
+[*]Missing volume is not replaced with zero; use a symbol whose volume data supports the comparison.
+[*]This is a volume comparison indicator. It has no built-in alerts, trade entries, or broker orders.
+[/list]
+
+[b]Update - Input Layout and Help[/b]
+
+Inline settings use one short title per row. Hours pairs each window's hours and line color; Up/Down sets the two histogram colors. Tooltips clarify order and the shared timezone. Default settings and averaging logic are unchanged.
+
+[b]Update - October 31, 2026 - Settings and Documentation[/b]
+
+[list]
+[*][b]Refined inline settings[/b]: Standardized spacing across the four inline rows and kept one short visible title per row. The volume-color row is now labeled Up/Down.
+[*][b]Clearer session controls[/b]: Added tooltips identifying session hours followed by the color shared by both average lines.
+[*][b]Correct timezone guidance[/b]: Clarified that all three windows use the single selected timezone. Their default hours are not separate New York, London, and Tokyo timezone presets.
+[*][b]Clearer volume and sample help[/b]: Explained that the first histogram color includes candles closing at their open, and that averages use available completed sessions while the selected history target fills.
+[*][b]Expanded documentation[/b]: Added setup instructions and explanations of the equally weighted session baseline, ordinal bar-position baseline, overlapping windows, and history behavior.
+[/list]
+
+This is a settings and documentation update. Default windows, sample settings, averaging formulas, and plotted values are unchanged.
+
+[b]Update - October 31, 2026 - Compact Session Controls[/b]
+
+[list]
+[*]Combined the three separate session sections into one Sessions section.
+[*]Renamed the Enable checkboxes to Session 1, Session 2, and Session 3, with each checkbox, time window, and color picker together on one row.
+[*]Removed the repeated Hours labels to keep the settings compact. Default hours, colors, and averaging behavior are unchanged.
+[/list]

@@ -70,3 +70,10 @@ This update introduces higher row resolution, POC volume metrics in both the Dat
 [*][b]Customizable Level Labels[/b]: Set custom prefix text for POC, VAH, and VAL labels, and toggle origin date visibility on or off.
 [*][b]Date Format Selection[/b]: Choose between multiple date formats for origin labels, including Day/Month names (e.g. "Monday", "Mon Aug 31"), numerical formats (e.g. "31/08", "08/31"), and ISO standard ("yyyy-MM-dd").
 [/list]
+
+[b]Update - Input Alignment[/b]
+
+[list]
+[*]Updated inline settings for TradingView's automatic input alignment, with shorter POC and VA Lines titles.
+[*]Prefix/Date controls the POC label prefix and origin-date toggle. VAH/VAL/Date controls the VAH prefix, VAL prefix, and origin-date toggle, in that order. Tooltips explain each row.
+[/list]

@@ -75,6 +75,7 @@ string tt_colorCandles = "Color only candles where a confirmed observation is Bu
   + " retain the chart's normal candle colors."
 string tt_lineApp      = "Width and style of the collection-period line."
   + " Its color automatically matches the confirmed Bull or Bear color."
+string tt_candleColors = "Bull color followed by Bear color, shared by directional signal candles and their collection lines."
 string tt_tablePos     = "Where to anchor the table on the chart."
 
 
@@ -101,10 +102,12 @@ string i_display    = input.string("Both", "Display", options = ["Both", "Transi
 
 var string iGroupApp = "Appearance"
 bool   i_colorCandles = input.bool(true, "Color Candles", group = iGroupApp, tooltip = tt_colorCandles)
-color  i_bullColor    = input.color(#00c853, "Bull", group = iGroupApp, inline = "candle_colors")
-color  i_bearColor    = input.color(#ff1744, "Bear", group = iGroupApp, inline = "candle_colors")
-int    i_lineWidth    = input.int(2, "Collection Line Size", minval = 1, maxval = 4, group = iGroupApp, inline = "line_app")
-string i_lineStyle    = input.string("Dotted", "Style", options = ["Solid", "Dashed", "Dotted"], group = iGroupApp, inline = "line_app", tooltip = tt_lineApp)
+color  i_bullColor    = input.color(#00c853, "Bull/Bear", group = iGroupApp, inline = "candle_colors")
+color  i_bearColor    = input.color(#ff1744, "",          group = iGroupApp, inline = "candle_colors", tooltip = tt_candleColors)
+
+int    i_lineWidth    = input.int(2, "Collection", minval = 1, maxval = 4,                  group = iGroupApp, inline = "line_app")
+string i_lineStyle    = input.string("Dotted", "", options = ["Solid", "Dashed", "Dotted"], group = iGroupApp, inline = "line_app", tooltip = tt_lineApp)
+
 string i_tablePos     = input.string("Top Right", "Table Position", options = ["Top Right", "Top Left", "Middle Right", "Middle Left", "Bottom Right", "Bottom Left"], group = iGroupApp, tooltip = tt_tablePos)
 
 

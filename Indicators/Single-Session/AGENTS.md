@@ -6,16 +6,32 @@ drawing handles, retention and alert policy for one session and one trade
 window. The utility library owns session computation and timing. This public
 consumer no longer embeds the old session engine or imports InputLibrary.
 
+## Current release
+
+- Script: `Ultra-Single-Session-2026-PUB.ps`.
+- Published release identifier and visibility: Unconfirmed.
+- Confirmation source/date: no verified publication information supplied as of 2026-10-31.
+- Local input-layout and documentation edits do not establish a new published release.
+
 ## Dependencies
 
 ```pine
-import OneCleverGuy/UtilityLibrary1CG/1 as UTIL
+import OneCleverGuy/UtilityLibrary1CG/<version> as UTIL
 ```
 
 Local implementation: `../../Libraries/Pine-Script-Utilities/1CG-PS-Utilities.pine`.
 See that library's `AGENTS.md` for its API. Follow `../../docs/style-guide.md`,
 `../../docs/agents-file-standard.md` and `../../docs/tradingview-publication-markup.md`.
 Keep published import versions verified; never add library-to-library imports.
+The dependency's release record belongs to
+[`Libraries/Pine-Script-Utilities/AGENTS.md`](../../Libraries/Pine-Script-Utilities/AGENTS.md#current-release).
+
+## Files and navigation
+
+| File | Purpose |
+| --- | --- |
+| [`Ultra-Single-Session-2026-PUB.ps`](Ultra-Single-Session-2026-PUB.ps) | Indicator source. |
+| [`Ultra-Single-Session-2026-Description.txt`](Ultra-Single-Session-2026-Description.txt) | Publication description and appended update notes; earlier copy includes outdated wording and image placeholders. |
 
 ## Input Groups
 
@@ -136,13 +152,21 @@ if not na(sessionInfo)
 | Calendar visuals | Session/window backgrounds and trade-window planning still use calendar history windows. Window line pools are capped at `daysLimit + 1`. |
 | Window gate | One window only. Disabling V-Lines or background does not disable alert filtering; disable the window itself. Disabled window allows all times. |
 | Alert eligibility | Evaluate newest completed record with clock after `renderSessionEnd` and at/before `lineEndTime`. Session enable controls alerts, not high/low drawing visibility. |
-| Exact alert conditions | On Break uses strict high/low penetration, not equal touch despite tooltip wording. Close Out uses confirmed close strictly beyond. Sweep uses confirmed penetration and close inside or on the level. |
+| Exact alert conditions | On Break uses strict high/low penetration; equal touch does not qualify. Close Out uses confirmed close strictly beyond. Sweep uses confirmed penetration and close inside or on the level. |
 | One-shot consumption | First qualifying event consumes each side even outside the window, with no marker/alert or later retry. `alert.freq_once_per_bar` can suppress simultaneous notifications. Ordinary state is not varip; do not promise tick-persistent deduplication. |
 | Status line | High/Low plots expose index 0 even in daily mode, while daily chart drawings show the previous record. |
 | Single-session scope | No daily dividers, round-number grids, multiple windows or history diagnostic switch are present. Do not copy those Ultra Sessions features into this guide. |
+| Inline layout | For each `group` and `inline` row, only the first title is non-empty; every subsequent title is exactly `""`. Keep first titles as short as possible while remaining clear, preserve control order and defaults, and explain control order in the row tooltip. Align each row's `group` arguments and leave one blank line after each inline block. |
 | Publication edits | Preserve existing `Ultra-Single-Session-2026-Description.txt` content and append only verified changes for this update. Do not rewrite earlier copy or describe unchanged alert modes as new. |
+| Publication accuracy | Trace feature and alert claims against source; describe one window, strict On Break penetration, and out-of-window first-event consumption accurately in appended update notes. |
 
 Validate future code changes in TradingView: intrabar boundaries, overnight and
 daily presets, history off/1/5/90, reload/replay, long-gap reopen, all alert modes
 inside/outside the window, and hidden window lines with filtering enabled.
 No local Pine compiler is provided; documentation checks are not chart tests.
+
+## Verification
+
+- 2026-10-31: local source comparison confirmed all 39 input defaults, types, order, bounds, activity gates, groups, and inline keys are unchanged. All 14 inline rows have a non-empty first title, empty later titles, aligned `group` arguments, and defined tooltip references.
+- The declaration, imports, and all code after Inputs match the previous source. The [publication description](Ultra-Single-Session-2026-Description.txt) is preserved, with update notes appended; alert explanations were checked against `registerBreak` and `processSessionBreakAlerts`.
+- TradingView compilation, visual alignment, historical execution, and live alert delivery remain pending. The checks above establish local source and documentation consistency only.

@@ -1,0 +1,76 @@
+[b]Session High/Low Average and Range[/b]
+
+Plot historical session movement above and below the next session's open. The indicator measures the distance from each session's open to its high and from its open to its low separately, then draws average levels, average multiples, and two customizable level sets.
+
+[b]Quick Start[/b]
+[list=1]
+[*]Add the indicator to your chart as an overlay.
+[*]Choose Timezone first, then enter Session hours on the following line. The defaults are America/New_York and 03:00-12:00.
+[*]Set Session Period for the calculation sample target and Sessions Displayed for retained drawings. Defaults are 14 and 4.
+[*]Choose the Open, Avg H/L, 2x Avg H/L, 3x Avg H/L, and Custom 1/2 levels you want to see.
+[*]Configure fills, labels, and distance text. Hover over a row's tooltip to identify its controls in order.
+[/list]
+
+[b]What the Levels Mean[/b]
+[list]
+[*][b]Open[/b]: the opening price of the chart bar that starts the detected session.
+[*][b]Avg H/L[/b]: the average historical high/open distance added to the new session open, and the average historical open/low distance subtracted from it.
+[*][b]2x and 3x Avg H/L[/b]: two and three times those separate average distances.
+[*][b]Custom 1 and Custom 2[/b]: a selected multiplier applied to either the Average distance or the maximum historical distance, independently above and below the open.
+[/list]
+
+The high and low distances are separate measurements. Range mode uses maximum distances from the open; it does not use the full high-to-low session range. The levels are historical reference distances, not guaranteed future extremes or statistical standard-deviation bands.
+
+[b]Appearance[/b]
+[list]
+[*]Each level row contains visibility, color, width, style, and a label toggle, in that order.
+[*]Avg Fill, 2x Fill, and 3x Fill contain visibility followed by fill color. A fill can remain visible when its line is hidden.
+[*]Factor/Mode sets a custom multiplier followed by its Average or Range base. Defaults are 1.0 times Range for Custom 1 and 1.5 times Average for Custom 2.
+[*]Labels controls global label visibility, Left/Right position, and size. Labels also require the associated line and its own label toggle.
+[*]Distances shows movement from the session open, marked with the delta symbol. Custom Text controls the color override, color, and size. Align H/V sets horizontal and vertical alignment; the low side mirrors vertical alignment.
+[/list]
+
+[b]Session and History Behavior[/b]
+
+New projections are drawn when a session begins and the existing history gate allows them, using statistics stored by the preceding session. They stay fixed for that session while its high and low are collected for later calculations. Session Period and Sessions Displayed control different things: the calculation sample and retained drawings.
+
+The script displays a warning when its stored session count is below the selected sample target. Allow enough historical sessions to load before interpreting the levels. Keep the default sample and history settings for initial use; very small sample values need separate chart validation.
+
+[b]Data and Timing Notes[/b]
+[list]
+[*]Calculations use chart-bar highs, lows, and opens. The script does not request one-minute data to split bars at session boundaries. Choose a chart timeframe whose bars match the intended session boundaries.
+[*]Session hours use the selected timezone. Changing the chart's displayed timezone alone does not change this setting.
+[*]Overnight hours are parsed, but boundary, daylight-saving, and holiday-gap behavior should be checked on the symbol and timeframe you use.
+[*]Session Period is a rolling sample target. Statistics are calculated before the script trims excess history, so the stored statistics can include the additional session at that update.
+[*]The indicator imports the legacy InputLibrary for timezone and appearance options. It provides chart drawings and a history warning, with no trading orders or built-in alerts.
+[/list]
+
+[b]Update - Input Alignment[/b]
+
+Inline rows use one short title followed by empty secondary titles for TradingView's automatic alignment. Unicode spacing has been removed. Tooltips explain control order. This update changes settings labels and documentation; it preserves calculation logic and default values.
+
+[b]Update - October 31, 2026 - Settings and Documentation[/b]
+
+[list]
+[*][b]Updated input alignment[/b]: Revised all 15 inline settings rows for TradingView's current alignment rules and removed the Unicode spacing previously used to position controls.
+[*][b]Shorter labels[/b]: Simplified row titles, including Session/TZ, Avg H/L, Factor/Mode, and Align H/V, to keep settings compact and readable.
+[*][b]Clearer tooltips[/b]: Explained the controls in their displayed order, including line visibility, color, width, style, labels, and fill options. Session help now correctly describes hours in the selected timezone.
+[*][b]Expanded documentation[/b]: Added setup instructions and explanations of average multiples, custom Average versus Range levels, label dependencies, distance text, and session-history behavior.
+[/list]
+
+This is a settings and documentation update. Default values, level calculations, and drawing behavior are unchanged.
+
+[b]Update - October 31, 2026 - Fill Control Order[/b]
+
+[list]
+[*]Moved the visibility checkbox to the beginning of the Avg Fill, 2x Fill, and 3x Fill rows, before the color picker.
+[*]The checkboxes at the end of the line-appearance rows continue to control labels. Tooltips now reflect the fill rows' visibility-first order.
+[*]Default visibility, colors, and level calculations are unchanged.
+[/list]
+
+[b]Update - October 31, 2026 - Timezone First[/b]
+
+[list]
+[*]Placed Timezone first and Session hours second, on separate lines, so the timezone can be selected before entering the session window.
+[*]Added separate help text for both controls. Default timezone, session hours, and calculations are unchanged.
+[/list]

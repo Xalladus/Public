@@ -47,93 +47,101 @@ enum AlertMode
 // #region Tooltips ***************************************
 
 string tt_timezone     = "Applied to custom sessions, the trade window, and line end times."
+string tt_session      = "Enable the session, select a preset, and set the custom label, in that order. The label applies only to Custom."
 string tt_custom       = "Custom times are in your selected timezone. Presets use their own market timezone."
                        + "\nIdentical open and close times create a 24-hour session."
-string tt_colors       = "Major Color: session text, lines, and box outline.\nMinor Color: box fill and background."
-string tt_box          = "Style of the session box. Daily presets draw the previous day only."
-string tt_boxText      = "Display the session label inside the box."
-string tt_highLow      = "Style of the high and low lines. Daily presets draw the previous day only."
-string tt_keepAhead    = "The number of bars the line stays in front of price, stopping at line end time."
-string tt_nextDay      = "Time the line ends, in your selected timezone. Check the box to extend it another day."
-string tt_history      = "Display previous sessions as styled above."
+string tt_colors       = "Major color, minor color, and session background toggle, in that order."
+                       + "\nMajor: session text, lines, and box outline. Minor: box fill and background."
+string tt_box          = "Session box visibility, border style, width, and history toggle, in that order. Daily sessions draw the previous day."
+string tt_boxText      = "Show the session label inside the box, then choose its text color and size."
+string tt_boxAlign     = "Horizontal alignment followed by vertical alignment of the text inside the session box."
+string tt_highLow      = "High/low line visibility, style, width, and history toggle, in that order. Daily sessions draw the previous day."
+string tt_lineStart    = "Line start anchor, followed by the number of bars to project ahead of price, capped at the line end time."
+string tt_nextDay      = "Line end hour, minute, and extra-day toggle, in that order. Times use your selected timezone."
+string tt_lineLabels   = "Show labels on the session high and low lines."
 string tt_historyDays  = "Previous occurrences retained, in addition to the current occurrence."
                        + " Gaps do not consume this count. Available chart data can reduce it."
-string tt_vLines       = "Vertical lines marking the start and finish of the trade window, in your selected timezone."
+string tt_window       = "Enable the trade window, then set its hours in your selected timezone. Enabled windows also filter alerts."
+string tt_windowLines  = "Window start/end line visibility, color, style, width, and history toggle, in that order."
+                       + " Hiding these lines does not disable alert filtering."
 string tt_windowBg     = "Shades the chart background while the trade window is open."
 string tt_alertSession = "Alerts fire after the session closes, when its high or low is taken."
                        + " With a trade window enabled, only breaks inside that window alert."
-                       + "\nOn Break: first touch of the level."
+                       + " The first qualifying event outside the window still consumes that side; there is no later retry."
+                       + "\nOn Break: price moves strictly beyond the level; an equal touch does not qualify."
                        + "\nClose Out: candle closes beyond the level."
-                       + "\nClose In (Sweep): candle pierces the level and closes back inside."
+                       + "\nClose In (Sweep): candle pierces the level and closes back on its inner side or exactly on it."
 
 // #endregion Tooltips
 
 // #region Timezone ***************************************
 
 var string iGroupTimezone = "Timezone"
-i_timeZone = input.enum(UTIL.Timezones.ny, "Select Time Zone", group = iGroupTimezone, tooltip = tt_timezone, display = display.none)
+i_timeZone = input.enum(UTIL.Timezones.ny, "Timezone", group = iGroupTimezone, tooltip = tt_timezone, display = display.none)
 
 // #endregion Timezone
 
 // #region Session ****************************************
 
 var string iGroupSession = "SESSION"
-i_showSession     = input.bool(true, "", group = iGroupSession, inline = "S6", display = display.none)
-i_sessionPreset   = input.enum(UTIL.SessionPreset.Custom, "Session", group = iGroupSession, inline = "S6", display = display.none, active = i_showSession)
+i_showSession     = input.bool(true, "Session",               group = iGroupSession, inline = "S6", display = display.none)
+i_sessionPreset   = input.enum(UTIL.SessionPreset.Custom, "", group = iGroupSession, inline = "S6", display = display.none, active = i_showSession)
 bool a_custom     = i_showSession and i_sessionPreset == UTIL.SessionPreset.Custom
-i_customLabel     = input.string("Asia", "Label", group = iGroupSession, inline = "S6", active = a_custom, display = display.none)
+i_customLabel     = input.string("Asia", "",                  group = iGroupSession, inline = "S6", tooltip = tt_session, active = a_custom, display = display.none)
+
 i_customSession   = input.session("1600-0000", "Custom Session", group = iGroupSession, tooltip = tt_custom, display = display.none, active = a_custom)
 
-i_primeColor      = input.color(color.new(#4caf50, 0), "Major Color", group = iGroupSession, inline = "S1", active = i_showSession, display = display.none)
-i_subColor        = input.color(color.new(#4caf50, 90), "Minor Color", group = iGroupSession, inline = "S1", active = i_showSession, display = display.none)
-i_sessionBg       = input.bool(false, "Background", group = iGroupSession, inline = "S1", tooltip = tt_colors, active = i_showSession, display = display.none)
+i_primeColor      = input.color(color.new(#4caf50, 0), "Colors/BG", group = iGroupSession, inline = "S1", active = i_showSession, display = display.none)
+i_subColor        = input.color(color.new(#4caf50, 90), "",         group = iGroupSession, inline = "S1", active = i_showSession, display = display.none)
+i_sessionBg       = input.bool(false, "",                           group = iGroupSession, inline = "S1", tooltip = tt_colors, active = i_showSession, display = display.none)
 
-i_showBox         = input.bool(true, "Session Box", group = iGroupSession, inline = "S3", active = i_showSession, display = display.none)
+i_showBox         = input.bool(true, "Box/History",       group = iGroupSession, inline = "S3", active = i_showSession, display = display.none)
 bool a_box        = i_showSession and i_showBox
 i_boxStyle        = input.enum(UTIL.LineStyle.dashed, "", group = iGroupSession, inline = "S3", display = display.none, active = a_box)
-i_boxSize         = input.enum(UTIL.LineSize.thin, "", group = iGroupSession, inline = "S3", display = display.none, tooltip = tt_box, active = a_box)
-i_showBoxHistory  = input.bool(true, "History", group = iGroupSession, inline = "S3", tooltip = tt_history, display = display.none, active = a_box)
+i_boxSize         = input.enum(UTIL.LineSize.thin, "",    group = iGroupSession, inline = "S3", display = display.none, active = a_box)
+i_showBoxHistory  = input.bool(true, "",                  group = iGroupSession, inline = "S3", tooltip = tt_box, display = display.none, active = a_box)
 
-i_showBoxText     = input.bool(false, "Box Text", group = iGroupSession, inline = "S7", display = display.none, active = a_box)
+i_showBoxText     = input.bool(false, "Box Text",          group = iGroupSession, inline = "S7", display = display.none, active = a_box)
 bool a_boxText    = a_box and i_showBoxText
-i_boxTextColor    = input.color(color.new(#FFFFFF, 0), " ", group = iGroupSession, inline = "S7", display = display.none, active = a_boxText)
-i_boxTextSize     = input.enum(UTIL.TextSize.tiny, "Size", group = iGroupSession, inline = "S7", display = display.none, active = a_boxText)
-i_boxTextHAlign   = input.enum(UTIL.HorizontalAlign.left, "H Align:", group = iGroupSession, inline = "S7b", display = display.none, active = a_boxText)
-i_boxTextVAlign   = input.enum(UTIL.VerticalAlign.top, "V Align:", group = iGroupSession, inline = "S7b", display = display.none, tooltip = tt_boxText, active = a_boxText)
+i_boxTextColor    = input.color(color.new(#FFFFFF, 0), "", group = iGroupSession, inline = "S7", display = display.none, active = a_boxText)
+i_boxTextSize     = input.enum(UTIL.TextSize.tiny, "",     group = iGroupSession, inline = "S7", display = display.none, tooltip = tt_boxText, active = a_boxText)
 
-i_showHiLo        = input.bool(true, "Highs/Lows", group = iGroupSession, inline = "S2", active = i_showSession, display = display.none)
+i_boxTextHAlign   = input.enum(UTIL.HorizontalAlign.left, "Align H/V", group = iGroupSession, inline = "S7b", display = display.none, active = a_boxText)
+i_boxTextVAlign   = input.enum(UTIL.VerticalAlign.top, "",             group = iGroupSession, inline = "S7b", display = display.none, tooltip = tt_boxAlign, active = a_boxText)
+
+i_showHiLo        = input.bool(true, "Hi/Lo/History",     group = iGroupSession, inline = "S2", active = i_showSession, display = display.none)
 bool a_hiLo       = i_showSession and i_showHiLo
 i_hiLoStyle       = input.enum(UTIL.LineStyle.dotted, "", group = iGroupSession, inline = "S2", display = display.none, active = a_hiLo)
-i_hiLoSize        = input.enum(UTIL.LineSize.thin, "", group = iGroupSession, inline = "S2", display = display.none, active = a_hiLo)
-i_showLineHistory = input.bool(true, "History", group = iGroupSession, inline = "S2", tooltip = tt_history, display = display.none, active = a_hiLo)
+i_hiLoSize        = input.enum(UTIL.LineSize.thin, "",    group = iGroupSession, inline = "S2", display = display.none, active = a_hiLo)
+i_showLineHistory = input.bool(true, "",                  group = iGroupSession, inline = "S2", tooltip = tt_highLow, display = display.none, active = a_hiLo)
 
-i_lineAnchor      = input.enum(UTIL.SessionAnchor.ExtremeTime, "Line Starts:", group = iGroupSession, inline = "S4", display = display.none, active = a_hiLo)
-i_aheadTime       = input.int(10, "Frontrun", minval = 1, maxval = 50, group = iGroupSession, inline = "S4", tooltip = tt_keepAhead, display = display.none, active = a_hiLo)
+i_lineAnchor      = input.enum(UTIL.SessionAnchor.ExtremeTime, "Start/Ahead", group = iGroupSession, inline = "S4", display = display.none, active = a_hiLo)
+i_aheadTime       = input.int(10, "", minval = 1, maxval = 50,                group = iGroupSession, inline = "S4", tooltip = tt_lineStart, display = display.none, active = a_hiLo)
 
-i_lineEndHour     = input.enum(UTIL.Hours.h17, "Line Ends", group = iGroupSession, inline = "S5", display = display.none, active = a_hiLo)
-i_lineEndMinute   = input.enum(UTIL.Minutes.m0, ":", group = iGroupSession, inline = "S5", display = display.none, active = a_hiLo)
-i_lineExtraDay    = input.bool(false, "+1 Day", tt_nextDay, inline = "S5", group = iGroupSession, display = display.none, active = a_hiLo)
+i_lineEndHour     = input.enum(UTIL.Hours.h17, "End/+1 Day",    group = iGroupSession, inline = "S5", display = display.none, active = a_hiLo)
+i_lineEndMinute   = input.enum(UTIL.Minutes.m0, "",             group = iGroupSession, inline = "S5", display = display.none, active = a_hiLo)
+i_lineExtraDay    = input.bool(false, "", tooltip = tt_nextDay, group = iGroupSession, inline = "S5", display = display.none, active = a_hiLo)
 
-i_showLabel       = input.bool(true, "Line Labels", group = iGroupSession, inline = "S9", tooltip = tt_highLow, active = a_hiLo, display = display.none)
+i_showLabel       = input.bool(true, "Line Labels", group = iGroupSession, inline = "S9", tooltip = tt_lineLabels, active = a_hiLo, display = display.none)
 
-i_alertMode       = input.enum(AlertMode.off, "Alert Mode", group = iGroupSession, inline = "S8", tooltip = tt_alertSession, active = i_showSession, display = display.none)
+i_alertMode       = input.enum(AlertMode.off, "Alerts", group = iGroupSession, inline = "S8", tooltip = tt_alertSession, active = i_showSession, display = display.none)
 
 // #endregion Session
 
 // #region Trade Window ***********************************
 
 var string iGroupTradeWindow = "Trade Window"
-i_showWindow       = input.bool(true, "", group = iGroupTradeWindow, inline = "V", display = display.none)
-i_window           = input.session("1000-1100", "Trade Window", group = iGroupTradeWindow, inline = "V", tooltip = tt_vLines, display = display.none, active = i_showWindow)
+i_showWindow       = input.bool(true, "Window",     group = iGroupTradeWindow, inline = "V", display = display.none)
+i_window           = input.session("1000-1100", "", group = iGroupTradeWindow, inline = "V", tooltip = tt_window, display = display.none, active = i_showWindow)
 
-i_showWindowLines  = input.bool(true, "V-Lines", group = iGroupTradeWindow, inline = "V1", display = display.none, active = i_showWindow)
+i_showWindowLines  = input.bool(true, "Lines/History",      group = iGroupTradeWindow, inline = "V1", display = display.none, active = i_showWindow)
 bool a_windowLines = i_showWindow and i_showWindowLines
 i_windowColor      = input.color(color.new(#b22833, 0), "", group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
-i_windowStyle      = input.enum(UTIL.LineStyle.solid, "", group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
-i_windowSize       = input.enum(UTIL.LineSize.thin, "", group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
-i_windowHistory    = input.bool(false, "Show History", group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
+i_windowStyle      = input.enum(UTIL.LineStyle.solid, "",   group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
+i_windowSize       = input.enum(UTIL.LineSize.thin, "",     group = iGroupTradeWindow, inline = "V1", display = display.none, active = a_windowLines)
+i_windowHistory    = input.bool(false, "",                  group = iGroupTradeWindow, inline = "V1", tooltip = tt_windowLines, display = display.none, active = a_windowLines)
 
-i_showWindowBg     = input.bool(false, "Background", group = iGroupTradeWindow, inline = "V2", display = display.none, active = i_showWindow)
+i_showWindowBg     = input.bool(false, "Background",         group = iGroupTradeWindow, inline = "V2", display = display.none, active = i_showWindow)
 bool a_windowBg    = i_showWindow and i_showWindowBg
 i_windowBgColor    = input.color(color.new(#b22833, 90), "", group = iGroupTradeWindow, inline = "V2", display = display.none, tooltip = tt_windowBg, active = a_windowBg)
 
@@ -146,8 +154,8 @@ i_windowBgColor    = input.color(color.new(#b22833, 90), "", group = iGroupTrade
 const int MAX_HISTORY_DAYS = 90
 
 var string iGroupHistory = "History"
-i_showHistory = input.bool(true, "History.", group = iGroupHistory, inline = "H1", display = display.none)
-i_daysInput   = input.int(5, "Previous sessions:", 1, MAX_HISTORY_DAYS, 1, tt_historyDays, group = iGroupHistory, inline = "H1", display = display.none)
+i_showHistory = input.bool(true, "History",                              group = iGroupHistory, inline = "H1", display = display.none)
+i_daysInput   = input.int(5, "", 1, MAX_HISTORY_DAYS, 1, tt_historyDays, group = iGroupHistory, inline = "H1", display = display.none)
 
 // #endregion History
 

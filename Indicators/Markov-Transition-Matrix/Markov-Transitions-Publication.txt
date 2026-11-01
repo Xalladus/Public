@@ -145,3 +145,9 @@ If every window were forced to be non-overlapping, whether you detect a directio
 [*][b]Bull / Bear[/b] — Sets the colors shared by directional signal candles and their collection lines.
 [*][b]Collection Line Size / Style[/b] — Controls the width and pattern of the collection-period lines. Dotted is the default style.
 [/list]
+
+[b]Update - Input Alignment[/b]
+[list]
+[*]Appearance rows now use one short title for TradingView's automatic inline alignment. Bull/Bear sets the two directional colors in that order; Collection sets collection-line width followed by style.
+[*]Tooltips explain the controls. Calculation modes, default values, and chart behavior are unchanged.
+[/list]

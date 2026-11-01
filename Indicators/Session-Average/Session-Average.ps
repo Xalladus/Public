@@ -12,7 +12,7 @@
 //#endregion INDICATOR INFORMATION 
 
 //@version=6
-indicator("Session High/Low Avereage & Range with History [OneCleverGuy]", shorttitle="Avg Session H/L [1CG]", max_lines_count=500, max_labels_count=500, max_boxes_count = 500, overlay=true)
+indicator("Session High/Low Avereage & Range with History", shorttitle="Avg H/L", max_lines_count=500, max_labels_count=500, max_boxes_count = 500, overlay=true)
 
 import OneCleverGuy/InputLibrary/1 as iLib
 
@@ -24,105 +24,101 @@ import OneCleverGuy/InputLibrary/1 as iLib
 
 //#region Tooltips **************************************
 
-tt_session      = "The timing for the session you would like to monitor. Match this UTC time to your setting in the bottom right of the chart."
-tt_sampleSize   = "Number of sessions used to calculate the average highs and lows. Also sets the number of sessions "
-tt_history      = "Set the number of sessions to appear on the chart."
-tt_zonePercent  = "Displays the high and low averages. Labels cannot appear without lines, but background can. Label size and position option at bottom of section."
-tt_custom       = "Custom lines have the option to display on the scale of the average high and low prices, or the maximum range values of the session period."
-tt_custLabel    = "Labels display the price of the line and can appear to the left or right of session."
-tt_ranges       = "Values that are the distance from the session open are marked with 'Δ'. Distances for the average scale appear in their boxes while custom line distances appear on the line label."
+string tt_timezone   = "Timezone used to interpret the session hours."
+string tt_session    = "Session hours interpreted in the selected timezone."
+string tt_sampleSize = "Number of sessions used to calculate the average distances from the session open to its high and low."
+string tt_history    = "Set the number of sessions to appear on the chart."
+string tt_line       = "Line visibility, color, width, style, and label toggle, in that order. Labels also require the global Labels switch."
+string tt_fill       = "Fill visibility followed by its color. Backgrounds can appear without lines."
+string tt_custom     = "Multiplier followed by its base: Average uses the average high/low distances from the open; Range uses the maximum distances."
+string tt_custLabel  = "Label visibility, position, and text size, in that order. Labels show the line price and also require the line's own label toggle."
+string tt_ranges     = "Values that are the distance from the session open are marked with 'Δ'. Distances for the average scale appear in their boxes while custom line distances appear on the line label."
+string tt_distText   = "Custom text-color toggle, color, and size, in that order. Disable the toggle to use each line's color."
+string tt_align      = "Horizontal alignment followed by vertical alignment of distance text. Low-side vertical alignment is mirrored."
 
 //#endregion Tooltips
 
 //#region Session Inputs ********************************
 
 var iGroup1 = "Session"
-i_sessionTime       = input.session("0300-1200",    "Session",                    group = iGroup1, tooltip = tt_session, inline = "G1A")
-i_timeZone          = input.enum(iLib.Timezones.ny, " ",                          group = iGroup1, inline = "G1A")
-i_sampleSize        = input.int(14,                 "Session Period",             group = iGroup1, tooltip = tt_sampleSize)
-i_sessionHistory    = input.int(4,                  "Sessions Displayed",         group = iGroup1, tooltip = tt_history)
+i_timeZone          = input.enum(iLib.Timezones.ny, "Timezone", group = iGroup1, tooltip = tt_timezone)
+i_sessionTime       = input.session("0300-1200", "Session",     group = iGroup1, tooltip = tt_session)
+
+i_sampleSize        = input.int(14, "Session Period", group = iGroup1, tooltip = tt_sampleSize)
+i_sessionHistory    = input.int(4, "Sessions Displayed", group = iGroup1, tooltip = tt_history)
 
 var iGroup2 = "Lines"
 // Open line
-i_showOpenLine      = input.bool(true,              "",                           group = iGroup2, inline = "G2B")
-i_openLineColor     = input.color(color.gray,     "Open Line       ",           group = iGroup2, inline = "G2B")
-i_openLineWidth     = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
-                                                                                  group = iGroup2, inline = "G2B", display = display.none)
-i_openLineStyle     = input.enum(iLib.LineStyle.dotted,  " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
-                                                                                  group = iGroup2, inline = "G2B", display = display.none)
-i_openLineShowLabel = input.bool(true,              "Label",                      group = iGroup2, inline = "G2B")
+i_showOpenLine      = input.bool(true, "Open",              group = iGroup2, inline = "G2B")
+i_openLineColor     = input.color(color.gray, "",           group = iGroup2, inline = "G2B")
+i_openLineWidth     = input.enum(iLib.LineSize.thin, "",    group = iGroup2, inline = "G2B", options = [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], display = display.none)
+i_openLineStyle     = input.enum(iLib.LineStyle.dotted, "", group = iGroup2, inline = "G2B", options = [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], display = display.none)
+i_openLineShowLabel = input.bool(true, "",                  group = iGroup2, inline = "G2B", tooltip = tt_line)
 
 // Average
-i_showASD           = input.bool(true,              "",                           group = iGroup2, inline = "G2C")
-i_ASDColor          = input.color(color.new(#4DB14E, 0), "Average High/Low",      group = iGroup2, inline = "G2C")
-i_ASDWidth          = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
-                                                                                  group = iGroup2, inline = "G2C", display = display.none)
-i_ASDStyle          = input.enum(iLib.LineStyle.solid,   " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
-                                                                                  group = iGroup2, inline = "G2C", display = display.none)
-i_ASDShowLabel      = input.bool(true,              "Label",                      group = iGroup2, inline = "G2C")
-i_ASDBgColor        = input.color(color.new(#4DB14E, 85), "                      ",
-                                                                                  group = iGroup2, inline = "G2E")
-i_showASDBg         = input.bool(false,             "Background",                 group = iGroup2, tooltip = tt_zonePercent, inline = "G2E")
+i_showASD           = input.bool(true, "Avg H/L",            group = iGroup2, inline = "G2C")
+i_ASDColor          = input.color(color.new(#4DB14E, 0), "", group = iGroup2, inline = "G2C")
+i_ASDWidth          = input.enum(iLib.LineSize.thin, "",     group = iGroup2, inline = "G2C", options = [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], display = display.none)
+i_ASDStyle          = input.enum(iLib.LineStyle.solid, "",   group = iGroup2, inline = "G2C", options = [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], display = display.none)
+i_ASDShowLabel      = input.bool(true, "",                   group = iGroup2, inline = "G2C", tooltip = tt_line)
+
+i_showASDBg         = input.bool(false, "Avg Fill",           group = iGroup2, inline = "G2E")
+i_ASDBgColor        = input.color(color.new(#4DB14E, 85), "", group = iGroup2, inline = "G2E", tooltip = tt_fill)
 
 // Double Average
-i_showASD2          = input.bool(true,              "",                           group = iGroup2, inline = "G2D")
-i_ASD2Color         = input.color(color.new(#368E3C, 0), "2x Avg High/Low ",    group = iGroup2, inline = "G2D")
-i_ASD2Width         = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
-                                                                                  group = iGroup2, inline = "G2D", display = display.none)
-i_ASD2Style         = input.enum(iLib.LineStyle.solid,   " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
-                                                                                  group = iGroup2, inline = "G2D", display = display.none)
-i_ASD2ShowLabel     = input.bool(true,              "Label",                      group = iGroup2, inline = "G2D")
-i_ASD2BgColor       = input.color(color.new(#1F5C23, 85), "                      ",
-                                                                                  group = iGroup2, inline = "G2G")
-i_showASD2Bg        = input.bool(true,              "Background",                 group = iGroup2, tooltip = tt_zonePercent, inline = "G2G")
+i_showASD2          = input.bool(true, "2x Avg H/L",         group = iGroup2, inline = "G2D")
+i_ASD2Color         = input.color(color.new(#368E3C, 0), "", group = iGroup2, inline = "G2D")
+i_ASD2Width         = input.enum(iLib.LineSize.thin, "",     group = iGroup2, inline = "G2D", options = [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], display = display.none)
+i_ASD2Style         = input.enum(iLib.LineStyle.solid, "",   group = iGroup2, inline = "G2D", options = [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], display = display.none)
+i_ASD2ShowLabel     = input.bool(true, "",                   group = iGroup2, inline = "G2D", tooltip = tt_line)
+
+i_showASD2Bg        = input.bool(true, "2x Fill",             group = iGroup2, inline = "G2G")
+i_ASD2BgColor       = input.color(color.new(#1F5C23, 85), "", group = iGroup2, inline = "G2G", tooltip = tt_fill)
 
 // Triple Average
-i_showASD3          = input.bool(true,              "",                           group = iGroup2, inline = "G2F")
-i_ASD3Color         = input.color(color.new(#368E3C, 0), "3x Avg High/Low ",    group = iGroup2, inline = "G2F")
-i_ASD3Width         = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
-                                                                                  group = iGroup2, inline = "G2F", display = display.none)
-i_ASD3Style         = input.enum(iLib.LineStyle.solid,   " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
-                                                                                  group = iGroup2, inline = "G2F", display = display.none)
-i_ASD3ShowLabel     = input.bool(true,             "Label",                       group = iGroup2, inline = "G2F")
-i_ASD3BgColor       = input.color(color.new(#003228, 85), "                      ", 
-                                                                                  group = iGroup2, inline = "G2H")
-i_showASD3Bg        = input.bool(true,              "Background",                 group = iGroup2, tooltip = tt_zonePercent, inline = "G2H")
+i_showASD3          = input.bool(true, "3x Avg H/L",         group = iGroup2, inline = "G2F")
+i_ASD3Color         = input.color(color.new(#368E3C, 0), "", group = iGroup2, inline = "G2F")
+i_ASD3Width         = input.enum(iLib.LineSize.thin, "",     group = iGroup2, inline = "G2F", options = [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], display = display.none)
+i_ASD3Style         = input.enum(iLib.LineStyle.solid, "",   group = iGroup2, inline = "G2F", options = [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], display = display.none)
+i_ASD3ShowLabel     = input.bool(true, "",                   group = iGroup2, inline = "G2F", tooltip = tt_line)
+
+i_showASD3Bg        = input.bool(true, "3x Fill",             group = iGroup2, inline = "G2H")
+i_ASD3BgColor       = input.color(color.new(#003228, 85), "", group = iGroup2, inline = "G2H", tooltip = tt_fill)
 
 // Average - Custom1
-i_showCustom1       = input.bool(true,              "",                           group = iGroup2, inline = "G4A")
-i_Custom1Color      = input.color(color.new(#EA3847, 0),  "Custom Line 1   ",   group = iGroup2, inline = "G4A")
-i_Custom1Width      = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
-                                                                                  group = iGroup2, inline = "G4A", display = display.none)
-i_Custom1Style      = input.enum(iLib.LineStyle.dotted,  " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
-                                                                                  group = iGroup2, inline = "G4A", display = display.none)
-i_Custom1ShowLabel  = input.bool(true,              "Label",                      group = iGroup2, inline = "G4A")
-i_Custom1Percentage = input.float(1.0,              "     Multiplier", minval = 0.10, maxval = 4.00, step = 0.1, group = iGroup2, inline = "G4B")
-i_Custom1Mode       = input.string("Range",         "Mode",                        options = ["Average", "Range"], group = iGroup2, inline = "G4B", tooltip = tt_custom)
+i_showCustom1       = input.bool(true, "Custom 1",           group = iGroup2, inline = "G4A")
+i_Custom1Color      = input.color(color.new(#EA3847, 0), "", group = iGroup2, inline = "G4A")
+i_Custom1Width      = input.enum(iLib.LineSize.thin, "",     group = iGroup2, inline = "G4A", options = [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], display = display.none)
+i_Custom1Style      = input.enum(iLib.LineStyle.dotted, "",  group = iGroup2, inline = "G4A", options = [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], display = display.none)
+i_Custom1ShowLabel  = input.bool(true, "",                   group = iGroup2, inline = "G4A", tooltip = tt_line)
+
+i_Custom1Percentage = input.float(1.0, "Factor/Mode", group = iGroup2, inline = "G4B", minval = 0.10, maxval = 4.00, step = 0.1)
+i_Custom1Mode       = input.string("Range", "",       group = iGroup2, inline = "G4B", options = ["Average", "Range"], tooltip = tt_custom)
 
 // Average - Custom2
-i_showCustom2       = input.bool(true,              "",                           group = iGroup2, inline = "G4C")
-i_Custom2Color      = input.color(color.new(#1F66FF, 0),  "Custom Line 2   ",   group = iGroup2, inline = "G4C")
-i_Custom2Width      = input.enum(iLib.LineSize.thin,     " ",                           [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], 
-                                                                                  group = iGroup2, inline = "G4C", display = display.none)
-i_Custom2Style      = input.enum(iLib.LineStyle.dotted,  " ",                           [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], 
-                                                                                  group = iGroup2, inline = "G4C", display = display.none)
-i_Custom2ShowLabel  = input.bool(true,              "Label",                      group = iGroup2, inline = "G4C")
-i_Custom2Percentage = input.float(1.5,              "     Multiplier", minval = 0.10, maxval = 4.00, step = 0.1, group = iGroup2, inline = "G4D")
-i_Custom2Mode       = input.string("Average",         "Mode",                      options = ["Average", "Range"], group = iGroup2, inline = "G4D", tooltip = tt_custom)
+i_showCustom2       = input.bool(true, "Custom 2",           group = iGroup2, inline = "G4C")
+i_Custom2Color      = input.color(color.new(#1F66FF, 0), "", group = iGroup2, inline = "G4C")
+i_Custom2Width      = input.enum(iLib.LineSize.thin, "",     group = iGroup2, inline = "G4C", options = [iLib.LineSize.thin, iLib.LineSize.normal, iLib.LineSize.heavy, iLib.LineSize.thick], display = display.none)
+i_Custom2Style      = input.enum(iLib.LineStyle.dotted, "",  group = iGroup2, inline = "G4C", options = [iLib.LineStyle.solid, iLib.LineStyle.dotted, iLib.LineStyle.dashed], display = display.none)
+i_Custom2ShowLabel  = input.bool(true, "",                   group = iGroup2, inline = "G4C", tooltip = tt_line)
+
+i_Custom2Percentage = input.float(1.5, "Factor/Mode", group = iGroup2, inline = "G4D", minval = 0.10, maxval = 4.00, step = 0.1)
+i_Custom2Mode       = input.string("Average", "",     group = iGroup2, inline = "G4D", options = ["Average", "Range"], tooltip = tt_custom)
 
 // Labels
-i_showLabels        = input.bool(true,              "  Show Labels. Position",    group = iGroup2, inline = "G2A")
-i_labelPosition     = input.string("Left",          "",                           ["Left", "Right"], group = iGroup2, tooltip = tt_custLabel, inline = "G2A", display = display.none)
-i_labelTextSize     = input.enum(iLib.TextSize.small,    "Size",                       group = iGroup2, inline = "G2A", display = display.none)
+i_showLabels        = input.bool(true, "Labels",          group = iGroup2, inline = "G2A")
+i_labelPosition     = input.string("Left", "",            group = iGroup2, inline = "G2A", options = ["Left", "Right"], display = display.none)
+i_labelTextSize     = input.enum(iLib.TextSize.small, "", group = iGroup2, inline = "G2A", display = display.none, tooltip = tt_custLabel)
 
 // Table inputs
 var iGroup3 = "Display Distances"
-i_showRangeData     = input.bool(true,              "  Show Line Distances",      group = iGroup3, tooltip = tt_ranges)
-i_useCustomColor    = input.bool(true,              "  Use Custom Color",         group = iGroup3, inline = "G3A")
-i_dataTextColor     = input.color(color.silver,     "",                         group = iGroup3, inline = "G3A")
-i_dataTextSize      = input.enum(iLib.TextSize.small,    "Size",                       group = iGroup3, inline = "G3A", display = display.none)
-i_dataHAlign        = input.enum(iLib.BoxHAlign.left,    "H-Alignment        ",        group = iGroup3, inline = "G3B", display = display.none)
-i_dataVAlign        = input.enum(iLib.BoxVAlign.top,     "V-Alignment",                group = iGroup3, inline = "G3B", display = display.none)
+i_showRangeData     = input.bool(true, "Distances", group = iGroup3, tooltip = tt_ranges)
+i_useCustomColor    = input.bool(true, "Custom Text",     group = iGroup3, inline = "G3A")
+i_dataTextColor     = input.color(color.silver, "",       group = iGroup3, inline = "G3A")
+i_dataTextSize      = input.enum(iLib.TextSize.small, "", group = iGroup3, inline = "G3A", display = display.none, tooltip = tt_distText)
+
+i_dataHAlign        = input.enum(iLib.BoxHAlign.left, "Align H/V", group = iGroup3, inline = "G3B", display = display.none)
+i_dataVAlign        = input.enum(iLib.BoxVAlign.top, "",           group = iGroup3, inline = "G3B", display = display.none, tooltip = tt_align)
 
 //#endregion Session Inputs
 
